@@ -69,6 +69,7 @@ export function ReceiptTable() {
   const [rows, setRows] = useState<Receipt[]>([]);
   const [spreadsheetId, setSpreadsheetId] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [dedupRunning, setDedupRunning] = useState(false);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" } | null>(null);
   const [colFilters, setColFilters] = useState<Partial<Record<SortKey, Set<string>>>>({});
@@ -111,6 +112,30 @@ export function ReceiptTable() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, ...patch }),
     });
+  }
+
+  async function runDedup() {
+    setDedupRunning(true);
+    try {
+      const r = await fetch("/api/dedup", { method: "POST" });
+      const j = await r.json();
+      if (!r.ok) {
+        alert("שגיאה: " + (j.error || r.status));
+        return;
+      }
+      const s = j.summary || {};
+      alert(
+        `הסתיים:\n• ${s.canonicalGroups ?? 0} שמות חנויות מאוחדים\n` +
+        `• ${s.nameUpdates ?? 0} שורות עודכנו לשם קנוני\n` +
+        `• ${s.duplicates ?? 0} כפילויות\n` +
+        `• ${s.creditSlips ?? 0} ספחי אשראי משויכים\n` +
+        `• ${s.creditMatches ?? 0} זיכויים תואמים\n` +
+        `• ${s.creditOrphans ?? 0} זיכויים יתומים`,
+      );
+      await load();
+    } finally {
+      setDedupRunning(false);
+    }
   }
 
   const uniqueValues = useMemo(() => {
@@ -203,6 +228,13 @@ export function ReceiptTable() {
           placeholder="חיפוש חופשי..."
           className="h-9 px-3 rounded-md border border-[hsl(var(--border))] bg-transparent text-sm"
         />
+        <Button
+          size="sm"
+          onClick={runDedup}
+          disabled={dedupRunning || rows.length === 0}
+        >
+          {dedupRunning ? "מאחד..." : "איחוד שמות + זיהוי כפילויות וזיכויים"}
+        </Button>
         <div className="flex-1" />
         <Button variant="outline" size="sm" onClick={downloadCSV}>
           הורד CSV
