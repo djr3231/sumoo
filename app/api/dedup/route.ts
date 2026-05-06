@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   canonicalizeStoreNames,
-  detectDuplicatesAndCredits,
+  detectDuplicatesAndPairs,
 } from "@/lib/ai";
 import {
   bulkUpdateReceipts,
@@ -130,8 +130,8 @@ export async function POST() {
       }
     }
 
-    // ---- Step 3: credit notes via Claude (orphans + matches) ----
-    const groups3 = await detectDuplicatesAndCredits(
+    // ---- Step 3: fuzzy duplicate / receipt-slip pair detection via LLM ----
+    const groups3 = await detectDuplicatesAndPairs(
       receipts.map((r) => ({
         id: r.id,
         storeName: r.storeName,
@@ -141,28 +141,27 @@ export async function POST() {
       })),
     );
 
-    let creditMatches = 0;
-    let creditOrphans = 0;
     for (const g of groups3) {
-      if (g.kind === "credit_match" && g.receipt_ids.length >= 2) {
-        const [primary, ...rest] = g.receipt_ids;
+      if (g.receipt_ids.length < 2) continue;
+      const [primaryId, ...rest] = g.receipt_ids;
+      if (g.kind === "duplicate") {
         for (const id of rest) {
           dedupPatches.push({
             id,
-            documentType: "זיכוי",
-            linkedTo: primary,
+            documentType: "כפילות",
+            linkedTo: primaryId,
             notes: g.reason,
           });
-          creditMatches++;
+          dupCount++;
         }
-      } else if (g.kind === "orphan_credit") {
-        for (const id of g.receipt_ids) {
+      } else if (g.kind === "receipt_slip_pair") {
+        for (const id of rest) {
           dedupPatches.push({
             id,
-            documentType: "זיכוי-יתום",
+            linkedTo: primaryId,
             notes: g.reason,
           });
-          creditOrphans++;
+          slipCount++;
         }
       }
     }
@@ -184,8 +183,6 @@ export async function POST() {
         nameUpdates: storePatches.length,
         duplicates: dupCount,
         creditSlips: slipCount,
-        creditMatches,
-        creditOrphans,
       },
     });
   } catch (err) {

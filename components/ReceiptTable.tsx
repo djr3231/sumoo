@@ -137,9 +137,7 @@ export function ReceiptTable() {
         `הסתיים:\n• ${s.canonicalGroups ?? 0} שמות חנויות מאוחדים\n` +
         `• ${s.nameUpdates ?? 0} שורות עודכנו לשם קנוני\n` +
         `• ${s.duplicates ?? 0} כפילויות\n` +
-        `• ${s.creditSlips ?? 0} ספחי אשראי משויכים\n` +
-        `• ${s.creditMatches ?? 0} זיכויים תואמים\n` +
-        `• ${s.creditOrphans ?? 0} זיכויים יתומים`,
+        `• ${s.creditSlips ?? 0} ספחי אשראי משויכים`,
       );
       await load();
     } finally {
@@ -255,7 +253,7 @@ export function ReceiptTable() {
           onClick={runDedup}
           disabled={dedupRunning || rows.length === 0}
         >
-          {dedupRunning ? "מאחד..." : "איחוד שמות + זיהוי כפילויות וזיכויים"}
+          {dedupRunning ? "מאחד..." : "איחוד שמות + זיהוי כפילויות וספחי אשראי"}
         </Button>
         <div className="flex-1" />
         <Button variant="outline" size="sm" onClick={downloadCSV}>
@@ -317,9 +315,7 @@ export function ReceiptTable() {
                   className={`border-t border-[hsl(var(--border))] ${
                     r.documentType === "כפילות" || r.documentType === "ספח אשראי"
                       ? "bg-yellow-50/50 dark:bg-yellow-900/10"
-                      : r.documentType === "זיכוי" || r.documentType === "זיכוי-יתום"
-                        ? "bg-red-50/50 dark:bg-red-900/10"
-                        : ""
+                      : ""
                   }`}
                 >
                   <td className="p-2">

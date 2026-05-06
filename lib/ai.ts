@@ -5,7 +5,8 @@ import {
 } from "@google/generative-ai";
 import { CATEGORIES, type Category, type Confidence } from "./types";
 
-const MODEL_NAME = "gemini-2.5-flash";
+const OCR_MODEL = "gemini-2.5-pro";
+const UTIL_MODEL = "gemini-2.5-flash";
 
 let _client: GoogleGenerativeAI | null = null;
 function client(): GoogleGenerativeAI {
@@ -18,12 +19,13 @@ function client(): GoogleGenerativeAI {
 }
 
 function model(args: {
+  modelName: string;
   systemInstruction: string;
   responseSchema: object;
   temperature?: number;
 }): GenerativeModel {
   return client().getGenerativeModel({
-    model: MODEL_NAME,
+    model: args.modelName,
     systemInstruction: args.systemInstruction,
     generationConfig: {
       temperature: args.temperature ?? 0,
@@ -115,62 +117,70 @@ const RECEIPT_SCHEMA = {
   ],
 };
 
-const RECEIPT_SYSTEM = `אתה מומחה לחילוץ נתונים מקבלות וספחי אשראי ישראליים. הקלט יכול להיות תמונה (JPG/PNG) או מסמך PDF סרוק.
+const RECEIPT_SYSTEM = `You extract data from Israeli receipts and credit-card slips. Input is an image (JPG/PNG) or a scanned PDF. The user keeps a personal expense ledger and only ever photographs/scans **two document types**: (1) receipts / tax invoices, (2) credit-card slips ("ספח אשראי"). They never photograph credit notes, vendor invoices, or anything else.
 
-קונטקסט: המשתמש מנהל מערכת אישית של קבלות. הוא מצלם או סורק **רק שני סוגים** של מסמכים: (1) קבלה / חשבונית מס/קבלה, (2) ספח אשראי. הוא לא מצלם זיכויים, חשבוניות ספק, או מסמכים אחרים.
+## General rules
+1. Amounts are always positive and include VAT. There are no credits.
+2. If a field is unreadable, return null. **Prefer null over guessing.** Never invent stores, amounts, or dates.
+3. Date format: YYYY-MM-DD only. Convert from dd/mm/yyyy or dd.mm.yy. If absent → null.
 
-כללים:
-1. הסכום הוא תמיד חיובי וכולל מע"מ. אין זיכויים.
-2. אם שדה לא קריא — החזר null. **עדיף null מאשר ניחוש**. אסור להמציא חנויות, סכומים, תאריכים.
-3. תאריך — YYYY-MM-DD בלבד. המרה מ-dd/mm/yyyy או dd.mm.yy. אם לא קיים → null.
-4. **סיבוב תמונה**: ייתכן שהתמונה צולמה ב-90°/180°/270°. סובב נפשית וקרא נכון. אל תמציא בגלל קושי — null במקום.
+## Image orientation — important
+Images may be rotated 90° (CW or CCW) or 180°. Always mentally rotate the image until the Hebrew text reads correctly (right-to-left as expected) before extracting any data. If you cannot orient the image, return null fields rather than guessing.
 
-**total_amount — קריטי, זה השדה שהמשתמש הכי רגיש לטעויות בו**:
-- חפש קודם כל את הכיתוב **"לתשלום"** / **"סה"כ לתשלום"** / **"סך הכל לתשלום"** / **"סכום לתשלום"** / **"TOTAL"**. ברוב הקבלות זה מודגש (bold/גודל גדול) ומופיע בסוף. **זה הסכום הנכון ל-total_amount**.
-- **אסור** לבלבל בין:
-  - "לתשלום" (= הסכום שצריך לשלם, זה מה שאנחנו רוצים) ✓
-  - "מזומן" / "התקבל" / "שולם" (= הסכום שהלקוח נתן בפועל, יכול להיות גדול יותר) ✗
-  - "עודף" / "החזר" (= מה שחזר ללקוח) ✗
-  - "סה"כ ביניים" / "subtotal" (= לפני מע"מ או הנחה) ✗
-- אם רואה שורה כמו "מזומן 100.00 / לתשלום 87.50 / עודף 12.50" → total_amount=87.50.
-- רק אם **אין** "לתשלום" / "סה"כ" מפורש בקבלה — חזור לקונטקסט (סכום אחרון, סכום הכי בולט וכו').
+## total_amount — the field the user is most sensitive to
+- First look for the literal label **"לתשלום"**, **"סה"כ לתשלום"**, **"סך הכל לתשלום"**, **"סכום לתשלום"**, or **"TOTAL"**. This is almost always bold/larger and near the bottom. **That number is the total_amount.**
+- Do NOT confuse it with:
+  - "מזומן" / "התקבל" / "שולם" — cash tendered by the customer; can be larger than the total.
+  - "עודף" / "החזר" — change returned to the customer.
+  - "סה"כ ביניים" / "subtotal" — pre-VAT or pre-discount.
+- Example: a line "מזומן 100.00 / לתשלום 87.50 / עודף 12.50" → total_amount=87.50.
+- Only if no explicit "לתשלום"/"סה"כ" label exists, fall back to context (last/largest amount).
 
-קטגוריות:
+## Store name placement
+- The store name is almost always on the **first line** (large font / logo).
+- If the receipt is upside-down, it will be on the last line before you rotate it.
+- Secondary cues: "ח.פ." / "ע.מ." / a registered address — the store name typically sits just above them.
+- **Never** return footer text (website URL, phone number, "תודה רבה") as the store name.
+
+## Categories
 - "סופר" — שופרסל, רמי לוי, ויקטורי, יוחננוף, AM:PM, טיב טעם, מחסני השוק, יינות ביתן.
-- "מזון" — מכולות, מאפיות, חנויות שכונה.
-- "מסעדות" — מסעדות, בתי קפה, פיצריות, פאסט פוד.
-- "תחבורה" — רב-קו, אגד, מטרו, חניונים, רכבת, מוניות.
+- "מזון" — small grocers, bakeries, neighborhood shops.
+- "מסעדות" — restaurants, cafes, pizza, fast food.
+- "תחבורה" — רב-קו, אגד, מטרו, parking, trains, taxis.
 - "דלק" — פז, סונול, דלק, ten, סדש.
-- "בריאות" — סופרפארם, בה"כל, ניו פארם, רופאים, קליניקות, בתי מרקחת.
-- "בית" — איקאה, ACE, הום סנטר, רהיטים, כלי בית.
+- "בריאות" — סופרפארם, בה"כל, ניו פארם, doctors, clinics, pharmacies.
+- "בית" — איקאה, ACE, הום סנטר, furniture, housewares.
 - "ביגוד" — H&M, זארה, רנואר, פוקס, הוניגמן, קסטרו.
-- "בידור" — סינמה סיטי, יס פלאנט, אטרקציות.
-- "שירותים" — חברת חשמל, פלאפון, סלקום, פרטנר, מים, ארנונה.
-- "אחר" — כל דבר אחר ברור.
-- "לא ידוע" — רק אם לא ניתן בכלל להעריך.
+- "בידור" — סינמה סיטי, יס פלאנט, attractions.
+- "שירותים" — חברת חשמל, פלאפון, סלקום, פרטנר, water bills, ארנונה.
+- "אחר" — anything else clearly identifiable.
+- "לא ידוע" — only when truly unknown.
 
-confidence:
-- high = כל ארבעת השדות (חנות, סכום כולל, תאריך, קטגוריה) מולאו בבטחה.
-- med = שדה אחד או שניים null/לא ברורים.
-- low = רוב השדות null או תמונה מטושטשת.
+## confidence
+- high = all four fields (store, total amount, date, category) are confidently filled.
+- med = one or two fields are null/uncertain.
+- low = most fields null or image is too blurred.
 
-**שמות חנויות קנוניים**: אם המשתמש מספק רשימת חנויות קנוניות, וה-OCR שלך עלול להיות לא מדויק — אם השם דומה (אפילו עם שגיאות) לאחת ברשימה, החזר את **השם הקנוני בדיוק כפי שמופיע ברשימה** ו-matched_known_store=true. אחרת — שם חדש ו-matched_known_store=false.
+## Canonical store names
+If a list of canonical store names is supplied and your OCR reading is close (even with errors) to one of them, return **the canonical name exactly as listed** and matched_known_store=true. Otherwise it's a new name and matched_known_store=false.
 
-**סוג מסמך**:
-- receipt = יש פירוט פריטים, או כתוב "קבלה" / "חשבונית מס/קבלה" / "חשבונית מס".
-- credit_slip = ספח אשראי בלבד — קצר, מציג 4 ספרות אחרונות של כרטיס + שם חברת אשראי, אין פירוט פריטים. כותרות: "ספח אשראי", "אישור עסקה", "VISA", "ISRACARD", "אמריקן אקספרס", "מאסטרקארד".
-- unknown = רק אם ממש לא ברור. לעולם אל תחזיר credit_note.
+## Document type — only two real types
+- receipt = receipt / tax invoice / "חשבונית מס/קבלה". Has line-item breakdown, or explicitly labeled "קבלה" / "חשבונית מס".
+- credit_slip = credit-card slip only — a separate paper from the credit-card terminal. Short, shows last-4 of card + card brand, no line items. Headers: "ספח אשראי", "אישור עסקה", "VISA", "ISRACARD", "אמריקן אקספרס", "מאסטרקארד".
+- unknown = only if genuinely unclear.
 
-**אמצעי תשלום (payments)** — קריטי:
-- total_amount = הסכום הכולל של הקבלה.
-- payments = פירוק התשלום לאמצעים:
-  - אם רואה "VISA 6021" / "אשראי 6021" / "כרטיס xxxx-xxxx-xxxx-6021" → method="credit_card", card_last4="6021".
-  - אם רואה "מזומן" / "Cash" → method="cash", card_last4=null.
-  - אם רואה כרטיס אחר → method="credit_card", card_last4 הוא 4 הספרות שאתה רואה.
-  - אם רואה אמצעי אחר (צ'ק, העברה) → method="other".
-- ברוב הקבלות יש item אחד ב-payments. אבל **אם רואה שני אמצעי תשלום שונים על אותה קבלה** (לדוגמה: 60 ש"ח באשראי + 40 ש"ח במזומן) → 2 items נפרדים, סכומים נפרדים. סכום ה-amounts ב-payments חייב להיות שווה ל-total_amount.
-- אם לא ברור איך שולם — payments=[{method:"other", amount: total_amount, card_last4: null}].
-- אסור להמציא 4 ספרות אחרונות. אם לא רואה אותן בבירור → null.`;
+**Never** return credit_note / זיכוי / refund — the user never photographs credits. If something looks like a credit, it is far more likely to actually be a credit_slip or a normal receipt.
+
+## payments — critical
+- total_amount = the receipt's grand total.
+- payments = breakdown by tender method:
+  - "VISA 6021" / "אשראי 6021" / "כרטיס xxxx-xxxx-xxxx-6021" → method="credit_card", card_last4="6021".
+  - "מזומן" / "Cash" → method="cash", card_last4=null.
+  - Other card → method="credit_card", card_last4 is the 4 digits you see.
+  - Check / transfer → method="other".
+- Most receipts have a single payment item. **If two distinct tender methods are clearly shown on the same receipt** (e.g. 60₪ on credit + 40₪ in cash), emit 2 separate items whose amounts sum to total_amount.
+- If the tender method is unclear → payments=[{method:"other", amount: total_amount, card_last4: null}].
+- Never invent the last-4 digits. If you do not see them clearly → null.`;
 
 export async function extractReceipt(args: {
   imageBase64: string;
@@ -187,12 +197,13 @@ export async function extractReceipt(args: {
 
   const knownBlock =
     knownStores.length > 0
-      ? `\n\nרשימת חנויות קנוניות מוכרות (אם הקבלה מאחת מהן, החזר את השם בדיוק כך):\n${knownStores
+      ? `\n\nKnown canonical store names (if the receipt is from one of these, return the name exactly as listed):\n${knownStores
           .map((s, i) => `${i + 1}. ${s}`)
           .join("\n")}`
-      : "\n\n(אין עדיין רשימת חנויות קנוניות.)";
+      : "\n\n(No canonical store list yet.)";
 
   const m = model({
+    modelName: OCR_MODEL,
     systemInstruction: RECEIPT_SYSTEM,
     responseSchema: RECEIPT_SCHEMA,
   });
@@ -200,7 +211,7 @@ export async function extractReceipt(args: {
   const result = await withRetry(() =>
     m.generateContent([
       { inlineData: { data: imageBase64, mimeType: mediaType } },
-      { text: `שם הקובץ: ${fileName}\nחלץ את הנתונים. החזר null עבור שדות לא קריאים.${knownBlock}` },
+      { text: `File name: ${fileName}\nExtract the fields. Return null for any field you cannot read with confidence.${knownBlock}` },
     ]),
   );
 
@@ -267,6 +278,7 @@ export async function canonicalizeStoreNames(
   }
 
   const m = model({
+    modelName: UTIL_MODEL,
     systemInstruction: CANON_SYSTEM,
     responseSchema: CANON_SCHEMA,
   });
@@ -287,11 +299,11 @@ export async function canonicalizeStoreNames(
 }
 
 // ============================================================================
-// detectDuplicatesAndCredits
+// detectDuplicatesAndPairs
 // ============================================================================
 
 export interface DedupGroup {
-  kind: "duplicate" | "credit_match" | "orphan_credit";
+  kind: "duplicate" | "receipt_slip_pair";
   receipt_ids: string[];
   reason: string;
 }
@@ -306,7 +318,7 @@ const DEDUP_SCHEMA = {
         properties: {
           kind: {
             type: SchemaType.STRING,
-            enum: ["duplicate", "credit_match", "orphan_credit"],
+            enum: ["duplicate", "receipt_slip_pair"],
           },
           receipt_ids: {
             type: SchemaType.ARRAY,
@@ -321,14 +333,23 @@ const DEDUP_SCHEMA = {
   required: ["groups"],
 };
 
-const DEDUP_SYSTEM = `אתה עוזר למיין שורות של קבלות וזיכויים. תקבל רשימת JSON של שורות (id, חנות, סכום, תאריך, סוג).
-זהה:
-1. כפילויות — אותה חנות, אותו תאריך (±יום), סכום קרוב (±0.5%). kind="duplicate".
-2. זיכוי תואם — שורת זיכוי שתואמת בקירוב לקבלה חיובית מאותה חנות בסכום מוחלט קרוב. kind="credit_match".
-3. זיכוי יתום — זיכוי שאין לו קבלה תואמת בקלט. kind="orphan_credit".
-אם אין קבוצות — groups=[].`;
+const DEDUP_SYSTEM = `You group rows of receipts and credit-card slips. You receive JSON rows: id, store, amount, date, type.
 
-export async function detectDuplicatesAndCredits(
+The user can have uploaded:
+- A receipt only.
+- A credit-card slip only (the receipt was lost; only the slip remains).
+- Both a receipt and a slip for the same purchase.
+
+Identify two kinds of groups:
+
+1. **duplicate** — the same document scanned twice. Same store, same date (±1 day), amount within ±0.5%, same document type. The first row in the group is the primary.
+
+2. **receipt_slip_pair** — a receipt (type "קבלה" or "חשבונית מס") AND a credit_slip (type "ספח אשראי") for the same purchase: same store, date ±1 day, amount within ±0.5%. The primary MUST be the receipt (not the slip); list the receipt's id first.
+
+**Never** emit credit_match or orphan_credit — there are no credit notes in the input.
+If nothing groups → groups=[].`;
+
+export async function detectDuplicatesAndPairs(
   rows: Array<{ id: string; storeName: string | null; amount: number | null; date: string | null; documentType: string }>,
 ): Promise<DedupGroup[]> {
   if (rows.length === 0) return [];
@@ -342,12 +363,13 @@ export async function detectDuplicatesAndCredits(
   }));
 
   const m = model({
+    modelName: UTIL_MODEL,
     systemInstruction: DEDUP_SYSTEM,
     responseSchema: DEDUP_SCHEMA,
   });
 
   const result = await withRetry(() =>
-    m.generateContent([{ text: `נתונים:\n${JSON.stringify(compact)}` }]),
+    m.generateContent([{ text: `Rows:\n${JSON.stringify(compact)}` }]),
   );
 
   const raw = result.response.text();
@@ -397,6 +419,7 @@ export async function parseStatementPDF(args: {
   transactions: Array<{ date: string | null; amount: number | null; description: string | null }>;
 }> {
   const m = model({
+    modelName: UTIL_MODEL,
     systemInstruction: STATEMENT_SYSTEM,
     responseSchema: STATEMENT_SCHEMA,
   });
