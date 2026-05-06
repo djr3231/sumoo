@@ -240,9 +240,11 @@ export async function POST(req: Request) {
     const e = err as { status?: number; message?: string };
     const msg = e?.message ?? "OCR failed";
     const status =
-      e?.status === 429 || /rate.?limit/i.test(msg)
+      e?.status === 429 || /\b429\b|rate.?limit|Too Many Requests/i.test(msg)
         ? 429
-        : e?.status === 529 || /overloaded/i.test(msg)
+        : e?.status === 503 ||
+            e?.status === 529 ||
+            /\b503\b|overloaded|Service Unavailable/i.test(msg)
           ? 503
           : 500;
     return NextResponse.json({ error: msg }, { status });

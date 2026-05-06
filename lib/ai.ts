@@ -33,6 +33,26 @@ function model(args: {
   });
 }
 
+async function withRetry<T>(fn: () => Promise<T>, attempts = 2): Promise<T> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const msg = (err as Error).message ?? "";
+      const retryable =
+        /\b503\b|\b429\b|Service Unavailable|Too Many Requests|overloaded/i.test(
+          msg,
+        );
+      if (!retryable || i === attempts - 1) throw err;
+      console.warn(
+        `Gemini transient (attempt ${i + 1}/${attempts}), retry in 3s`,
+      );
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+  throw new Error("unreachable");
+}
+
 // ============================================================================
 // extractReceipt
 // ============================================================================
@@ -162,10 +182,12 @@ export async function extractReceipt(args: {
     responseSchema: RECEIPT_SCHEMA,
   });
 
-  const result = await m.generateContent([
-    { inlineData: { data: imageBase64, mimeType: mediaType } },
-    { text: `שם הקובץ: ${fileName}\nחלץ את הנתונים. החזר null עבור שדות לא קריאים.${knownBlock}` },
-  ]);
+  const result = await withRetry(() =>
+    m.generateContent([
+      { inlineData: { data: imageBase64, mimeType: mediaType } },
+      { text: `שם הקובץ: ${fileName}\nחלץ את הנתונים. החזר null עבור שדות לא קריאים.${knownBlock}` },
+    ]),
+  );
 
   const raw = result.response.text();
   const out = JSON.parse(raw) as ExtractedReceipt;
@@ -234,9 +256,11 @@ export async function canonicalizeStoreNames(
     responseSchema: CANON_SCHEMA,
   });
 
-  const result = await m.generateContent([
-    { text: `רשימת שמות לקיבוץ:\n${JSON.stringify(unique)}` },
-  ]);
+  const result = await withRetry(() =>
+    m.generateContent([
+      { text: `רשימת שמות לקיבוץ:\n${JSON.stringify(unique)}` },
+    ]),
+  );
 
   const raw = result.response.text();
   try {
@@ -307,9 +331,9 @@ export async function detectDuplicatesAndCredits(
     responseSchema: DEDUP_SCHEMA,
   });
 
-  const result = await m.generateContent([
-    { text: `נתונים:\n${JSON.stringify(compact)}` },
-  ]);
+  const result = await withRetry(() =>
+    m.generateContent([{ text: `נתונים:\n${JSON.stringify(compact)}` }]),
+  );
 
   const raw = result.response.text();
   try {
@@ -362,10 +386,12 @@ export async function parseStatementPDF(args: {
     responseSchema: STATEMENT_SCHEMA,
   });
 
-  const result = await m.generateContent([
-    { inlineData: { data: args.pdfBase64, mimeType: "application/pdf" } },
-    { text: args.hint ? `רמז: ${args.hint}. חלץ את כל התנועות.` : "חלץ את כל התנועות." },
-  ]);
+  const result = await withRetry(() =>
+    m.generateContent([
+      { inlineData: { data: args.pdfBase64, mimeType: "application/pdf" } },
+      { text: args.hint ? `רמז: ${args.hint}. חלץ את כל התנועות.` : "חלץ את כל התנועות." },
+    ]),
+  );
 
   const raw = result.response.text();
   try {

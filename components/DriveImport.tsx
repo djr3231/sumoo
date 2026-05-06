@@ -4,26 +4,23 @@ import { Button } from "./ui/Button";
 import type { Receipt } from "@/lib/types";
 
 const CONCURRENCY = 2;
+const MAX_CONSECUTIVE_OVERLOADS = 3;
 
-async function postWithRetry(url: string, body: unknown, attempts = 4) {
-  let lastErr = "";
-  for (let i = 0; i < attempts; i++) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (res.ok) return res.json();
-    if (res.status === 429 || res.status === 503) {
-      const wait = Math.min(15000, 1500 * Math.pow(2, i));
-      await new Promise((r) => setTimeout(r, wait));
-      lastErr = `${res.status}`;
-      continue;
-    }
-    const j = await res.json().catch(() => ({}));
-    throw new Error(j.error || `HTTP ${res.status}`);
+async function postOnce(url: string, body: unknown) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const e = new Error(j.error || `HTTP ${res.status}`) as Error & {
+      status?: number;
+    };
+    e.status = res.status;
+    throw e;
   }
-  throw new Error(`failed after ${attempts} attempts (last: ${lastErr})`);
+  return j;
 }
 
 interface DriveFile {
@@ -40,6 +37,8 @@ export function DriveImport() {
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<Receipt[]>([]);
   const [errors, setErrors] = useState<{ name: string; error: string }[]>([]);
+  const [paused, setPaused] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<DriveFile[]>([]);
 
   function extractFolderId(input: string): string {
     const m = input.match(/folders\/([\w-]+)/);
@@ -55,10 +54,15 @@ export function DriveImport() {
       return;
     }
     setFiles(json.files);
+    setPendingFiles([]);
+    setPaused(false);
+    setResults([]);
+    setErrors([]);
+    setProgress({ done: 0, total: 0 });
   }
 
   async function processOne(file: DriveFile): Promise<Receipt[]> {
-    const json = await postWithRetry("/api/ocr", {
+    const json = await postOnce("/api/ocr", {
       kind: "drive",
       driveFileId: file.id,
       fileName: file.name,
@@ -68,43 +72,78 @@ export function DriveImport() {
     return (json.receipts as Receipt[]) || [];
   }
 
-  async function startProcessing() {
+  async function runBatch(toProcess: DriveFile[]) {
+    if (toProcess.length === 0) return;
     setRunning(true);
-    setProgress({ done: 0, total: files.length });
+    setPaused(false);
+
+    const totalForProgress = progress.total > 0 ? progress.total : toProcess.length;
+    const baseDone = progress.done;
+    setProgress({ done: baseDone, total: totalForProgress });
+
+    const queue = [...toProcess];
+    const newResults: Receipt[] = [...results];
+    const newErrors: typeof errors = [...errors];
+    const state = { consecutiveOverloads: 0, halted: false, doneCount: baseDone };
+
+    const workers = Array.from(
+      { length: Math.min(CONCURRENCY, queue.length) },
+      async () => {
+        while (queue.length && !state.halted) {
+          const f = queue.shift();
+          if (!f) break;
+          try {
+            const rs = await processOne(f);
+            newResults.push(...rs);
+            state.consecutiveOverloads = 0;
+            if (rs.length > 0) {
+              await fetch("/api/sheets", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ receipts: rs }),
+              });
+            }
+          } catch (e) {
+            const err = e as Error & { status?: number };
+            newErrors.push({ name: f.name, error: err.message });
+            if (err.status === 503 || err.status === 429) {
+              state.consecutiveOverloads++;
+              if (state.consecutiveOverloads >= MAX_CONSECUTIVE_OVERLOADS) {
+                state.halted = true;
+              }
+            } else {
+              state.consecutiveOverloads = 0;
+            }
+          } finally {
+            state.doneCount++;
+            setProgress({ done: state.doneCount, total: totalForProgress });
+            setResults([...newResults]);
+            setErrors([...newErrors]);
+          }
+        }
+      },
+    );
+    await Promise.all(workers);
+
+    if (state.halted) {
+      setPendingFiles(queue);
+      setPaused(true);
+    } else {
+      setPendingFiles([]);
+    }
+    setRunning(false);
+  }
+
+  async function startProcessing() {
     setResults([]);
     setErrors([]);
+    setProgress({ done: 0, total: files.length });
+    setPendingFiles([]);
+    await runBatch(files);
+  }
 
-    const queue = [...files];
-    let done = 0;
-    const newResults: Receipt[] = [];
-    const newErrors: typeof errors = [];
-
-    const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
-      while (queue.length) {
-        const f = queue.shift();
-        if (!f) break;
-        try {
-          const rs = await processOne(f);
-          newResults.push(...rs);
-          if (rs.length > 0) {
-            await fetch("/api/sheets", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ receipts: rs }),
-            });
-          }
-        } catch (e) {
-          newErrors.push({ name: f.name, error: (e as Error).message });
-        } finally {
-          done++;
-          setProgress({ done, total: files.length });
-          setResults([...newResults]);
-          setErrors([...newErrors]);
-        }
-      }
-    });
-    await Promise.all(workers);
-    setRunning(false);
+  async function resume() {
+    await runBatch(pendingFiles);
   }
 
   return (
@@ -126,7 +165,7 @@ export function DriveImport() {
           <p className="text-sm text-[hsl(var(--muted-foreground))]">
             נמצאו {files.length} קבצים בתיקייה.
           </p>
-          <Button onClick={startProcessing} disabled={running}>
+          <Button onClick={startProcessing} disabled={running || paused}>
             {running
               ? `מעבד ${progress.done}/${progress.total}...`
               : `סרוק את כל ${files.length} הקבצים`}
@@ -140,6 +179,18 @@ export function DriveImport() {
             className="h-full bg-[hsl(var(--primary))] transition-[width]"
             style={{ width: `${(progress.done / progress.total) * 100}%` }}
           />
+        </div>
+      )}
+
+      {paused && (
+        <div className="rounded-lg border border-amber-500 bg-amber-50 dark:bg-amber-950 p-3 text-sm">
+          <p className="font-semibold mb-2">⏸ הסריקה הושהתה — Gemini עמוס</p>
+          <p className="mb-2">
+            {pendingFiles.length} קבצים ממתינים. נסה שוב כשהשרת ישתחרר (לעיתים נדרשות מספר דקות).
+          </p>
+          <Button onClick={resume} disabled={running}>
+            המשך סריקה ({pendingFiles.length})
+          </Button>
         </div>
       )}
 
