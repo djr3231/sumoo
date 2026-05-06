@@ -45,6 +45,9 @@ export interface Receipt {
   date: string | null;
   category: Category;
   documentType: DocumentType;
+  paymentMethod: PaymentMethod;
+  cardLast4?: string | null;
+  totalReceiptAmount?: number | null;
   linkedTo?: string | null;
   confidence: Confidence;
   reviewed: boolean;
@@ -63,6 +66,16 @@ export interface BankTxn {
 export const SHEET_TAB_RECEIPTS = "קבלות";
 export const SHEET_TAB_TXNS = "תנועות";
 export const SHEET_TAB_STORES = "חנויות";
+
+export type PaymentMethod = "אשראי" | "מזומן" | "מעורב" | "אחר" | "לא ידוע";
+
+export const PAYMENT_METHODS: PaymentMethod[] = [
+  "אשראי",
+  "מזומן",
+  "מעורב",
+  "אחר",
+  "לא ידוע",
+];
 
 export interface Store {
   canonical: string;
@@ -84,6 +97,9 @@ export const RECEIPT_HEADERS: ReadonlyArray<string> = [
   "תאריך",
   "קטגוריה",
   "סוג מסמך",
+  "אמצעי תשלום",
+  "סכום קבלה כולל",
+  "4 ספרות אחרונות",
   "מקושר ל",
   "confidence",
   "drive_file_id",

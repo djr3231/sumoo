@@ -91,7 +91,7 @@ export function UploadZone() {
     multiple: true,
   });
 
-  async function processOne(file: File): Promise<Receipt> {
+  async function processOne(file: File): Promise<Receipt[]> {
     const { base64, mediaType } = await resizeToBase64(file);
     const json = await postWithRetry("/api/ocr", {
       kind: "upload",
@@ -100,7 +100,7 @@ export function UploadZone() {
       base64,
     });
     if (!json.ok) throw new Error(json.error || "OCR failed");
-    return json.receipt as Receipt;
+    return (json.receipts as Receipt[]) || [];
   }
 
   async function startProcessing() {
@@ -119,13 +119,15 @@ export function UploadZone() {
         const f = queue.shift();
         if (!f) break;
         try {
-          const r = await processOne(f);
-          newResults.push(r);
-          await fetch("/api/sheets", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ receipts: [r] }),
-          });
+          const rs = await processOne(f);
+          newResults.push(...rs);
+          if (rs.length > 0) {
+            await fetch("/api/sheets", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ receipts: rs }),
+            });
+          }
         } catch (e) {
           newErrors.push({ name: f.name, error: (e as Error).message });
         } finally {
@@ -139,25 +141,6 @@ export function UploadZone() {
 
     await Promise.all(workers);
     setRunning(false);
-  }
-
-  async function runDedup() {
-    const r = await fetch("/api/dedup", { method: "POST" });
-    const j = await r.json();
-    if (!r.ok) {
-      alert("שגיאה: " + (j.error || r.status));
-      return;
-    }
-    const s = j.summary || {};
-    alert(
-      `הסתיים:\n• ${s.canonicalGroups ?? 0} שמות חנויות מאוחדים\n• ${
-        s.nameUpdates ?? 0
-      } שורות עודכנו לשם קנוני\n• ${s.duplicates ?? 0} כפילויות\n• ${
-        s.creditSlips ?? 0
-      } ספחי אשראי משויכים\n• ${s.creditMatches ?? 0} זיכויים תואמים\n• ${
-        s.creditOrphans ?? 0
-      } זיכויים יתומים`,
-    );
   }
 
   return (
@@ -189,9 +172,12 @@ export function UploadZone() {
             נקה
           </Button>
           {!running && results.length > 0 && (
-            <Button variant="outline" onClick={runDedup}>
-              זיהוי כפילויות וזיכויים
-            </Button>
+            <a
+              href="/receipts"
+              className="text-sm underline"
+            >
+              עבור לטבלת הקבלות לזיהוי כפילויות וייצוא
+            </a>
           )}
         </div>
       )}

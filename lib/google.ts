@@ -238,6 +238,9 @@ function receiptToRow(r: Receipt): (string | number | boolean | null)[] {
     r.date ?? "",
     r.category,
     r.documentType,
+    r.paymentMethod ?? "לא ידוע",
+    r.totalReceiptAmount ?? "",
+    r.cardLast4 ?? "",
     r.linkedTo ?? "",
     r.confidence,
     r.driveFileId ?? "",
@@ -258,11 +261,17 @@ function rowToReceipt(row: any[]): Receipt {
     date: row[4] ? String(row[4]) : null,
     category: (row[5] as any) || "לא ידוע",
     documentType: (row[6] as any) || "קבלה",
-    linkedTo: row[7] ? String(row[7]) : null,
-    confidence: (row[8] as any) || "med",
-    driveFileId: row[9] ? String(row[9]) : null,
-    reviewed: String(row[10]).toUpperCase() === "TRUE",
-    notes: row[11] ? String(row[11]) : "",
+    paymentMethod: (row[7] as any) || "לא ידוע",
+    totalReceiptAmount:
+      row[8] === "" || row[8] === null || row[8] === undefined
+        ? null
+        : Number(row[8]),
+    cardLast4: row[9] ? String(row[9]) : null,
+    linkedTo: row[10] ? String(row[10]) : null,
+    confidence: (row[11] as any) || "med",
+    driveFileId: row[12] ? String(row[12]) : null,
+    reviewed: String(row[13]).toUpperCase() === "TRUE",
+    notes: row[14] ? String(row[14]) : "",
   };
 }
 
@@ -275,7 +284,7 @@ export async function appendReceipts(
   const sheets = sheetsClient(accessToken);
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `${SHEET_TAB_RECEIPTS}!A:L`,
+    range: `${SHEET_TAB_RECEIPTS}!A:O`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: receipts.map(receiptToRow) },
   });
@@ -288,7 +297,7 @@ export async function getAllReceipts(
   const sheets = sheetsClient(accessToken);
   const r = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_TAB_RECEIPTS}!A2:L`,
+    range: `${SHEET_TAB_RECEIPTS}!A2:O`,
   });
   return (r.data.values || []).map(rowToReceipt);
 }
@@ -301,7 +310,7 @@ export async function updateReceiptById(
   const sheets = sheetsClient(accessToken);
   const all = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_TAB_RECEIPTS}!A:L`,
+    range: `${SHEET_TAB_RECEIPTS}!A:O`,
   });
   const rows = all.data.values || [];
   const idx = rows.findIndex((r, i) => i > 0 && r[0] === patch.id);
@@ -310,7 +319,7 @@ export async function updateReceiptById(
   const merged: Receipt = { ...existing, ...patch };
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `${SHEET_TAB_RECEIPTS}!A${idx + 1}:L${idx + 1}`,
+    range: `${SHEET_TAB_RECEIPTS}!A${idx + 1}:O${idx + 1}`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [receiptToRow(merged)] },
   });
@@ -325,7 +334,7 @@ export async function bulkUpdateReceipts(
   const sheets = sheetsClient(accessToken);
   const all = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_TAB_RECEIPTS}!A:L`,
+    range: `${SHEET_TAB_RECEIPTS}!A:O`,
   });
   const rows = all.data.values || [];
   const indexById = new Map<string, number>();
@@ -340,7 +349,7 @@ export async function bulkUpdateReceipts(
     const existing = rowToReceipt(rows[idx]);
     const merged: Receipt = { ...existing, ...patch };
     data.push({
-      range: `${SHEET_TAB_RECEIPTS}!A${idx + 1}:L${idx + 1}`,
+      range: `${SHEET_TAB_RECEIPTS}!A${idx + 1}:O${idx + 1}`,
       values: [receiptToRow(merged)],
     });
   }
@@ -490,4 +499,49 @@ export async function downloadDriveFile(
     buffer: Buffer.from(res.data as ArrayBuffer),
     mimeType: meta.data.mimeType || "application/octet-stream",
   };
+}
+
+const UPLOAD_FOLDER_NAME = "סומו - העלאות";
+
+export async function ensureUploadFolder(accessToken: string): Promise<string> {
+  const drive = driveClient(accessToken);
+  const found = await drive.files.list({
+    q: `name = '${UPLOAD_FOLDER_NAME}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: "files(id,name)",
+    pageSize: 1,
+  });
+  if (found.data.files && found.data.files.length > 0) {
+    return found.data.files[0].id!;
+  }
+  const created = await drive.files.create({
+    requestBody: {
+      name: UPLOAD_FOLDER_NAME,
+      mimeType: "application/vnd.google-apps.folder",
+    },
+    fields: "id",
+  });
+  return created.data.id!;
+}
+
+export async function uploadFileToDrive(
+  accessToken: string,
+  folderId: string,
+  fileName: string,
+  buffer: Buffer,
+  mimeType: string,
+): Promise<{ id: string }> {
+  const drive = driveClient(accessToken);
+  const { Readable } = await import("node:stream");
+  const res = await drive.files.create({
+    requestBody: {
+      name: fileName,
+      parents: [folderId],
+    },
+    media: {
+      mimeType,
+      body: Readable.from(buffer),
+    },
+    fields: "id",
+  });
+  return { id: res.data.id! };
 }

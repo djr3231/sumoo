@@ -57,7 +57,7 @@ export function DriveImport() {
     setFiles(json.files);
   }
 
-  async function processOne(file: DriveFile): Promise<Receipt> {
+  async function processOne(file: DriveFile): Promise<Receipt[]> {
     const json = await postWithRetry("/api/ocr", {
       kind: "drive",
       driveFileId: file.id,
@@ -65,7 +65,7 @@ export function DriveImport() {
       mediaType: file.mimeType,
     });
     if (!json.ok) throw new Error(json.error || "OCR failed");
-    return json.receipt as Receipt;
+    return (json.receipts as Receipt[]) || [];
   }
 
   async function startProcessing() {
@@ -84,13 +84,15 @@ export function DriveImport() {
         const f = queue.shift();
         if (!f) break;
         try {
-          const r = await processOne(f);
-          newResults.push(r);
-          await fetch("/api/sheets", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ receipts: [r] }),
-          });
+          const rs = await processOne(f);
+          newResults.push(...rs);
+          if (rs.length > 0) {
+            await fetch("/api/sheets", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ receipts: rs }),
+            });
+          }
         } catch (e) {
           newErrors.push({ name: f.name, error: (e as Error).message });
         } finally {

@@ -5,8 +5,10 @@ import { Button } from "./ui/Button";
 import {
   CATEGORIES,
   DOCUMENT_TYPES,
+  PAYMENT_METHODS,
   type Category,
   type DocumentType,
+  type PaymentMethod,
   type Receipt,
 } from "@/lib/types";
 import { formatDate, formatILS } from "@/lib/utils";
@@ -19,6 +21,8 @@ type SortKey =
   | "date"
   | "category"
   | "documentType"
+  | "paymentMethod"
+  | "totalReceiptAmount"
   | "fileName"
   | "confidence"
   | "reviewed";
@@ -31,14 +35,16 @@ interface ColumnDef {
 }
 
 const COLUMNS: ColumnDef[] = [
-  { key: "storeName",    label: "שם חנות",   filterable: true,  getValue: (r) => r.storeName ?? "לא ידוע" },
-  { key: "amount",       label: "סכום",      filterable: false, getValue: (r) => (r.amount === null ? "" : String(r.amount)) },
-  { key: "date",         label: "תאריך",     filterable: false, getValue: (r) => r.date ?? "" },
-  { key: "category",     label: "קטגוריה",   filterable: true,  getValue: (r) => r.category },
-  { key: "documentType", label: "סוג מסמך",  filterable: true,  getValue: (r) => r.documentType },
-  { key: "fileName",     label: "קובץ",      filterable: false, getValue: (r) => r.fileName },
-  { key: "confidence",   label: "conf",      filterable: true,  getValue: (r) => r.confidence },
-  { key: "reviewed",     label: "נבדק",      filterable: true,  getValue: (r) => (r.reviewed ? "כן" : "לא") },
+  { key: "storeName",          label: "שם חנות",       filterable: true,  getValue: (r) => r.storeName ?? "לא ידוע" },
+  { key: "amount",             label: "סכום",          filterable: false, getValue: (r) => (r.amount === null ? "" : String(r.amount)) },
+  { key: "totalReceiptAmount", label: "סך הקבלה",      filterable: false, getValue: (r) => (r.totalReceiptAmount == null ? "" : String(r.totalReceiptAmount)) },
+  { key: "paymentMethod",      label: "אמצעי תשלום",   filterable: true,  getValue: (r) => r.paymentMethod ?? "לא ידוע" },
+  { key: "date",               label: "תאריך",         filterable: false, getValue: (r) => r.date ?? "" },
+  { key: "category",           label: "קטגוריה",       filterable: true,  getValue: (r) => r.category },
+  { key: "documentType",       label: "סוג מסמך",      filterable: true,  getValue: (r) => r.documentType },
+  { key: "fileName",           label: "קובץ",          filterable: false, getValue: (r) => r.fileName },
+  { key: "confidence",         label: "conf",          filterable: true,  getValue: (r) => r.confidence },
+  { key: "reviewed",           label: "נבדק",          filterable: true,  getValue: (r) => (r.reviewed ? "כן" : "לא") },
 ];
 
 function compareReceipts(a: Receipt, b: Receipt, key: SortKey, dir: "asc" | "desc"): number {
@@ -47,6 +53,9 @@ function compareReceipts(a: Receipt, b: Receipt, key: SortKey, dir: "asc" | "des
   if (key === "amount") {
     av = a.amount;
     bv = b.amount;
+  } else if (key === "totalReceiptAmount") {
+    av = a.totalReceiptAmount ?? null;
+    bv = b.totalReceiptAmount ?? null;
   } else if (key === "reviewed") {
     av = a.reviewed ? 1 : 0;
     bv = b.reviewed ? 1 : 0;
@@ -173,9 +182,14 @@ export function ReceiptTable() {
     return [...filtered].sort((a, b) => compareReceipts(a, b, sort.key, sort.dir));
   }, [filtered, sort]);
 
+  function driveLink(r: Receipt): string {
+    return r.driveFileId ? `https://drive.google.com/file/d/${r.driveFileId}/view` : "";
+  }
+
   function downloadCSV() {
     const headers = [
-      "שם חנות", "סכום", "תאריך", "קטגוריה", "שם קובץ",
+      "שם חנות", "סכום", "סך הקבלה", "אמצעי תשלום", "4 ספרות",
+      "תאריך", "קטגוריה", "שם קובץ", "לינק לתמונה",
       "סוג מסמך", "מקושר ל", "confidence", "נבדק ידנית", "הערות",
     ];
     const lines = [headers.join(",")];
@@ -184,9 +198,13 @@ export function ReceiptTable() {
         [
           quoteCSV(r.storeName ?? "לא ידוע"),
           r.amount ?? "",
+          r.totalReceiptAmount ?? "",
+          quoteCSV(r.paymentMethod ?? "לא ידוע"),
+          quoteCSV(r.cardLast4 ?? ""),
           r.date ?? "",
           quoteCSV(r.category),
           quoteCSV(r.fileName),
+          quoteCSV(driveLink(r)),
           quoteCSV(r.documentType),
           quoteCSV(r.linkedTo ?? ""),
           quoteCSV(r.confidence),
@@ -203,9 +221,13 @@ export function ReceiptTable() {
     const data = sorted.map((r) => ({
       "שם חנות": r.storeName ?? "לא ידוע",
       "סכום": r.amount ?? "",
+      "סך הקבלה": r.totalReceiptAmount ?? "",
+      "אמצעי תשלום": r.paymentMethod ?? "לא ידוע",
+      "4 ספרות": r.cardLast4 ?? "",
       "תאריך": r.date ?? "",
       "קטגוריה": r.category,
       "שם קובץ": r.fileName,
+      "לינק לתמונה": driveLink(r),
       "סוג מסמך": r.documentType,
       "מקושר ל": r.linkedTo ?? "",
       confidence: r.confidence,
@@ -326,6 +348,25 @@ export function ReceiptTable() {
                       {formatILS(r.amount)}
                     </div>
                   </td>
+                  <td className="p-2 tabular-nums text-[hsl(var(--muted-foreground))]">
+                    {r.totalReceiptAmount == null ? "—" : formatILS(r.totalReceiptAmount)}
+                  </td>
+                  <td className="p-2">
+                    <select
+                      value={r.paymentMethod || "לא ידוע"}
+                      onChange={(e) => patch(r.id, { paymentMethod: e.target.value as PaymentMethod })}
+                      className="bg-transparent px-1"
+                    >
+                      {PAYMENT_METHODS.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                    {r.cardLast4 && (
+                      <div className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                        ★{r.cardLast4}
+                      </div>
+                    )}
+                  </td>
                   <td className="p-2">
                     <input
                       type="date"
@@ -362,8 +403,22 @@ export function ReceiptTable() {
                       ))}
                     </select>
                   </td>
-                  <td className="p-2 max-w-[180px] truncate" title={r.fileName}>
-                    {r.fileName}
+                  <td className="p-2 max-w-[200px]">
+                    {r.driveFileId ? (
+                      <a
+                        href={`https://drive.google.com/file/d/${r.driveFileId}/view`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline truncate inline-block max-w-full"
+                        title={r.fileName}
+                      >
+                        {r.fileName}
+                      </a>
+                    ) : (
+                      <span className="truncate inline-block max-w-full" title={r.fileName}>
+                        {r.fileName}
+                      </span>
+                    )}
                   </td>
                   <td className="p-2 text-[hsl(var(--muted-foreground))]">{r.confidence}</td>
                   <td className="p-2">

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { parseStatementPDF } from "@/lib/claude";
+import { parseStatementPDF } from "@/lib/ai";
 import { parseCSV, parseXLSX } from "@/lib/parsers";
 import type { BankTxn } from "@/lib/types";
 

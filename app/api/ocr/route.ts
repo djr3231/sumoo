@@ -1,15 +1,17 @@
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { v4 as uuidv4 } from "uuid";
-import { extractReceipt } from "@/lib/claude";
+import { extractReceipt } from "@/lib/ai";
 import {
   appendOrIncrementStore,
   downloadDriveFile,
   ensureSpreadsheet,
+  ensureUploadFolder,
   getAllStores,
   requireAccessToken,
+  uploadFileToDrive,
 } from "@/lib/google";
-import type { Receipt } from "@/lib/types";
+import type { PaymentMethod, Receipt } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -26,43 +28,30 @@ async function shrinkImage(base64: string): Promise<string> {
   return out.toString("base64");
 }
 
-type Body =
-  | { kind: "upload"; fileName: string; mediaType: string; base64: string }
-  | { kind: "drive"; driveFileId: string; fileName: string; mediaType: string };
-
-function asMediaType(mt: string): "image/jpeg" | "image/png" | "image/webp" | "image/gif" {
+function asMediaType(
+  mt: string,
+): "image/jpeg" | "image/png" | "image/webp" | "image/gif" {
   if (mt === "image/png") return "image/png";
   if (mt === "image/webp") return "image/webp";
   if (mt === "image/gif") return "image/gif";
   return "image/jpeg";
 }
 
-function toReceipt(args: {
-  fileName: string;
-  driveFileId: string | null;
-  extracted: Awaited<ReturnType<typeof extractReceipt>>;
-}): Receipt {
-  const { fileName, driveFileId, extracted } = args;
-  const docTypeMap: Record<string, Receipt["documentType"]> = {
-    receipt: "קבלה",
-    tax_invoice: "חשבונית מס",
-    credit_slip: "ספח אשראי",
-    credit_note: "זיכוי",
-    unknown: "לא ידוע",
-  };
-  return {
-    id: uuidv4(),
-    fileName,
-    driveFileId,
-    storeName: extracted.store_name,
-    amount: extracted.amount,
-    date: extracted.date,
-    category: extracted.category,
-    documentType: docTypeMap[extracted.document_type] || "לא ידוע",
-    confidence: extracted.confidence,
-    reviewed: false,
-    notes: "",
-  };
+type Body =
+  | { kind: "upload"; fileName: string; mediaType: string; base64: string }
+  | { kind: "drive"; driveFileId: string; fileName: string; mediaType: string };
+
+function classifyMethod(
+  paymentMethod: "credit_card" | "cash" | "other",
+  cardLast4: string | null,
+  userLast4: string,
+): PaymentMethod {
+  if (paymentMethod === "cash") return "מזומן";
+  if (paymentMethod === "credit_card") {
+    if (cardLast4 && cardLast4 === userLast4) return "אשראי";
+    return "מזומן"; // user's rule: any other card = "cash" bucket
+  }
+  return "אחר";
 }
 
 export async function POST(req: Request) {
@@ -73,11 +62,13 @@ export async function POST(req: Request) {
     let mediaType: string;
     let fileName: string;
     let driveFileId: string | null = null;
+    let originalBuffer: Buffer | null = null;
 
     if (body.kind === "upload") {
       base64 = body.base64;
       mediaType = body.mediaType;
       fileName = body.fileName;
+      originalBuffer = Buffer.from(base64, "base64");
     } else {
       const token = await requireAccessToken();
       const dl = await downloadDriveFile(token, body.driveFileId);
@@ -91,18 +82,23 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           ok: true,
-          receipt: {
-            id: uuidv4(),
-            fileName,
-            driveFileId,
-            storeName: null,
-            amount: null,
-            date: null,
-            category: "לא ידוע",
-            documentType: "לא ידוע",
-            confidence: "low",
-            reviewed: false,
-          } satisfies Receipt,
+          receipts: [
+            {
+              id: uuidv4(),
+              fileName,
+              driveFileId,
+              storeName: null,
+              amount: null,
+              date: null,
+              category: "לא ידוע",
+              documentType: "לא ידוע",
+              paymentMethod: "לא ידוע",
+              cardLast4: null,
+              totalReceiptAmount: null,
+              confidence: "low",
+              reviewed: false,
+            } satisfies Receipt,
+          ],
           warning: `Skipped non-image media type: ${mediaType}`,
         },
         { status: 200 },
@@ -134,20 +130,114 @@ export async function POST(req: Request) {
       fileName,
       knownStores,
     });
-    const receipt = toReceipt({ fileName, driveFileId, extracted });
 
-    if (token && spreadsheetId && receipt.storeName) {
+    // Auto-upload local files to Drive so they get a permanent link
+    if (body.kind === "upload" && token && originalBuffer) {
       try {
-        const variant = extracted.matched_known_store ? undefined : receipt.storeName;
-        await appendOrIncrementStore(token, spreadsheetId, receipt.storeName, variant);
+        const folderId = await ensureUploadFolder(token);
+        const uploaded = await uploadFileToDrive(
+          token,
+          folderId,
+          fileName,
+          originalBuffer,
+          body.mediaType || "image/jpeg",
+        );
+        driveFileId = uploaded.id;
+      } catch (e) {
+        console.warn("Drive auto-upload failed", e);
+      }
+    }
+
+    const userLast4 = process.env.MY_CREDIT_CARD_LAST4 || "6021";
+    const docTypeMap: Record<string, Receipt["documentType"]> = {
+      receipt: "קבלה",
+      credit_slip: "ספח אשראי",
+      unknown: "לא ידוע",
+    };
+    const docType = docTypeMap[extracted.document_type] || "לא ידוע";
+    const totalAmount = extracted.total_amount ?? null;
+
+    // Build receipts: split mixed payments into multiple linked rows
+    const receipts: Receipt[] = [];
+    const payments = extracted.payments.filter((p) => Number.isFinite(p.amount));
+
+    if (payments.length === 0) {
+      receipts.push({
+        id: uuidv4(),
+        fileName,
+        driveFileId,
+        storeName: extracted.store_name,
+        amount: totalAmount,
+        date: extracted.date,
+        category: extracted.category,
+        documentType: docType,
+        paymentMethod: "לא ידוע",
+        cardLast4: null,
+        totalReceiptAmount: totalAmount,
+        confidence: extracted.confidence,
+        reviewed: false,
+        notes: "",
+      });
+    } else if (payments.length === 1) {
+      const p = payments[0];
+      receipts.push({
+        id: uuidv4(),
+        fileName,
+        driveFileId,
+        storeName: extracted.store_name,
+        amount: p.amount,
+        date: extracted.date,
+        category: extracted.category,
+        documentType: docType,
+        paymentMethod: classifyMethod(p.method, p.card_last4, userLast4),
+        cardLast4: p.card_last4,
+        totalReceiptAmount: totalAmount,
+        confidence: extracted.confidence,
+        reviewed: false,
+        notes: "",
+      });
+    } else {
+      // Mixed payment: one row per payment, linked to the first
+      const primaryId = uuidv4();
+      payments.forEach((p, i) => {
+        receipts.push({
+          id: i === 0 ? primaryId : uuidv4(),
+          fileName,
+          driveFileId,
+          storeName: extracted.store_name,
+          amount: p.amount,
+          date: extracted.date,
+          category: extracted.category,
+          documentType: docType,
+          paymentMethod: classifyMethod(p.method, p.card_last4, userLast4),
+          cardLast4: p.card_last4,
+          totalReceiptAmount: totalAmount,
+          linkedTo: i === 0 ? null : primaryId,
+          confidence: extracted.confidence,
+          reviewed: false,
+          notes: i === 0 ? `תשלום מעורב (${payments.length} שורות)` : `שורה ${i + 1}/${payments.length} של תשלום מעורב`,
+        });
+      });
+    }
+
+    // Update stores list (use the storeName as recorded; should equal canonical when matched)
+    if (token && spreadsheetId && extracted.store_name) {
+      try {
+        const variant = extracted.matched_known_store ? undefined : extracted.store_name;
+        await appendOrIncrementStore(
+          token,
+          spreadsheetId,
+          extracted.store_name,
+          variant,
+        );
       } catch (e) {
         console.warn("appendOrIncrementStore failed", e);
       }
     }
 
-    return NextResponse.json({ ok: true, receipt });
+    return NextResponse.json({ ok: true, receipts });
   } catch (err) {
-    const e = err as { status?: number; message?: string; name?: string };
+    const e = err as { status?: number; message?: string };
     const msg = e?.message ?? "OCR failed";
     const status =
       e?.status === 429 || /rate.?limit/i.test(msg)

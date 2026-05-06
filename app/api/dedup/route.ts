@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import {
   canonicalizeStoreNames,
   detectDuplicatesAndCredits,
-} from "@/lib/claude";
+} from "@/lib/ai";
 import {
   bulkUpdateReceipts,
   ensureSpreadsheet,
