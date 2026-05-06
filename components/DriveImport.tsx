@@ -3,7 +3,28 @@ import { useState } from "react";
 import { Button } from "./ui/Button";
 import type { Receipt } from "@/lib/types";
 
-const CONCURRENCY = 5;
+const CONCURRENCY = 2;
+
+async function postWithRetry(url: string, body: unknown, attempts = 4) {
+  let lastErr = "";
+  for (let i = 0; i < attempts; i++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return res.json();
+    if (res.status === 429 || res.status === 503) {
+      const wait = Math.min(15000, 1500 * Math.pow(2, i));
+      await new Promise((r) => setTimeout(r, wait));
+      lastErr = `${res.status}`;
+      continue;
+    }
+    const j = await res.json().catch(() => ({}));
+    throw new Error(j.error || `HTTP ${res.status}`);
+  }
+  throw new Error(`failed after ${attempts} attempts (last: ${lastErr})`);
+}
 
 interface DriveFile {
   id: string;
@@ -37,18 +58,13 @@ export function DriveImport() {
   }
 
   async function processOne(file: DriveFile): Promise<Receipt> {
-    const res = await fetch("/api/ocr", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        kind: "drive",
-        driveFileId: file.id,
-        fileName: file.name,
-        mediaType: file.mimeType,
-      }),
+    const json = await postWithRetry("/api/ocr", {
+      kind: "drive",
+      driveFileId: file.id,
+      fileName: file.name,
+      mediaType: file.mimeType,
     });
-    const json = await res.json();
-    if (!res.ok || !json.ok) throw new Error(json.error || "OCR failed");
+    if (!json.ok) throw new Error(json.error || "OCR failed");
     return json.receipt as Receipt;
   }
 

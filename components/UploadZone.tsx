@@ -4,10 +4,10 @@ import { useDropzone } from "react-dropzone";
 import { Button } from "./ui/Button";
 import type { Receipt } from "@/lib/types";
 
-const CONCURRENCY = 5;
+const CONCURRENCY = 2;
+const MAX_DIM = 1568;
 
-async function fileToBase64(file: File): Promise<string> {
-  const buf = await file.arrayBuffer();
+async function bufferToBase64(buf: ArrayBuffer): Promise<string> {
   let binary = "";
   const bytes = new Uint8Array(buf);
   const chunk = 8192;
@@ -15,6 +15,63 @@ async function fileToBase64(file: File): Promise<string> {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
   return btoa(binary);
+}
+
+async function resizeToBase64(
+  file: File,
+): Promise<{ base64: string; mediaType: string }> {
+  if (!file.type.startsWith("image/")) {
+    return { base64: await bufferToBase64(await file.arrayBuffer()), mediaType: file.type || "application/octet-stream" };
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = () => rej(new Error("image decode failed"));
+      i.src = url;
+    });
+    const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext("2d");
+    if (!ctx) throw new Error("canvas 2d unavailable");
+    ctx.drawImage(img, 0, 0, w, h);
+    const blob = await new Promise<Blob>((res, rej) =>
+      c.toBlob(
+        (b) => (b ? res(b) : rej(new Error("toBlob failed"))),
+        "image/jpeg",
+        0.85,
+      ),
+    );
+    return { base64: await bufferToBase64(await blob.arrayBuffer()), mediaType: "image/jpeg" };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function postWithRetry(url: string, body: unknown, attempts = 4) {
+  let lastErr = "";
+  for (let i = 0; i < attempts; i++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return res.json();
+    if (res.status === 429 || res.status === 503) {
+      const wait = Math.min(15000, 1500 * Math.pow(2, i));
+      await new Promise((r) => setTimeout(r, wait));
+      lastErr = `${res.status}`;
+      continue;
+    }
+    const j = await res.json().catch(() => ({}));
+    throw new Error(j.error || `HTTP ${res.status}`);
+  }
+  throw new Error(`failed after ${attempts} attempts (last: ${lastErr})`);
 }
 
 export function UploadZone() {
@@ -35,19 +92,14 @@ export function UploadZone() {
   });
 
   async function processOne(file: File): Promise<Receipt> {
-    const base64 = await fileToBase64(file);
-    const res = await fetch("/api/ocr", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        kind: "upload",
-        fileName: file.name,
-        mediaType: file.type || "image/jpeg",
-        base64,
-      }),
+    const { base64, mediaType } = await resizeToBase64(file);
+    const json = await postWithRetry("/api/ocr", {
+      kind: "upload",
+      fileName: file.name,
+      mediaType,
+      base64,
     });
-    const json = await res.json();
-    if (!res.ok || !json.ok) throw new Error(json.error || "OCR failed");
+    if (!json.ok) throw new Error(json.error || "OCR failed");
     return json.receipt as Receipt;
   }
 

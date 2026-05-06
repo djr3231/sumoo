@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import sharp from "sharp";
 import { v4 as uuidv4 } from "uuid";
 import { extractReceipt } from "@/lib/claude";
 import { downloadDriveFile, requireAccessToken } from "@/lib/google";
@@ -6,6 +7,18 @@ import type { Receipt } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+const MAX_DIM = 1568;
+
+async function shrinkImage(base64: string): Promise<string> {
+  const buf = Buffer.from(base64, "base64");
+  const out = await sharp(buf)
+    .rotate()
+    .resize(MAX_DIM, MAX_DIM, { fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 85 })
+    .toBuffer();
+  return out.toString("base64");
+}
 
 type Body =
   | { kind: "upload"; fileName: string; mediaType: string; base64: string }
@@ -89,6 +102,13 @@ export async function POST(req: Request) {
       );
     }
 
+    try {
+      base64 = await shrinkImage(base64);
+      mediaType = "image/jpeg";
+    } catch (e) {
+      console.warn("sharp resize failed, sending original", e);
+    }
+
     const extracted = await extractReceipt({
       imageBase64: base64,
       mediaType: asMediaType(mediaType),
@@ -97,9 +117,14 @@ export async function POST(req: Request) {
     const receipt = toReceipt({ fileName, driveFileId, extracted });
     return NextResponse.json({ ok: true, receipt });
   } catch (err) {
-    return NextResponse.json(
-      { error: (err as Error).message },
-      { status: 500 },
-    );
+    const e = err as { status?: number; message?: string; name?: string };
+    const msg = e?.message ?? "OCR failed";
+    const status =
+      e?.status === 429 || /rate.?limit/i.test(msg)
+        ? 429
+        : e?.status === 529 || /overloaded/i.test(msg)
+          ? 503
+          : 500;
+    return NextResponse.json({ error: msg }, { status });
   }
 }
