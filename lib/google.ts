@@ -55,7 +55,7 @@ export async function ensureSpreadsheet(accessToken: string): Promise<string> {
   const sheets = sheetsClient(accessToken);
   const created = await sheets.spreadsheets.create({
     requestBody: {
-      properties: { title: SHEET_NAME, locale: "he_IL" },
+      properties: { title: SHEET_NAME },
       sheets: [
         { properties: { title: SHEET_TAB_RECEIPTS, rightToLeft: true } },
         { properties: { title: SHEET_TAB_TXNS, rightToLeft: true } },
