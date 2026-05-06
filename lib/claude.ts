@@ -21,7 +21,6 @@ export interface ExtractedReceipt {
   category: Category;
   document_type: "receipt" | "tax_invoice" | "credit_slip" | "credit_note" | "unknown";
   confidence: Confidence;
-  raw_text_he: string;
 }
 
 const RECEIPT_TOOL = {
@@ -68,10 +67,6 @@ const RECEIPT_TOOL = {
         description:
           "low אם רוב השדות null או מטושטשים, high אם כל השדות ברורים.",
       },
-      raw_text_he: {
-        type: "string",
-        description: "הטקסט הגולמי שזוהה בתמונה (עברית), עד 800 תווים.",
-      },
     },
     required: [
       "store_name",
@@ -81,7 +76,6 @@ const RECEIPT_TOOL = {
       "category",
       "document_type",
       "confidence",
-      "raw_text_he",
     ],
   },
 };
