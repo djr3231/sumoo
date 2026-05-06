@@ -129,7 +129,7 @@ export async function extractReceipt(args: {
 
   const response = await client().messages.create({
     model: MODEL,
-    max_tokens: 1024,
+    max_tokens: 2048,
     system: [
       {
         type: "text",
@@ -137,7 +137,7 @@ export async function extractReceipt(args: {
         cache_control: { type: "ephemeral" },
       },
     ],
-    tools: [RECEIPT_TOOL],
+    tools: [{ ...RECEIPT_TOOL, cache_control: { type: "ephemeral" } }],
     tool_choice: { type: "tool", name: "record_receipt" },
     messages: [
       {
