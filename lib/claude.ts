@@ -15,10 +15,11 @@ function client() {
 
 export interface ExtractedReceipt {
   store_name: string | null;
+  matched_known_store: boolean;
   amount: number | null;
   date: string | null;
   category: Category;
-  document_type: "receipt" | "credit_note" | "unknown";
+  document_type: "receipt" | "tax_invoice" | "credit_slip" | "credit_note" | "unknown";
   confidence: Confidence;
   raw_text_he: string;
 }
@@ -32,7 +33,13 @@ const RECEIPT_TOOL = {
     properties: {
       store_name: {
         type: ["string", "null"],
-        description: "שם בית העסק כפי שמופיע בקבלה. null אם לא קריא בבירור.",
+        description:
+          "שם בית העסק. אם הוא תואם לאחת מהחנויות הקנוניות שיוצגו לך — החזר את השם הקנוני בדיוק כפי שהוא ברשימה. אחרת — החזר את השם החדש כפי שמופיע בקבלה. null אם לא קריא בכלל.",
+      },
+      matched_known_store: {
+        type: "boolean",
+        description:
+          "true אם בחרת שם מתוך רשימת החנויות הקנוניות שהוצגה לך. false אם זה שם חדש או שלא הוצגה רשימה.",
       },
       amount: {
         type: ["number", "null"],
@@ -51,9 +58,9 @@ const RECEIPT_TOOL = {
       },
       document_type: {
         type: "string",
-        enum: ["receipt", "credit_note", "unknown"],
+        enum: ["receipt", "tax_invoice", "credit_slip", "credit_note", "unknown"],
         description:
-          "receipt = קבלה רגילה, credit_note = זיכוי/החזר (סכום שלילי, מילים כמו 'זיכוי', 'החזר', או סוגריים סביב סכום).",
+          "סוג המסמך — חשוב להבדיל ביניהם: receipt = קבלה רגילה (כתוב 'קבלה' או 'קבלה מס.'); tax_invoice = חשבונית מס/קבלה ('חשבונית מס/קבלה', 'חשבונית מס'); credit_slip = ספח אשראי/אישור עסקה בלבד ('ספח אשראי', 'אישור עסקה', 'VISA', 'ISRACARD', 'מזומן', 4 ספרות אחרונות של כרטיס, בלי המילה 'קבלה'); credit_note = זיכוי/החזר (סכום שלילי, 'זיכוי', 'החזר', 'ביטול עסקה'); unknown = לא ברור.",
       },
       confidence: {
         type: "string",
@@ -68,6 +75,7 @@ const RECEIPT_TOOL = {
     },
     required: [
       "store_name",
+      "matched_known_store",
       "amount",
       "date",
       "category",
@@ -78,7 +86,7 @@ const RECEIPT_TOOL = {
   },
 };
 
-const SYSTEM_PROMPT = `אתה מומחה לחילוץ נתונים מקבלות וחשבוניות זיכוי ישראליות מתוך תמונות.
+const SYSTEM_PROMPT = `אתה מומחה לחילוץ נתונים מקבלות, חשבוניות, וספחי אשראי ישראליים מתוך תמונות.
 
 המטרה: לקרוא את הקבלה בתמונה ולהחזיר את הנתונים בקריאת הכלי record_receipt.
 
@@ -94,6 +102,8 @@ const SYSTEM_PROMPT = `אתה מומחה לחילוץ נתונים מקבלות 
    - med  = שדה אחד או שניים null/לא ברורים.
    - low  = רוב השדות null, התמונה מטושטשת או חתוכה.
 7. אסור להמציא שמות חנויות, סכומים או תאריכים. אם מסופק — null.
+8. **שם חנות קנוני**: אם המשתמש מספק רשימת חנויות קנוניות מוכרות (למטה ב-user message), בדוק האם הקבלה הזו מאחת מהחנויות שברשימה. ה-OCR שלך עלול להיות לא מדויק — לכן אם השם בקבלה דומה (גם אם לא זהה אות-אות, גם עם שגיאות כתיב, גם עם הבדל קטן בסיפרות סוגריים) לאחת החנויות הידועות — החזר את **השם הקנוני בדיוק כפי שמופיע ברשימה**, ו-matched_known_store=true. רק אם זו באמת חנות חדשה (שונה לחלוטין) — החזר את השם החדש כפי שאתה רואה ו-matched_known_store=false.
+9. **סוג מסמך**: היה מדויק בהבחנה. הסתכל על הטקסט הגדול בראש המסמך. אם רואים "ספח אשראי" / "אישור עסקה" / "Credit Card Slip" — זה credit_slip, **לא קבלה**, גם אם יש סכום ותאריך. ספח אשראי בד"כ קצר יותר, מציג את 4 הספרות האחרונות של הכרטיס, ואין בו פירוט פריטים.
 
 מטה כמה דוגמאות לקטגוריות:
 - "סופר" — שופרסל, רמי לוי, ויקטורי, יוחננוף, AM:PM, טיב טעם, מחסני השוק, יינות ביתן.
@@ -112,8 +122,16 @@ export async function extractReceipt(args: {
   imageBase64: string;
   mediaType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
   fileName: string;
+  knownStores?: string[];
 }): Promise<ExtractedReceipt> {
-  const { imageBase64, mediaType, fileName } = args;
+  const { imageBase64, mediaType, fileName, knownStores = [] } = args;
+
+  const knownBlock =
+    knownStores.length > 0
+      ? `\n\nרשימת חנויות קנוניות מוכרות (אם הקבלה מאחת מהן, החזר את השם בדיוק כך):\n${knownStores
+          .map((s, i) => `${i + 1}. ${s}`)
+          .join("\n")}`
+      : "\n\n(אין עדיין רשימת חנויות קנוניות — החזר את השם כפי שאתה קורא בקבלה ו-matched_known_store=false.)";
 
   const response = await client().messages.create({
     model: MODEL,
@@ -141,7 +159,7 @@ export async function extractReceipt(args: {
           },
           {
             type: "text",
-            text: `שם הקובץ: ${fileName}\nחלץ את הנתונים. אם משהו לא קריא, החזר null עבור אותו שדה.`,
+            text: `שם הקובץ: ${fileName}\nחלץ את הנתונים. אם משהו לא קריא, החזר null עבור אותו שדה.${knownBlock}`,
           },
         ],
       },
@@ -156,6 +174,9 @@ export async function extractReceipt(args: {
 
   if (!CATEGORIES.includes(out.category)) {
     out.category = "לא ידוע";
+  }
+  if (typeof out.matched_known_store !== "boolean") {
+    out.matched_known_store = false;
   }
   return out;
 }
@@ -236,6 +257,93 @@ export async function detectDuplicatesAndCredits(
   if (!toolUse || toolUse.type !== "tool_use") return [];
   const input = toolUse.input as { groups: DedupGroup[] };
   return input.groups || [];
+}
+
+export interface CanonicalGroup {
+  canonical: string;
+  variants: string[];
+}
+
+const CANON_TOOL = {
+  name: "report_canonical_groups",
+  description:
+    "Group similar Hebrew store names that refer to the same business into canonical groups.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      groups: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            canonical: {
+              type: "string",
+              description:
+                "השם הקנוני המייצג את החנות — בחר את הוריאציה השלמה והנכונה ביותר מתוך ה-variants.",
+            },
+            variants: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "כל הוריאציות מהקלט שמתייחסות לאותה חנות. חייב לכלול גם את canonical עצמו אם הוא מופיע בקלט.",
+            },
+          },
+          required: ["canonical", "variants"],
+        },
+      },
+    },
+    required: ["groups"],
+  },
+};
+
+export async function canonicalizeStoreNames(
+  names: string[],
+): Promise<CanonicalGroup[]> {
+  const unique = Array.from(new Set(names.filter(Boolean)));
+  if (unique.length <= 1) {
+    return unique.map((n) => ({ canonical: n, variants: [n] }));
+  }
+
+  const response = await client().messages.create({
+    model: MODEL,
+    max_tokens: 4096,
+    system: [
+      {
+        type: "text",
+        text: `אתה מומחה בזיהוי שמות חנויות ישראליות. תקבל רשימת שמות חנויות שחולצו מקבלות באמצעות OCR. חלק מהשמות מתייחסים לאותה חנות אבל מופיעים בוריאציות שונות עקב טעויות OCR (החלפת אותיות דומות, ספרות שגויות, רווחים נוספים, כתיב מלא/חסר).
+
+המשימה שלך: לקבץ את השמות לקבוצות קנוניות.
+- כל קבוצה מייצגת חנות אחת אמיתית.
+- canonical = השם הנכון והשלם ביותר (אם קיים אחד שנראה הכי "נקי" — בחר אותו; אחרת בחר את הארוך ביותר עם פרטי החברה כמו "בע"מ", מספר ח.פ. בסוגריים וכד').
+- variants = רשימת כל השמות מהקלט שמתייחסים לחנות הזו (כולל canonical).
+- שם שעומד לבד (אין לו וריאציות אחרות) — קבוצה משלו עם variants=[name].
+- אסור להשמיט שם מהקלט. כל שם חייב להופיע בדיוק בקבוצה אחת.
+
+החזר תמיד דרך הכלי report_canonical_groups.`,
+        cache_control: { type: "ephemeral" },
+      },
+    ],
+    tools: [CANON_TOOL],
+    tool_choice: { type: "tool", name: "report_canonical_groups" },
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `רשימת שמות לקיבוץ:\n${JSON.stringify(unique)}`,
+          },
+        ],
+      },
+    ],
+  });
+
+  const toolUse = response.content.find((b) => b.type === "tool_use");
+  if (!toolUse || toolUse.type !== "tool_use") {
+    return unique.map((n) => ({ canonical: n, variants: [n] }));
+  }
+  const out = toolUse.input as { groups: CanonicalGroup[] };
+  return out.groups || [];
 }
 
 const STATEMENT_TOOL = {

@@ -17,10 +17,22 @@ export type Category = (typeof CATEGORIES)[number];
 
 export type DocumentType =
   | "קבלה"
+  | "חשבונית מס"
+  | "ספח אשראי"
   | "זיכוי"
   | "כפילות"
   | "זיכוי-יתום"
   | "לא ידוע";
+
+export const DOCUMENT_TYPES: DocumentType[] = [
+  "קבלה",
+  "חשבונית מס",
+  "ספח אשראי",
+  "זיכוי",
+  "כפילות",
+  "זיכוי-יתום",
+  "לא ידוע",
+];
 
 export type Confidence = "low" | "med" | "high";
 
@@ -50,6 +62,19 @@ export interface BankTxn {
 
 export const SHEET_TAB_RECEIPTS = "קבלות";
 export const SHEET_TAB_TXNS = "תנועות";
+export const SHEET_TAB_STORES = "חנויות";
+
+export interface Store {
+  canonical: string;
+  count: number;
+  variants: string[];
+}
+
+export const STORE_HEADERS: ReadonlyArray<string> = [
+  "שם קנוני",
+  "ספירה",
+  "וריאציות",
+];
 
 export const RECEIPT_HEADERS: ReadonlyArray<string> = [
   "id",

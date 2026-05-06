@@ -142,8 +142,22 @@ export function UploadZone() {
   }
 
   async function runDedup() {
-    await fetch("/api/dedup", { method: "POST" });
-    alert("הסתיים זיהוי כפילויות וזיכויים. ראה את הטבלה.");
+    const r = await fetch("/api/dedup", { method: "POST" });
+    const j = await r.json();
+    if (!r.ok) {
+      alert("שגיאה: " + (j.error || r.status));
+      return;
+    }
+    const s = j.summary || {};
+    alert(
+      `הסתיים:\n• ${s.canonicalGroups ?? 0} שמות חנויות מאוחדים\n• ${
+        s.nameUpdates ?? 0
+      } שורות עודכנו לשם קנוני\n• ${s.duplicates ?? 0} כפילויות\n• ${
+        s.creditSlips ?? 0
+      } ספחי אשראי משויכים\n• ${s.creditMatches ?? 0} זיכויים תואמים\n• ${
+        s.creditOrphans ?? 0
+      } זיכויים יתומים`,
+    );
   }
 
   return (

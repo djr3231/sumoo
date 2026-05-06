@@ -4,10 +4,13 @@ import { authOptions } from "./auth";
 import {
   RECEIPT_HEADERS,
   SHEET_TAB_RECEIPTS,
+  SHEET_TAB_STORES,
   SHEET_TAB_TXNS,
+  STORE_HEADERS,
   TXN_HEADERS,
-  type Receipt,
   type BankTxn,
+  type Receipt,
+  type Store,
 } from "./types";
 
 export async function requireAccessToken(): Promise<string> {
@@ -106,6 +109,8 @@ function tabsFromMeta(
       out.push({ sheetId: id, columnCount: RECEIPT_HEADERS.length });
     } else if (title === SHEET_TAB_TXNS) {
       out.push({ sheetId: id, columnCount: TXN_HEADERS.length });
+    } else if (title === SHEET_TAB_STORES) {
+      out.push({ sheetId: id, columnCount: STORE_HEADERS.length });
     }
   }
   return out;
@@ -137,6 +142,7 @@ export async function ensureSpreadsheet(accessToken: string): Promise<string> {
       sheets: [
         { properties: { title: SHEET_TAB_RECEIPTS, rightToLeft: true } },
         { properties: { title: SHEET_TAB_TXNS, rightToLeft: true } },
+        { properties: { title: SHEET_TAB_STORES, rightToLeft: true } },
       ],
     },
   });
@@ -167,6 +173,13 @@ async function ensureTabs(accessToken: string, spreadsheetId: string) {
       },
     });
   }
+  if (!existing.has(SHEET_TAB_STORES)) {
+    requests.push({
+      addSheet: {
+        properties: { title: SHEET_TAB_STORES, rightToLeft: true },
+      },
+    });
+  }
   if (requests.length) {
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId,
@@ -183,7 +196,11 @@ async function writeHeaders(accessToken: string, spreadsheetId: string) {
   const sheets = sheetsClient(accessToken);
   const get = await sheets.spreadsheets.values.batchGet({
     spreadsheetId,
-    ranges: [`${SHEET_TAB_RECEIPTS}!A1:Z1`, `${SHEET_TAB_TXNS}!A1:Z1`],
+    ranges: [
+      `${SHEET_TAB_RECEIPTS}!A1:Z1`,
+      `${SHEET_TAB_TXNS}!A1:Z1`,
+      `${SHEET_TAB_STORES}!A1:Z1`,
+    ],
   });
   const data: sheets_v4.Schema$ValueRange[] = [];
   if (!get.data.valueRanges?.[0]?.values?.length) {
@@ -196,6 +213,12 @@ async function writeHeaders(accessToken: string, spreadsheetId: string) {
     data.push({
       range: `${SHEET_TAB_TXNS}!A1`,
       values: [[...TXN_HEADERS]],
+    });
+  }
+  if (!get.data.valueRanges?.[2]?.values?.length) {
+    data.push({
+      range: `${SHEET_TAB_STORES}!A1`,
+      values: [[...STORE_HEADERS]],
     });
   }
   if (data.length) {
@@ -291,6 +314,114 @@ export async function updateReceiptById(
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [receiptToRow(merged)] },
   });
+}
+
+export async function bulkUpdateReceipts(
+  accessToken: string,
+  spreadsheetId: string,
+  patches: Array<Partial<Receipt> & { id: string }>,
+) {
+  if (patches.length === 0) return;
+  const sheets = sheetsClient(accessToken);
+  const all = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_TAB_RECEIPTS}!A:L`,
+  });
+  const rows = all.data.values || [];
+  const indexById = new Map<string, number>();
+  for (let i = 1; i < rows.length; i++) {
+    const id = rows[i]?.[0];
+    if (id) indexById.set(String(id), i);
+  }
+  const data: sheets_v4.Schema$ValueRange[] = [];
+  for (const patch of patches) {
+    const idx = indexById.get(patch.id);
+    if (idx === undefined) continue;
+    const existing = rowToReceipt(rows[idx]);
+    const merged: Receipt = { ...existing, ...patch };
+    data.push({
+      range: `${SHEET_TAB_RECEIPTS}!A${idx + 1}:L${idx + 1}`,
+      values: [receiptToRow(merged)],
+    });
+  }
+  if (data.length === 0) return;
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: { valueInputOption: "USER_ENTERED", data },
+  });
+}
+
+function storeToRow(s: Store): (string | number)[] {
+  return [s.canonical, s.count, s.variants.join(" | ")];
+}
+
+function rowToStore(row: any[]): Store {
+  return {
+    canonical: String(row[0] ?? ""),
+    count: Number(row[1] ?? 0) || 0,
+    variants: String(row[2] ?? "")
+      .split("|")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  };
+}
+
+export async function getAllStores(
+  accessToken: string,
+  spreadsheetId: string,
+): Promise<Store[]> {
+  const sheets = sheetsClient(accessToken);
+  try {
+    const r = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${SHEET_TAB_STORES}!A2:C`,
+    });
+    return (r.data.values || []).map(rowToStore).filter((s) => s.canonical);
+  } catch {
+    return [];
+  }
+}
+
+export async function writeAllStores(
+  accessToken: string,
+  spreadsheetId: string,
+  stores: Store[],
+) {
+  const sheets = sheetsClient(accessToken);
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId,
+    range: `${SHEET_TAB_STORES}!A2:C`,
+  });
+  if (stores.length === 0) return;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${SHEET_TAB_STORES}!A2`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: stores.map(storeToRow) },
+  });
+}
+
+export async function appendOrIncrementStore(
+  accessToken: string,
+  spreadsheetId: string,
+  canonical: string,
+  variant?: string,
+) {
+  const stores = await getAllStores(accessToken, spreadsheetId);
+  const idx = stores.findIndex((s) => s.canonical === canonical);
+  if (idx >= 0) {
+    stores[idx].count += 1;
+    if (variant && variant !== canonical && !stores[idx].variants.includes(variant)) {
+      stores[idx].variants.push(variant);
+    }
+  } else {
+    stores.push({
+      canonical,
+      count: 1,
+      variants: variant && variant !== canonical ? [variant] : [],
+    });
+  }
+  await writeAllStores(accessToken, spreadsheetId, stores);
 }
 
 export async function appendTxns(

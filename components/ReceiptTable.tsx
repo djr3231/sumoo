@@ -4,13 +4,14 @@ import * as XLSX from "xlsx";
 import { Button } from "./ui/Button";
 import {
   CATEGORIES,
+  DOCUMENT_TYPES,
   type Category,
   type DocumentType,
   type Receipt,
 } from "@/lib/types";
 import { formatDate, formatILS } from "@/lib/utils";
 
-const DOC_TYPES: DocumentType[] = ["קבלה", "זיכוי", "כפילות", "זיכוי-יתום", "לא ידוע"];
+const DOC_TYPES: DocumentType[] = DOCUMENT_TYPES;
 
 type SortKey =
   | "storeName"
@@ -260,7 +261,7 @@ export function ReceiptTable() {
                 <tr
                   key={r.id}
                   className={`border-t border-[hsl(var(--border))] ${
-                    r.documentType === "כפילות"
+                    r.documentType === "כפילות" || r.documentType === "ספח אשראי"
                       ? "bg-yellow-50/50 dark:bg-yellow-900/10"
                       : r.documentType === "זיכוי" || r.documentType === "זיכוי-יתום"
                         ? "bg-red-50/50 dark:bg-red-900/10"

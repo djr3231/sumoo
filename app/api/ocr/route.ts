@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { v4 as uuidv4 } from "uuid";
 import { extractReceipt } from "@/lib/claude";
-import { downloadDriveFile, requireAccessToken } from "@/lib/google";
+import {
+  appendOrIncrementStore,
+  downloadDriveFile,
+  ensureSpreadsheet,
+  getAllStores,
+  requireAccessToken,
+} from "@/lib/google";
 import type { Receipt } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -37,12 +43,13 @@ function toReceipt(args: {
   extracted: Awaited<ReturnType<typeof extractReceipt>>;
 }): Receipt {
   const { fileName, driveFileId, extracted } = args;
-  const docType: Receipt["documentType"] =
-    extracted.document_type === "credit_note"
-      ? "זיכוי"
-      : extracted.document_type === "receipt"
-        ? "קבלה"
-        : "לא ידוע";
+  const docTypeMap: Record<string, Receipt["documentType"]> = {
+    receipt: "קבלה",
+    tax_invoice: "חשבונית מס",
+    credit_slip: "ספח אשראי",
+    credit_note: "זיכוי",
+    unknown: "לא ידוע",
+  };
   return {
     id: uuidv4(),
     fileName,
@@ -51,7 +58,7 @@ function toReceipt(args: {
     amount: extracted.amount,
     date: extracted.date,
     category: extracted.category,
-    documentType: docType,
+    documentType: docTypeMap[extracted.document_type] || "לא ידוע",
     confidence: extracted.confidence,
     reviewed: false,
     notes: "",
@@ -109,12 +116,35 @@ export async function POST(req: Request) {
       console.warn("sharp resize failed, sending original", e);
     }
 
+    let token: string | null = null;
+    let spreadsheetId: string | null = null;
+    let knownStores: string[] = [];
+    try {
+      token = await requireAccessToken();
+      spreadsheetId = await ensureSpreadsheet(token);
+      const stores = await getAllStores(token, spreadsheetId);
+      knownStores = stores.map((s) => s.canonical);
+    } catch (e) {
+      console.warn("Could not load known stores", e);
+    }
+
     const extracted = await extractReceipt({
       imageBase64: base64,
       mediaType: asMediaType(mediaType),
       fileName,
+      knownStores,
     });
     const receipt = toReceipt({ fileName, driveFileId, extracted });
+
+    if (token && spreadsheetId && receipt.storeName) {
+      try {
+        const variant = extracted.matched_known_store ? undefined : receipt.storeName;
+        await appendOrIncrementStore(token, spreadsheetId, receipt.storeName, variant);
+      } catch (e) {
+        console.warn("appendOrIncrementStore failed", e);
+      }
+    }
+
     return NextResponse.json({ ok: true, receipt });
   } catch (err) {
     const e = err as { status?: number; message?: string; name?: string };
