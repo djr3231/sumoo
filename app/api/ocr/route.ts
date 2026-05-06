@@ -30,10 +30,16 @@ async function shrinkImage(base64: string): Promise<string> {
 
 function asMediaType(
   mt: string,
-): "image/jpeg" | "image/png" | "image/webp" | "image/gif" {
+):
+  | "image/jpeg"
+  | "image/png"
+  | "image/webp"
+  | "image/gif"
+  | "application/pdf" {
   if (mt === "image/png") return "image/png";
   if (mt === "image/webp") return "image/webp";
   if (mt === "image/gif") return "image/gif";
+  if (mt === "application/pdf") return "application/pdf";
   return "image/jpeg";
 }
 
@@ -78,7 +84,10 @@ export async function POST(req: Request) {
       driveFileId = body.driveFileId;
     }
 
-    if (!mediaType.startsWith("image/")) {
+    const isPdf = mediaType === "application/pdf";
+    const isImage = mediaType.startsWith("image/");
+
+    if (!isPdf && !isImage) {
       return NextResponse.json(
         {
           ok: true,
@@ -99,17 +108,19 @@ export async function POST(req: Request) {
               reviewed: false,
             } satisfies Receipt,
           ],
-          warning: `Skipped non-image media type: ${mediaType}`,
+          warning: `Unsupported media type: ${mediaType}`,
         },
         { status: 200 },
       );
     }
 
-    try {
-      base64 = await shrinkImage(base64);
-      mediaType = "image/jpeg";
-    } catch (e) {
-      console.warn("sharp resize failed, sending original", e);
+    if (isImage) {
+      try {
+        base64 = await shrinkImage(base64);
+        mediaType = "image/jpeg";
+      } catch (e) {
+        console.warn("sharp resize failed, sending original", e);
+      }
     }
 
     let token: string | null = null;
