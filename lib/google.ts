@@ -33,6 +33,84 @@ export function driveClient(accessToken: string): drive_v3.Drive {
 
 const SHEET_NAME = "Receipts – sumoo";
 
+async function applyTabFormatting(
+  sheets: sheets_v4.Sheets,
+  spreadsheetId: string,
+  tabs: Array<{ sheetId: number; columnCount: number }>,
+) {
+  if (tabs.length === 0) return;
+  const requests: sheets_v4.Schema$Request[] = [];
+  for (const { sheetId, columnCount } of tabs) {
+    requests.push({
+      updateSheetProperties: {
+        properties: {
+          sheetId,
+          gridProperties: { frozenRowCount: 1 },
+        },
+        fields: "gridProperties.frozenRowCount",
+      },
+    });
+    requests.push({
+      repeatCell: {
+        range: {
+          sheetId,
+          startRowIndex: 0,
+          endRowIndex: 1,
+          startColumnIndex: 0,
+          endColumnIndex: columnCount,
+        },
+        cell: {
+          userEnteredFormat: {
+            textFormat: { bold: true },
+            backgroundColor: { red: 0.93, green: 0.94, blue: 0.96 },
+          },
+        },
+        fields: "userEnteredFormat(textFormat,backgroundColor)",
+      },
+    });
+    requests.push({ clearBasicFilter: { sheetId } });
+    requests.push({
+      setBasicFilter: {
+        filter: {
+          range: {
+            sheetId,
+            startRowIndex: 0,
+            startColumnIndex: 0,
+            endColumnIndex: columnCount,
+          },
+        },
+      },
+    });
+  }
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: { requests },
+  });
+}
+
+function tabsFromMeta(
+  meta: sheets_v4.Schema$Spreadsheet,
+  onlyMissing = false,
+): Array<{ sheetId: number; columnCount: number }> {
+  const out: Array<{ sheetId: number; columnCount: number }> = [];
+  for (const s of meta.sheets || []) {
+    const id = s.properties?.sheetId;
+    const title = s.properties?.title;
+    if (id == null) continue;
+    if (onlyMissing) {
+      const hasFilter = Boolean(s.basicFilter);
+      const frozen = s.properties?.gridProperties?.frozenRowCount ?? 0;
+      if (hasFilter && frozen >= 1) continue;
+    }
+    if (title === SHEET_TAB_RECEIPTS) {
+      out.push({ sheetId: id, columnCount: RECEIPT_HEADERS.length });
+    } else if (title === SHEET_TAB_TXNS) {
+      out.push({ sheetId: id, columnCount: TXN_HEADERS.length });
+    }
+  }
+  return out;
+}
+
 export async function ensureSpreadsheet(accessToken: string): Promise<string> {
   const pinned = process.env.SUMOO_SPREADSHEET_ID;
   if (pinned) {
@@ -64,6 +142,7 @@ export async function ensureSpreadsheet(accessToken: string): Promise<string> {
   });
   const id = created.data.spreadsheetId!;
   await writeHeaders(accessToken, id);
+  await applyTabFormatting(sheets, id, tabsFromMeta(created.data));
   return id;
 }
 
@@ -95,6 +174,9 @@ async function ensureTabs(accessToken: string, spreadsheetId: string) {
     });
   }
   await writeHeaders(accessToken, spreadsheetId);
+
+  const refreshed = await sheets.spreadsheets.get({ spreadsheetId });
+  await applyTabFormatting(sheets, spreadsheetId, tabsFromMeta(refreshed.data, true));
 }
 
 async function writeHeaders(accessToken: string, spreadsheetId: string) {
