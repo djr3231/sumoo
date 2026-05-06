@@ -143,18 +143,26 @@ Images may be rotated 90° (CW or CCW) or 180°. Always mentally rotate the imag
 - **Never** return footer text (website URL, phone number, "תודה רבה") as the store name.
 
 ## Categories
-- "סופר" — שופרסל, רמי לוי, ויקטורי, יוחננוף, AM:PM, טיב טעם, מחסני השוק, יינות ביתן.
-- "מזון" — small grocers, bakeries, neighborhood shops.
-- "מסעדות" — restaurants, cafes, pizza, fast food.
-- "תחבורה" — רב-קו, אגד, מטרו, parking, trains, taxis.
-- "דלק" — פז, סונול, דלק, ten, סדש.
-- "בריאות" — סופרפארם, בה"כל, ניו פארם, doctors, clinics, pharmacies.
-- "בית" — איקאה, ACE, הום סנטר, furniture, housewares.
-- "ביגוד" — H&M, זארה, רנואר, פוקס, הוניגמן, קסטרו.
-- "בידור" — סינמה סיטי, יס פלאנט, attractions.
-- "שירותים" — חברת חשמל, פלאפון, סלקום, פרטנר, water bills, ארנונה.
-- "אחר" — anything else clearly identifiable.
-- "לא ידוע" — only when truly unknown.
+The category list is **fixed**. Pick exactly one from this list — never invent a new one.
+
+- "מיסי עירייה" — ארנונה, municipal property tax bills.
+- "כלכלה (מזון) - מס' נפשות 3" — all food: supermarkets (שופרסל, רמי לוי, ויקטורי, יוחננוף, AM:PM, טיב טעם, מחסני השוק, יינות ביתן), small grocers, bakeries, neighborhood shops, restaurants, cafes, pizza, fast food.
+- "תקשורת ביתית (טלפון, טלוויזיה, אינטרנט)" — landline, internet, TV/cable bills (בזק, HOT, יס, סלקום TV, פרטנר TV).
+- "טלפון נייד" — mobile-phone bills only (פלאפון, סלקום, פרטנר, גולן טלקום, רמי לוי תקשורת, 019 mobile).
+- "גז" — cooking-gas suppliers (פזגז, סופרגז, אמישראגז, דור גז).
+- "וועד בית" — building maintenance / homeowners-association payments.
+- "מים" — water utility bills (תאגיד מים, מי אביבים, הגיחון, מקורות).
+- "חשמל" — electricity bills (חברת החשמל, electricity suppliers).
+- "הלבשה" — clothing and footwear (H&M, זארה, רנואר, פוקס, הוניגמן, קסטרו, shoes).
+- "אחזקת רכב" — car-related: fuel (פז, סונול, דלק, ten, סדש), parking, garage, car wash, repairs, registration.
+- "חינוך ותרבות" — schools, courses, books, movies (סינמה סיטי, יס פלאנט), museums, attractions, theatre, lessons, חוגים.
+- "נסיעות" — travel and vacations (hotels, flights, trips, tour operators) — NOT daily public transport.
+- "הוצאות רפואיות חריגות" — pharmacies (סופרפארם, בה"כל, ניו פארם), doctors, clinics, dental, optometrist, medical equipment.
+- "נסיעות בתחבורה ציבורית" — daily public transport: רב-קו, אגד, דן, מטרופולין, רכבת ישראל, מטרו, taxis (גט, יאנגו, מוניות).
+- "הוצאות טיפול בילדים עד גיל 3" — daycare, מעון, צהרון, babysitter, baby formula/diapers when clearly identified.
+- "תספורת" — barber, hair salon (מספרה).
+- 'עו"ד מייצג בהליך' — lawyer fees, legal representation invoices.
+- "שונות" — anything that doesn't fit any of the above, **and** anything you cannot confidently categorize. This is the catch-all — use it freely instead of guessing.
 
 ## confidence
 - high = all four fields (store, total amount, date, category) are confidently filled.
@@ -219,7 +227,7 @@ export async function extractReceipt(args: {
   const out = JSON.parse(raw) as ExtractedReceipt;
 
   if (!CATEGORIES.includes(out.category)) {
-    out.category = "לא ידוע";
+    out.category = "שונות";
   }
   if (typeof out.matched_known_store !== "boolean") {
     out.matched_known_store = false;

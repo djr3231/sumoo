@@ -259,7 +259,7 @@ function rowToReceipt(row: any[]): Receipt {
         ? null
         : Number(row[3]),
     date: row[4] ? String(row[4]) : null,
-    category: (row[5] as any) || "לא ידוע",
+    category: (row[5] as any) || "שונות",
     documentType: (row[6] as any) || "קבלה",
     paymentMethod: (row[7] as any) || "לא ידוע",
     totalReceiptAmount:

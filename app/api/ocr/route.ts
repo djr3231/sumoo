@@ -99,7 +99,7 @@ export async function POST(req: Request) {
               storeName: null,
               amount: null,
               date: null,
-              category: "לא ידוע",
+              category: "שונות",
               documentType: "לא ידוע",
               paymentMethod: "לא ידוע",
               cardLast4: null,
