@@ -10,6 +10,7 @@ import {
   requireAccessToken,
   writeAllStores,
 } from "@/lib/google";
+import { looksUnresolved, resolveStoreName } from "@/lib/places";
 import type { Receipt, Store } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -40,6 +41,17 @@ export async function POST() {
       .filter((n): n is string => Boolean(n) && n !== "לא ידוע");
 
     const canonicalGroups = await canonicalizeStoreNames(namesInput);
+
+    // ---- Places API: verify suspicious canonical names against Google ----
+    let placesResolutions = 0;
+    for (const g of canonicalGroups) {
+      if (!looksUnresolved(g.canonical)) continue;
+      const resolved = await resolveStoreName(g.canonical);
+      if (resolved && resolved !== g.canonical) {
+        g.canonical = resolved;
+        placesResolutions++;
+      }
+    }
 
     const variantToCanonical = new Map<string, string>();
     for (const g of canonicalGroups) {
@@ -181,6 +193,7 @@ export async function POST() {
       summary: {
         canonicalGroups: canonicalGroups.length,
         nameUpdates: storePatches.length,
+        placesResolutions,
         duplicates: dupCount,
         creditSlips: slipCount,
       },

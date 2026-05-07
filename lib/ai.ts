@@ -119,6 +119,18 @@ const RECEIPT_SCHEMA = {
 
 const RECEIPT_SYSTEM = `You extract data from Israeli receipts and credit-card slips. Input is an image (JPG/PNG) or a scanned PDF. The user keeps a personal expense ledger and only ever photographs/scans **two document types**: (1) receipts / tax invoices, (2) credit-card slips ("ספח אשראי"). They never photograph credit notes, vendor invoices, or anything else.
 
+## CRITICAL: Only read from the image. Never use training knowledge.
+Every field you return MUST come from text you can visually read in the image.
+
+- **store_name**: Read it from the image. If you cannot see and read the store name printed on the document → return null.
+  - Do NOT substitute a brand name you recognise from training data.
+  - Do NOT infer the store name from the receipt format, card-terminal model, paper colour, or category you guessed.
+  - Do NOT use geographic / location knowledge ("this looks like a fuel station near a junction I know").
+  - If the image clearly shows "מאפית הצבי" → return "מאפית הצבי", even if your category guess is "fuel".
+  - A verbatim OCR reading that looks slightly garbled is correct. A plausible-sounding invented name is WRONG.
+- **total_amount, date, card_last4**: same rule — only what you can physically see printed on the image. Never inferred, calculated, or remembered.
+- If you "recognise" the receipt as belonging to a known chain but cannot actually read the chain name on the image → store_name=null. Do not fill it in from memory.
+
 ## General rules
 1. Amounts are always positive and include VAT. There are no credits.
 2. If a field is unreadable, return null. **Prefer null over guessing.** Never invent stores, amounts, or dates.
@@ -268,14 +280,42 @@ const CANON_SCHEMA = {
   required: ["groups"],
 };
 
-const CANON_SYSTEM = `אתה מומחה בזיהוי שמות חנויות ישראליות. קלט: רשימת שמות חנויות שחולצו מקבלות באמצעות OCR. חלקם מתייחסים לאותה חנות עם וריאציות OCR (החלפת אותיות דומות, ספרות שגויות, רווחים, כתיב מלא/חסר).
+const CANON_SYSTEM = `You group Israeli store names extracted from receipts via OCR. Several inputs may refer to the same physical store with OCR errors. Your job: cluster them into canonical groups.
 
-המשימה: לקבץ את השמות לקבוצות קנוניות.
-- כל קבוצה = חנות אחת אמיתית.
-- canonical = השם הנכון והשלם ביותר (אם יש "נקי" — בחר אותו; אחרת בחר את הארוך עם "בע"מ" וכד').
-- variants = כל השמות מהקלט שמתייחסים לאותה חנות (כולל canonical).
-- שם שעומד לבד — קבוצה משלו עם variants=[name].
-- אסור להשמיט שם. כל שם בקלט חייב להופיע בדיוק בקבוצה אחת.`;
+## Structural fingerprinting — most important rule
+Israeli business names often follow the pattern:
+  [proprietor prefix]  [brand]  [district code]  [legal suffix]
+Example: "ג.מ. מעיין אלפיים (07) בע"מ"  → prefix="ג.מ.", brand="מעיין אלפיים", code="07", suffix="בע"מ"
+
+Two names that share **any two** of these structural elements are almost certainly the same store with OCR errors:
+- Same district code: (07), (09), (03), (04), etc.
+- Same proprietor / partnership prefix: ג.מ., א.מ., ד.נ., ש.ל., etc.
+- Same legal suffix pattern: בע"מ, ע"מ, שות׳
+- Same rare brand word: a distinctive Hebrew proper noun (מעיין, כרמל, ירושלים, צבי, אלון, etc.)
+
+Concrete example — these three are the SAME store:
+- "ג.מ. מעיין אלפיים (07) בע"מ"
+- "ג.מ. סעייד אפיפים (07) בע"מ"
+- "מעיין אלונים נעים"
+(Shared: ג.מ. prefix, (07) code, distinctive root "מעיין" / "אפיפים" with OCR slippage between letters.)
+
+## Personal-ledger prior
+You are looking at receipts from ONE person's personal expense history. The probability that this person visited two genuinely different stores that share a district code AND a distinctive brand word is essentially zero. **Merge aggressively.**
+
+## Common OCR confusions in Hebrew
+א/ו/ן, מ/ם, פ/ף/ב, י/ו/ן, ס/ב, ל/כ, ר/ד, ה/ח, missing or extra dots in abbreviations (ג.מ. vs גמ), space drift, truncated letters, ׳/״ variants. Digits: 0/6/9, 1/ל.
+
+## Merge threshold
+When in doubt → merge. A wrongly merged pair is easy for the user to separate manually. A wrongly split pair creates phantom duplicate stores that drift further apart over time.
+
+## Output rules
+- Every input name MUST appear in exactly one group (no omissions, no duplicates across groups).
+- canonical = the cleanest, most human-readable spelling among the variants. Prefer:
+  - A name without abbreviation dots over one with them.
+  - A name without legal suffix ("בע"מ") over one with it, IF the cleaner version exists in the input.
+  - Otherwise, the longest most-complete variant.
+- variants = all input names that map to this group (including the canonical).
+- A name with no plausible match in the input → its own group with variants=[name].`;
 
 export async function canonicalizeStoreNames(
   names: string[],
@@ -293,7 +333,7 @@ export async function canonicalizeStoreNames(
 
   const result = await withRetry(() =>
     m.generateContent([
-      { text: `רשימת שמות לקיבוץ:\n${JSON.stringify(unique)}` },
+      { text: `Names to group:\n${JSON.stringify(unique)}` },
     ]),
   );
 

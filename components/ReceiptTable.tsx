@@ -136,6 +136,7 @@ export function ReceiptTable() {
       alert(
         `הסתיים:\n• ${s.canonicalGroups ?? 0} שמות חנויות מאוחדים\n` +
         `• ${s.nameUpdates ?? 0} שורות עודכנו לשם קנוני\n` +
+        `• ${s.placesResolutions ?? 0} שמות אומתו מול Google Places\n` +
         `• ${s.duplicates ?? 0} כפילויות\n` +
         `• ${s.creditSlips ?? 0} ספחי אשראי משויכים`,
       );
