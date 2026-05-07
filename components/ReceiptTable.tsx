@@ -133,13 +133,19 @@ export function ReceiptTable() {
         return;
       }
       const s = j.summary || {};
-      alert(
+      let msg =
         `הסתיים:\n• ${s.canonicalGroups ?? 0} שמות חנויות מאוחדים\n` +
         `• ${s.nameUpdates ?? 0} שורות עודכנו לשם קנוני\n` +
-        `• ${s.placesResolutions ?? 0} שמות אומתו מול Google Places\n` +
-        `• ${s.duplicates ?? 0} כפילויות\n` +
-        `• ${s.creditSlips ?? 0} ספחי אשראי משויכים`,
-      );
+        `• ${s.placesResolutions ?? 0} שמות אומתו מול Google Places`;
+      if (Array.isArray(s.placesChanges) && s.placesChanges.length > 0) {
+        msg += ":\n" + (s.placesChanges as Array<{ from: string; to: string }>)
+          .map((c) => `  ${c.from} → ${c.to}`)
+          .join("\n");
+      }
+      msg +=
+        `\n• ${s.duplicates ?? 0} כפילויות\n` +
+        `• ${s.creditSlips ?? 0} ספחי אשראי משויכים`;
+      alert(msg);
       await load();
     } finally {
       setDedupRunning(false);

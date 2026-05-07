@@ -44,10 +44,12 @@ export async function POST() {
 
     // ---- Places API: verify suspicious canonical names against Google ----
     let placesResolutions = 0;
+    const placesChanges: Array<{ from: string; to: string }> = [];
     for (const g of canonicalGroups) {
       if (!looksUnresolved(g.canonical)) continue;
       const resolved = await resolveStoreName(g.canonical);
       if (resolved && resolved !== g.canonical) {
+        placesChanges.push({ from: g.canonical, to: resolved });
         g.canonical = resolved;
         placesResolutions++;
       }
@@ -194,6 +196,7 @@ export async function POST() {
         canonicalGroups: canonicalGroups.length,
         nameUpdates: storePatches.length,
         placesResolutions,
+        placesChanges,
         duplicates: dupCount,
         creditSlips: slipCount,
       },

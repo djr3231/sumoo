@@ -209,7 +209,7 @@ export function DriveImport() {
 
       {results.length > 0 && (
         <p className="text-sm">
-          ✓ עובדו {results.length} קבצים. עבור ל
+          ✓ עובדו {results.length} קבלות. עבור ל
           <a href="/receipts" className="underline mx-1">
             עמוד הקבלות
           </a>

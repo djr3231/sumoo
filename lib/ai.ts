@@ -134,7 +134,7 @@ Every field you return MUST come from text you can visually read in the image.
 ## General rules
 1. Amounts are always positive and include VAT. There are no credits.
 2. If a field is unreadable, return null. **Prefer null over guessing.** Never invent stores, amounts, or dates.
-3. Date format: YYYY-MM-DD only. Convert from dd/mm/yyyy or dd.mm.yy. If absent → null.
+3. Date format: YYYY-MM-DD only. Convert from dd/mm/yyyy or dd.mm.yy. If absent → null. Valid years: 2018–2030. If the year you extracted falls outside this range (e.g., 1990, 2010, 2044), it is almost certainly an OCR error on a recent Israeli receipt — return null for the entire date rather than reporting a nonsensical year.
 
 ## Image orientation — important
 Images may be rotated 90° (CW or CCW) or 180°. Always mentally rotate the image until the Hebrew text reads correctly (right-to-left as expected) before extracting any data. If you cannot orient the image, return null fields rather than guessing.
