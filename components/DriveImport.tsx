@@ -33,6 +33,7 @@ interface DriveFile {
 export function DriveImport() {
   const [folderId, setFolderId] = useState("");
   const [files, setFiles] = useState<DriveFile[]>([]);
+  const [existingDriveIds, setExistingDriveIds] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<Receipt[]>([]);
@@ -59,6 +60,18 @@ export function DriveImport() {
     setResults([]);
     setErrors([]);
     setProgress({ done: 0, total: 0 });
+
+    // Load existing receipts to detect already-processed files
+    const sheetsRes = await fetch("/api/sheets");
+    if (sheetsRes.ok) {
+      const sheetsJson = await sheetsRes.json();
+      const ids = new Set<string>(
+        (sheetsJson.receipts as Receipt[])
+          .map((r) => r.driveFileId)
+          .filter((id): id is string => Boolean(id)),
+      );
+      setExistingDriveIds(ids);
+    }
   }
 
   async function processOne(file: DriveFile): Promise<Receipt[]> {
@@ -134,12 +147,12 @@ export function DriveImport() {
     setRunning(false);
   }
 
-  async function startProcessing() {
+  async function startProcessing(toScan: DriveFile[]) {
     setResults([]);
     setErrors([]);
-    setProgress({ done: 0, total: files.length });
+    setProgress({ done: 0, total: toScan.length });
     setPendingFiles([]);
-    await runBatch(files);
+    await runBatch(toScan);
   }
 
   async function resume() {
@@ -160,18 +173,41 @@ export function DriveImport() {
         </Button>
       </div>
 
-      {files.length > 0 && (
-        <>
-          <p className="text-sm text-[hsl(var(--muted-foreground))]">
-            נמצאו {files.length} קבצים בתיקייה.
-          </p>
-          <Button onClick={startProcessing} disabled={running || paused}>
-            {running
-              ? `מעבד ${progress.done}/${progress.total}...`
-              : `סרוק את כל ${files.length} הקבצים`}
-          </Button>
-        </>
-      )}
+      {files.length > 0 && (() => {
+        const newFiles = files.filter((f) => !existingDriveIds.has(f.id));
+        const doneCount = files.length - newFiles.length;
+        return (
+          <>
+            <p className="text-sm text-[hsl(var(--muted-foreground))]">
+              נמצאו {files.length} קבצים בתיקייה
+              {doneCount > 0 && ` · ${doneCount} כבר עובדו · ${newFiles.length} חדשים`}.
+            </p>
+            <div className="flex gap-2 flex-wrap">
+              {running ? (
+                <Button disabled>מעבד {progress.done}/{progress.total}...</Button>
+              ) : (
+                <>
+                  <Button
+                    onClick={() => startProcessing(newFiles)}
+                    disabled={paused || newFiles.length === 0}
+                  >
+                    {newFiles.length === 0 ? "כל הקבצים כבר עובדו" : `סרוק חדשים (${newFiles.length})`}
+                  </Button>
+                  {doneCount > 0 && (
+                    <Button
+                      variant="outline"
+                      onClick={() => startProcessing(files)}
+                      disabled={paused}
+                    >
+                      סרוק הכל מחדש ({files.length})
+                    </Button>
+                  )}
+                </>
+              )}
+            </div>
+          </>
+        );
+      })()}
 
       {progress.total > 0 && (
         <div className="w-full bg-[hsl(var(--muted))] rounded h-2 overflow-hidden">
