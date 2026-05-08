@@ -35,6 +35,7 @@ export function DriveImport() {
   const [files, setFiles] = useState<DriveFile[]>([]);
   const [existingDriveIds, setExistingDriveIds] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const [loadingFolder, setLoadingFolder] = useState(false);
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<Receipt[]>([]);
   const [errors, setErrors] = useState<{ name: string; error: string }[]>([]);
@@ -47,30 +48,34 @@ export function DriveImport() {
   }
 
   async function loadFolder() {
-    const id = extractFolderId(folderId);
-    const res = await fetch(`/api/drive?folderId=${encodeURIComponent(id)}`);
-    const json = await res.json();
-    if (!res.ok) {
-      alert(json.error || "שגיאה בטעינת התיקייה");
-      return;
-    }
-    setFiles(json.files);
-    setPendingFiles([]);
-    setPaused(false);
-    setResults([]);
-    setErrors([]);
-    setProgress({ done: 0, total: 0 });
+    setLoadingFolder(true);
+    try {
+      const id = extractFolderId(folderId);
+      const res = await fetch(`/api/drive?folderId=${encodeURIComponent(id)}`);
+      const json = await res.json();
+      if (!res.ok) {
+        alert(json.error || "שגיאה בטעינת התיקייה");
+        return;
+      }
+      setFiles(json.files);
+      setPendingFiles([]);
+      setPaused(false);
+      setResults([]);
+      setErrors([]);
+      setProgress({ done: 0, total: 0 });
 
-    // Load existing receipts to detect already-processed files
-    const sheetsRes = await fetch("/api/sheets");
-    if (sheetsRes.ok) {
-      const sheetsJson = await sheetsRes.json();
-      const ids = new Set<string>(
-        (sheetsJson.receipts as Receipt[])
-          .map((r) => r.driveFileId)
-          .filter((id): id is string => Boolean(id)),
-      );
-      setExistingDriveIds(ids);
+      const sheetsRes = await fetch("/api/sheets");
+      if (sheetsRes.ok) {
+        const sheetsJson = await sheetsRes.json();
+        const ids = new Set<string>(
+          (sheetsJson.receipts as Receipt[])
+            .map((r) => r.driveFileId)
+            .filter((id): id is string => Boolean(id)),
+        );
+        setExistingDriveIds(ids);
+      }
+    } finally {
+      setLoadingFolder(false);
     }
   }
 
@@ -168,12 +173,16 @@ export function DriveImport() {
           placeholder="הדבק כתובת תיקיית Drive או מזהה תיקייה"
           className="flex-1 h-10 px-3 rounded-md border border-[hsl(var(--border))] bg-transparent text-sm"
         />
-        <Button onClick={loadFolder} variant="outline">
-          טען תיקייה
+        <Button onClick={loadFolder} variant="outline" disabled={loadingFolder || running}>
+          {loadingFolder ? "טוען..." : "טען תיקייה"}
         </Button>
       </div>
 
-      {files.length > 0 && (() => {
+      {loadingFolder && (
+        <p className="text-sm text-[hsl(var(--muted-foreground))]">טוען תיקייה וקבצים קיימים...</p>
+      )}
+
+      {!loadingFolder && files.length > 0 && (() => {
         const newFiles = files.filter((f) => !existingDriveIds.has(f.id));
         const doneCount = files.length - newFiles.length;
         return (
