@@ -79,6 +79,7 @@ export function ReceiptTable() {
   const [spreadsheetId, setSpreadsheetId] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [dedupRunning, setDedupRunning] = useState(false);
+  const [fixingIds, setFixingIds] = useState(false);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" } | null>(null);
   const [colFilters, setColFilters] = useState<Partial<Record<SortKey, Set<string>>>>({});
@@ -261,6 +262,29 @@ export function ReceiptTable() {
           disabled={dedupRunning || rows.length === 0}
         >
           {dedupRunning ? "מאחד..." : "איחוד שמות + זיהוי כפילויות וספחי אשראי"}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={async () => {
+            setFixingIds(true);
+            try {
+              const r = await fetch("/api/fix-drive-ids", { method: "POST" });
+              const j = await r.json();
+              if (!r.ok) { alert("שגיאה: " + (j.error || r.status)); return; }
+              alert(
+                `תוקנו ${j.fixed} קישורים\n` +
+                `${j.alreadyCorrect} היו תקינים\n` +
+                `${j.notFound} קבצים לא נמצאו ב-Drive`,
+              );
+              if (j.fixed > 0) await load();
+            } finally {
+              setFixingIds(false);
+            }
+          }}
+          disabled={fixingIds || rows.length === 0}
+        >
+          {fixingIds ? "מתקן..." : "תקן קישורי Drive"}
         </Button>
         <div className="flex-1" />
         <Button variant="outline" size="sm" onClick={downloadCSV}>
