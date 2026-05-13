@@ -2,8 +2,15 @@ import { getServerSession } from "next-auth";
 import { google, type sheets_v4, type drive_v3 } from "googleapis";
 import { authOptions } from "./auth";
 import {
+  DEFAULT_CATEGORY,
+  DEFAULT_STORE_NAME,
+  DOCUMENT_TYPE,
+  PAYMENT_METHOD,
   RECEIPT_HEADERS,
+  SETTINGS_HEADERS,
+  SETTINGS_KEY,
   SHEET_TAB_RECEIPTS,
+  SHEET_TAB_SETTINGS,
   SHEET_TAB_STORES,
   SHEET_TAB_TXNS,
   STORE_HEADERS,
@@ -11,6 +18,7 @@ import {
   type BankTxn,
   type Receipt,
   type Store,
+  type UserSettings,
 } from "./types";
 
 export async function requireAccessToken(): Promise<string> {
@@ -42,9 +50,11 @@ async function applyTabFormatting(
   tabs: Array<{ sheetId: number; columnCount: number }>,
 ) {
   if (tabs.length === 0) return;
-  const requests: sheets_v4.Schema$Request[] = [];
+
+  // Pass 1: freeze header row + bold styling (never fails)
+  const formatRequests: sheets_v4.Schema$Request[] = [];
   for (const { sheetId, columnCount } of tabs) {
-    requests.push({
+    formatRequests.push({
       updateSheetProperties: {
         properties: {
           sheetId,
@@ -53,7 +63,7 @@ async function applyTabFormatting(
         fields: "gridProperties.frozenRowCount",
       },
     });
-    requests.push({
+    formatRequests.push({
       repeatCell: {
         range: {
           sheetId,
@@ -71,24 +81,40 @@ async function applyTabFormatting(
         fields: "userEnteredFormat(textFormat,backgroundColor)",
       },
     });
-    requests.push({ clearBasicFilter: { sheetId } });
-    requests.push({
-      setBasicFilter: {
-        filter: {
-          range: {
-            sheetId,
-            startRowIndex: 0,
-            startColumnIndex: 0,
-            endColumnIndex: columnCount,
-          },
-        },
-      },
-    });
   }
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
-    requestBody: { requests },
+    requestBody: { requests: formatRequests },
   });
+
+  // Pass 2: apply basic filter — fails silently if the sheet contains a Table
+  // (Google Sheets does not allow BasicFilter to overlap a Table range)
+  for (const { sheetId, columnCount } of tabs) {
+    try {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            { clearBasicFilter: { sheetId } },
+            {
+              setBasicFilter: {
+                filter: {
+                  range: {
+                    sheetId,
+                    startRowIndex: 0,
+                    startColumnIndex: 0,
+                    endColumnIndex: columnCount,
+                  },
+                },
+              },
+            },
+          ],
+        },
+      });
+    } catch (e) {
+      console.warn(`setBasicFilter skipped for sheetId=${sheetId} (Table conflict?):`, (e as Error).message);
+    }
+  }
 }
 
 function tabsFromMeta(
@@ -111,6 +137,8 @@ function tabsFromMeta(
       out.push({ sheetId: id, columnCount: TXN_HEADERS.length });
     } else if (title === SHEET_TAB_STORES) {
       out.push({ sheetId: id, columnCount: STORE_HEADERS.length });
+    } else if (title === SHEET_TAB_SETTINGS) {
+      out.push({ sheetId: id, columnCount: SETTINGS_HEADERS.length });
     }
   }
   return out;
@@ -143,6 +171,7 @@ export async function ensureSpreadsheet(accessToken: string): Promise<string> {
         { properties: { title: SHEET_TAB_RECEIPTS, rightToLeft: true } },
         { properties: { title: SHEET_TAB_TXNS, rightToLeft: true } },
         { properties: { title: SHEET_TAB_STORES, rightToLeft: true } },
+        { properties: { title: SHEET_TAB_SETTINGS, rightToLeft: true } },
       ],
     },
   });
@@ -180,6 +209,13 @@ async function ensureTabs(accessToken: string, spreadsheetId: string) {
       },
     });
   }
+  if (!existing.has(SHEET_TAB_SETTINGS)) {
+    requests.push({
+      addSheet: {
+        properties: { title: SHEET_TAB_SETTINGS, rightToLeft: true },
+      },
+    });
+  }
   if (requests.length) {
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId,
@@ -200,6 +236,7 @@ async function writeHeaders(accessToken: string, spreadsheetId: string) {
       `${SHEET_TAB_RECEIPTS}!A1:Z1`,
       `${SHEET_TAB_TXNS}!A1:Z1`,
       `${SHEET_TAB_STORES}!A1:Z1`,
+      `${SHEET_TAB_SETTINGS}!A1:Z1`,
     ],
   });
   const data: sheets_v4.Schema$ValueRange[] = [];
@@ -221,6 +258,12 @@ async function writeHeaders(accessToken: string, spreadsheetId: string) {
       values: [[...STORE_HEADERS]],
     });
   }
+  if (!get.data.valueRanges?.[3]?.values?.length) {
+    data.push({
+      range: `${SHEET_TAB_SETTINGS}!A1`,
+      values: [[...SETTINGS_HEADERS]],
+    });
+  }
   if (data.length) {
     await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId,
@@ -233,12 +276,12 @@ function receiptToRow(r: Receipt): (string | number | boolean | null)[] {
   return [
     r.id,
     r.fileName,
-    r.storeName ?? "לא ידוע",
+    r.storeName ?? DEFAULT_STORE_NAME,
     r.amount ?? "",
     r.date ?? "",
     r.category,
     r.documentType,
-    r.paymentMethod ?? "לא ידוע",
+    r.paymentMethod ?? PAYMENT_METHOD.Unknown,
     r.totalReceiptAmount ?? "",
     r.cardLast4 ?? "",
     r.linkedTo ?? "",
@@ -259,16 +302,16 @@ function rowToReceipt(row: any[]): Receipt {
         ? null
         : Number(row[3]),
     date: row[4] ? String(row[4]) : null,
-    category: (row[5] as any) || "שונות",
-    documentType: (row[6] as any) || "קבלה",
-    paymentMethod: (row[7] as any) || "לא ידוע",
+    category: ((row[5] as any) || DEFAULT_CATEGORY) as Receipt["category"],
+    documentType: ((row[6] as any) || DOCUMENT_TYPE.Receipt) as Receipt["documentType"],
+    paymentMethod: ((row[7] as any) || PAYMENT_METHOD.Unknown) as Receipt["paymentMethod"],
     totalReceiptAmount:
       row[8] === "" || row[8] === null || row[8] === undefined
         ? null
         : Number(row[8]),
     cardLast4: row[9] ? String(row[9]) : null,
     linkedTo: row[10] ? String(row[10]) : null,
-    confidence: (row[11] as any) || "med",
+    confidence: ((row[11] as any) || "med") as Receipt["confidence"],
     driveFileId: row[12] ? String(row[12]) : null,
     reviewed: String(row[13]).toUpperCase() === "TRUE",
     notes: row[14] ? String(row[14]) : "",
@@ -544,4 +587,62 @@ export async function uploadFileToDrive(
     fields: "id",
   });
   return { id: res.data.id! };
+}
+
+// ============================================================================
+// User settings (stored in הגדרות tab as key/value rows)
+// ============================================================================
+
+const CARD_LAST4_RE = /^\d{4}$/;
+
+export async function getUserSettings(
+  accessToken: string,
+  spreadsheetId: string,
+): Promise<UserSettings> {
+  const sheets = sheetsClient(accessToken);
+  const empty: UserSettings = { myCardsLast4: [] };
+  try {
+    const r = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${SHEET_TAB_SETTINGS}!A2:B`,
+    });
+    const rows = r.data.values || [];
+    const out: UserSettings = { ...empty };
+    for (const row of rows) {
+      const key = String(row[0] ?? "");
+      const value = String(row[1] ?? "");
+      if (key === SETTINGS_KEY.MyCardsLast4) {
+        out.myCardsLast4 = value
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => CARD_LAST4_RE.test(s));
+      }
+    }
+    return out;
+  } catch {
+    return empty;
+  }
+}
+
+export async function writeUserSettings(
+  accessToken: string,
+  spreadsheetId: string,
+  s: UserSettings,
+): Promise<void> {
+  const sheets = sheetsClient(accessToken);
+  const validCards = Array.from(
+    new Set(s.myCardsLast4.filter((c) => CARD_LAST4_RE.test(c))),
+  );
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId,
+    range: `${SHEET_TAB_SETTINGS}!A2:B`,
+  });
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${SHEET_TAB_SETTINGS}!A2`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [[SETTINGS_KEY.MyCardsLast4, validCards.join(",")]],
+    },
+  });
 }
