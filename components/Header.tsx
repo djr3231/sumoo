@@ -20,6 +20,9 @@ export default async function Header() {
           <Link href="/compare" className="px-3 py-1.5 rounded hover:bg-[hsl(var(--accent))]">
             השוואה
           </Link>
+          <Link href="/settings" className="px-3 py-1.5 rounded hover:bg-[hsl(var(--accent))]">
+            הגדרות
+          </Link>
         </nav>
         <div className="text-sm flex items-center gap-3">
           {session?.user?.email && (

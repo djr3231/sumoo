@@ -4,7 +4,10 @@ import * as XLSX from "xlsx";
 import { Button } from "./ui/Button";
 import {
   CATEGORIES,
+  DEFAULT_STORE_NAME,
+  DOCUMENT_TYPE,
   DOCUMENT_TYPES,
+  PAYMENT_METHOD,
   PAYMENT_METHODS,
   type Category,
   type DocumentType,
@@ -35,10 +38,10 @@ interface ColumnDef {
 }
 
 const COLUMNS: ColumnDef[] = [
-  { key: "storeName",          label: "שם חנות",       filterable: true,  getValue: (r) => r.storeName ?? "לא ידוע" },
+  { key: "storeName",          label: "שם חנות",       filterable: true,  getValue: (r) => r.storeName ?? DEFAULT_STORE_NAME },
   { key: "amount",             label: "סכום",          filterable: false, getValue: (r) => (r.amount === null ? "" : String(r.amount)) },
   { key: "totalReceiptAmount", label: "סך הקבלה",      filterable: false, getValue: (r) => (r.totalReceiptAmount == null ? "" : String(r.totalReceiptAmount)) },
-  { key: "paymentMethod",      label: "אמצעי תשלום",   filterable: true,  getValue: (r) => r.paymentMethod ?? "לא ידוע" },
+  { key: "paymentMethod",      label: "אמצעי תשלום",   filterable: true,  getValue: (r) => r.paymentMethod ?? PAYMENT_METHOD.Unknown },
   { key: "date",               label: "תאריך",         filterable: false, getValue: (r) => r.date ?? "" },
   { key: "category",           label: "קטגוריה",       filterable: true,  getValue: (r) => r.category },
   { key: "documentType",       label: "סוג מסמך",      filterable: true,  getValue: (r) => r.documentType },
@@ -202,10 +205,10 @@ export function ReceiptTable() {
     for (const r of sorted) {
       lines.push(
         [
-          quoteCSV(r.storeName ?? "לא ידוע"),
+          quoteCSV(r.storeName ?? DEFAULT_STORE_NAME),
           r.amount ?? "",
           r.totalReceiptAmount ?? "",
-          quoteCSV(r.paymentMethod ?? "לא ידוע"),
+          quoteCSV(r.paymentMethod ?? PAYMENT_METHOD.Unknown),
           quoteCSV(r.cardLast4 ?? ""),
           r.date ?? "",
           quoteCSV(r.category),
@@ -225,10 +228,10 @@ export function ReceiptTable() {
 
   function downloadXLSX() {
     const data = sorted.map((r) => ({
-      "שם חנות": r.storeName ?? "לא ידוע",
+      "שם חנות": r.storeName ?? DEFAULT_STORE_NAME,
       "סכום": r.amount ?? "",
       "סך הקבלה": r.totalReceiptAmount ?? "",
-      "אמצעי תשלום": r.paymentMethod ?? "לא ידוע",
+      "אמצעי תשלום": r.paymentMethod ?? PAYMENT_METHOD.Unknown,
       "4 ספרות": r.cardLast4 ?? "",
       "תאריך": r.date ?? "",
       "קטגוריה": r.category,
@@ -344,7 +347,7 @@ export function ReceiptTable() {
                 <tr
                   key={r.id}
                   className={`border-t border-[hsl(var(--border))] ${
-                    r.documentType === "כפילות" || r.documentType === "ספח אשראי"
+                    r.documentType === DOCUMENT_TYPE.Duplicate || r.documentType === DOCUMENT_TYPE.CreditSlip
                       ? "bg-yellow-50/50 dark:bg-yellow-900/10"
                       : ""
                   }`}
@@ -380,7 +383,7 @@ export function ReceiptTable() {
                   </td>
                   <td className="p-2">
                     <select
-                      value={r.paymentMethod || "לא ידוע"}
+                      value={r.paymentMethod || PAYMENT_METHOD.Unknown}
                       onChange={(e) => patch(r.id, { paymentMethod: e.target.value as PaymentMethod })}
                       className="bg-transparent px-1"
                     >
