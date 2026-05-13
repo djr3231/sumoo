@@ -21,20 +21,70 @@ export const CATEGORIES = [
 
 export type Category = (typeof CATEGORIES)[number];
 
-export type DocumentType =
-  | "קבלה"
-  | "חשבונית מס"
-  | "ספח אשראי"
-  | "כפילות"
-  | "לא ידוע";
+// ============================================================================
+// Payment & document type enums (single source of truth — never inline literals)
+// ============================================================================
 
-export const DOCUMENT_TYPES: DocumentType[] = [
-  "קבלה",
-  "חשבונית מס",
-  "ספח אשראי",
-  "כפילות",
-  "לא ידוע",
-];
+// Internal values returned by Gemini in OCR extraction
+export const EXTRACTED_METHOD = {
+  CreditCard: "credit_card",
+  Cash: "cash",
+  StandingOrder: "standing_order",
+  Other: "other",
+} as const;
+export type ExtractedMethod = (typeof EXTRACTED_METHOD)[keyof typeof EXTRACTED_METHOD];
+
+// User-facing payment method labels (Hebrew, displayed in UI + sheet)
+export const PAYMENT_METHOD = {
+  Credit: "אשראי",
+  Cash: "מזומן",
+  StandingOrder: "הוראת קבע",
+  Mixed: "מעורב",
+  Other: "אחר",
+  Unknown: "לא ידוע",
+} as const;
+export type PaymentMethod = (typeof PAYMENT_METHOD)[keyof typeof PAYMENT_METHOD];
+export const PAYMENT_METHODS: PaymentMethod[] = Object.values(PAYMENT_METHOD);
+
+// Internal values returned by Gemini for document_type
+export const EXTRACTED_DOC_TYPE = {
+  Receipt: "receipt",
+  CreditSlip: "credit_slip",
+  Unknown: "unknown",
+} as const;
+export type ExtractedDocType = (typeof EXTRACTED_DOC_TYPE)[keyof typeof EXTRACTED_DOC_TYPE];
+
+// User-facing document type labels (Hebrew)
+export const DOCUMENT_TYPE = {
+  Receipt: "קבלה",
+  TaxInvoice: "חשבונית מס",
+  CreditSlip: "ספח אשראי",
+  Duplicate: "כפילות",
+  Unknown: "לא ידוע",
+} as const;
+export type DocumentType = (typeof DOCUMENT_TYPE)[keyof typeof DOCUMENT_TYPE];
+export const DOCUMENT_TYPES: DocumentType[] = Object.values(DOCUMENT_TYPE);
+
+// Default fallbacks (kept as named constants so call sites never hardcode)
+export const DEFAULT_STORE_NAME = "לא ידוע";
+export const DEFAULT_CATEGORY: Category = "שונות";
+
+// ============================================================================
+// Settings (stored in הגדרות sheet tab)
+// ============================================================================
+
+export const SETTINGS_KEY = {
+  MyCardsLast4: "myCardsLast4",
+} as const;
+export type SettingsKey = (typeof SETTINGS_KEY)[keyof typeof SETTINGS_KEY];
+
+export interface UserSettings {
+  myCardsLast4: string[]; // exactly 4-digit strings, validated
+}
+
+// ============================================================================
+// Receipt + bank txn shapes
+// ============================================================================
 
 export type Confidence = "low" | "med" | "high";
 
@@ -65,19 +115,14 @@ export interface BankTxn {
   status: "תואם" | "חסרה קבלה" | "קבלה ללא תנועה" | null;
 }
 
+// ============================================================================
+// Sheet tabs
+// ============================================================================
+
 export const SHEET_TAB_RECEIPTS = "קבלות";
 export const SHEET_TAB_TXNS = "תנועות";
 export const SHEET_TAB_STORES = "חנויות";
-
-export type PaymentMethod = "אשראי" | "מזומן" | "מעורב" | "אחר" | "לא ידוע";
-
-export const PAYMENT_METHODS: PaymentMethod[] = [
-  "אשראי",
-  "מזומן",
-  "מעורב",
-  "אחר",
-  "לא ידוע",
-];
+export const SHEET_TAB_SETTINGS = "הגדרות";
 
 export interface Store {
   canonical: string;
@@ -117,3 +162,5 @@ export const TXN_HEADERS: ReadonlyArray<string> = [
   "קבלה_id",
   "סטטוס",
 ];
+
+export const SETTINGS_HEADERS: ReadonlyArray<string> = ["key", "value"];

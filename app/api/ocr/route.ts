@@ -8,10 +8,21 @@ import {
   ensureSpreadsheet,
   ensureUploadFolder,
   getAllStores,
+  getUserSettings,
   requireAccessToken,
   uploadFileToDrive,
 } from "@/lib/google";
-import type { PaymentMethod, Receipt } from "@/lib/types";
+import {
+  DOCUMENT_TYPE,
+  EXTRACTED_DOC_TYPE,
+  EXTRACTED_METHOD,
+  PAYMENT_METHOD,
+  type DocumentType,
+  type ExtractedDocType,
+  type ExtractedMethod,
+  type PaymentMethod,
+  type Receipt,
+} from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -48,17 +59,27 @@ type Body =
   | { kind: "drive"; driveFileId: string; fileName: string; mediaType: string };
 
 function classifyMethod(
-  paymentMethod: "credit_card" | "cash" | "other",
+  method: ExtractedMethod,
   cardLast4: string | null,
-  userLast4: string,
+  userCards: string[],
 ): PaymentMethod {
-  if (paymentMethod === "cash") return "מזומן";
-  if (paymentMethod === "credit_card") {
-    if (cardLast4 && cardLast4 === userLast4) return "אשראי";
-    return "מזומן"; // user's rule: any other card = "cash" bucket
+  switch (method) {
+    case EXTRACTED_METHOD.Cash:          return PAYMENT_METHOD.Cash;
+    case EXTRACTED_METHOD.StandingOrder: return PAYMENT_METHOD.StandingOrder;
+    case EXTRACTED_METHOD.Other:         return PAYMENT_METHOD.Other;
+    case EXTRACTED_METHOD.CreditCard: {
+      if (userCards.length === 0) return PAYMENT_METHOD.Credit;
+      if (cardLast4 && userCards.includes(cardLast4)) return PAYMENT_METHOD.Credit;
+      return PAYMENT_METHOD.Cash;
+    }
   }
-  return "אחר";
 }
+
+const DOC_TYPE_MAP: Record<ExtractedDocType, DocumentType> = {
+  [EXTRACTED_DOC_TYPE.Receipt]:    DOCUMENT_TYPE.Receipt,
+  [EXTRACTED_DOC_TYPE.CreditSlip]: DOCUMENT_TYPE.CreditSlip,
+  [EXTRACTED_DOC_TYPE.Unknown]:    DOCUMENT_TYPE.Unknown,
+};
 
 export async function POST(req: Request) {
   try {
@@ -100,8 +121,8 @@ export async function POST(req: Request) {
               amount: null,
               date: null,
               category: "שונות",
-              documentType: "לא ידוע",
-              paymentMethod: "לא ידוע",
+              documentType: DOCUMENT_TYPE.Unknown,
+              paymentMethod: PAYMENT_METHOD.Unknown,
               cardLast4: null,
               totalReceiptAmount: null,
               confidence: "low",
@@ -159,13 +180,11 @@ export async function POST(req: Request) {
       }
     }
 
-    const userLast4 = process.env.MY_CREDIT_CARD_LAST4 || "6021";
-    const docTypeMap: Record<string, Receipt["documentType"]> = {
-      receipt: "קבלה",
-      credit_slip: "ספח אשראי",
-      unknown: "לא ידוע",
-    };
-    const docType = docTypeMap[extracted.document_type] || "לא ידוע";
+    const settings = token && spreadsheetId
+      ? await getUserSettings(token, spreadsheetId).catch(() => ({ myCardsLast4: [] as string[] }))
+      : { myCardsLast4: [] as string[] };
+    const userCards = settings.myCardsLast4;
+    const docType = DOC_TYPE_MAP[extracted.document_type] ?? DOCUMENT_TYPE.Unknown;
     const totalAmount = extracted.total_amount ?? null;
 
     // Build receipts: split mixed payments into multiple linked rows
@@ -182,7 +201,7 @@ export async function POST(req: Request) {
         date: extracted.date,
         category: extracted.category,
         documentType: docType,
-        paymentMethod: "לא ידוע",
+        paymentMethod: PAYMENT_METHOD.Unknown,
         cardLast4: null,
         totalReceiptAmount: totalAmount,
         confidence: extracted.confidence,
@@ -200,7 +219,7 @@ export async function POST(req: Request) {
         date: extracted.date,
         category: extracted.category,
         documentType: docType,
-        paymentMethod: classifyMethod(p.method, p.card_last4, userLast4),
+        paymentMethod: classifyMethod(p.method, p.card_last4, userCards),
         cardLast4: p.card_last4,
         totalReceiptAmount: totalAmount,
         confidence: extracted.confidence,
@@ -220,7 +239,7 @@ export async function POST(req: Request) {
           date: extracted.date,
           category: extracted.category,
           documentType: docType,
-          paymentMethod: classifyMethod(p.method, p.card_last4, userLast4),
+          paymentMethod: classifyMethod(p.method, p.card_last4, userCards),
           cardLast4: p.card_last4,
           totalReceiptAmount: totalAmount,
           linkedTo: i === 0 ? null : primaryId,

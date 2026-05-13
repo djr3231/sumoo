@@ -11,6 +11,7 @@ import {
   writeAllStores,
 } from "@/lib/google";
 import { looksUnresolved, resolveStoreName } from "@/lib/places";
+import { DEFAULT_STORE_NAME, DOCUMENT_TYPE } from "@/lib/types";
 import type { Receipt, Store } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -22,7 +23,12 @@ function roundAmount(n: number | null): number | null {
 }
 
 function isReceiptType(t: Receipt["documentType"]): boolean {
-  return t === "קבלה" || t === "חשבונית מס" || t === "ספח אשראי" || t === "לא ידוע";
+  return (
+    t === DOCUMENT_TYPE.Receipt ||
+    t === DOCUMENT_TYPE.TaxInvoice ||
+    t === DOCUMENT_TYPE.CreditSlip ||
+    t === DOCUMENT_TYPE.Unknown
+  );
 }
 
 export async function POST() {
@@ -38,7 +44,7 @@ export async function POST() {
     // ---- Step 1: canonicalize store names across all receipts ----
     const namesInput = receipts
       .map((r) => r.storeName)
-      .filter((n): n is string => Boolean(n) && n !== "לא ידוע");
+      .filter((n): n is string => Boolean(n) && n !== DEFAULT_STORE_NAME);
 
     const canonicalGroups = await canonicalizeStoreNames(namesInput);
 
@@ -103,10 +109,10 @@ export async function POST() {
 
       // Sort: tax_invoice > receipt > credit_slip > unknown, then by id stable
       const priority: Record<string, number> = {
-        "חשבונית מס": 4,
-        "קבלה": 3,
-        "לא ידוע": 2,
-        "ספח אשראי": 1,
+        [DOCUMENT_TYPE.TaxInvoice]: 4,
+        [DOCUMENT_TYPE.Receipt]:    3,
+        [DOCUMENT_TYPE.Unknown]:    2,
+        [DOCUMENT_TYPE.CreditSlip]: 1,
       };
       const sorted = [...arr].sort(
         (a, b) =>
@@ -116,10 +122,10 @@ export async function POST() {
       const rest = sorted.slice(1);
 
       for (const r of rest) {
-        if (r.documentType === "ספח אשראי") {
+        if (r.documentType === DOCUMENT_TYPE.CreditSlip) {
           dedupPatches.push({
             id: r.id,
-            documentType: "ספח אשראי",
+            documentType: DOCUMENT_TYPE.CreditSlip,
             linkedTo: primary.id,
             notes: `ספח אשראי של ${primary.fileName}`,
           });
@@ -127,7 +133,7 @@ export async function POST() {
         } else {
           dedupPatches.push({
             id: r.id,
-            documentType: "כפילות",
+            documentType: DOCUMENT_TYPE.Duplicate,
             linkedTo: primary.id,
             notes: `כפילות של ${primary.fileName}`,
           });
@@ -136,10 +142,10 @@ export async function POST() {
       }
 
       // Promote primary if it was unknown
-      if (primary.documentType === "לא ידוע") {
+      if (primary.documentType === DOCUMENT_TYPE.Unknown) {
         dedupPatches.push({
           id: primary.id,
-          documentType: "קבלה",
+          documentType: DOCUMENT_TYPE.Receipt,
         });
       }
     }
@@ -162,7 +168,7 @@ export async function POST() {
         for (const id of rest) {
           dedupPatches.push({
             id,
-            documentType: "כפילות",
+            documentType: DOCUMENT_TYPE.Duplicate,
             linkedTo: primaryId,
             notes: g.reason,
           });

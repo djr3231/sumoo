@@ -3,7 +3,15 @@ import {
   SchemaType,
   type GenerativeModel,
 } from "@google/generative-ai";
-import { CATEGORIES, type Category, type Confidence } from "./types";
+import {
+  CATEGORIES,
+  EXTRACTED_DOC_TYPE,
+  EXTRACTED_METHOD,
+  type Category,
+  type Confidence,
+  type ExtractedDocType,
+  type ExtractedMethod,
+} from "./types";
 
 const OCR_MODEL = "gemini-2.5-pro";
 const UTIL_MODEL = "gemini-2.5-flash";
@@ -60,7 +68,7 @@ async function withRetry<T>(fn: () => Promise<T>, attempts = 2): Promise<T> {
 // ============================================================================
 
 export interface ExtractedPayment {
-  method: "credit_card" | "cash" | "other";
+  method: ExtractedMethod;
   amount: number;
   card_last4: string | null;
 }
@@ -70,7 +78,7 @@ export interface ExtractedReceipt {
   matched_known_store: boolean;
   date: string | null;
   category: Category;
-  document_type: "receipt" | "credit_slip" | "unknown";
+  document_type: ExtractedDocType;
   confidence: Confidence;
   total_amount: number | null;
   payments: ExtractedPayment[];
@@ -85,7 +93,7 @@ const RECEIPT_SCHEMA = {
     category: { type: SchemaType.STRING, enum: [...CATEGORIES] as string[] },
     document_type: {
       type: SchemaType.STRING,
-      enum: ["receipt", "credit_slip", "unknown"],
+      enum: Object.values(EXTRACTED_DOC_TYPE) as string[],
     },
     confidence: { type: SchemaType.STRING, enum: ["low", "med", "high"] },
     total_amount: { type: SchemaType.NUMBER, nullable: true },
@@ -96,7 +104,7 @@ const RECEIPT_SCHEMA = {
         properties: {
           method: {
             type: SchemaType.STRING,
-            enum: ["credit_card", "cash", "other"],
+            enum: Object.values(EXTRACTED_METHOD) as string[],
           },
           amount: { type: SchemaType.NUMBER },
           card_last4: { type: SchemaType.STRING, nullable: true },
@@ -194,9 +202,10 @@ If a list of canonical store names is supplied and your OCR reading is close (ev
 ## payments — critical
 - total_amount = the receipt's grand total.
 - payments = breakdown by tender method:
-  - "VISA 6021" / "אשראי 6021" / "כרטיס xxxx-xxxx-xxxx-6021" → method="credit_card", card_last4="6021".
+  - "VISA 1234" / "אשראי 1234" / "כרטיס xxxx-xxxx-xxxx-1234" → method="credit_card", card_last4="1234".
   - "מזומן" / "Cash" → method="cash", card_last4=null.
   - Other card → method="credit_card", card_last4 is the 4 digits you see.
+  - "הוראת קבע" / "הו\"ק" / "ישולם בהו\"ק" / "מחשבון 1234" / "חיוב מחשבון" / "Standing order" → method="standing_order", card_last4=null. Used for utility bills, mobile, daycare, and other recurring bank-account debits. The receipt is informational; the actual money moves later via the bank.
   - Check / transfer → method="other".
 - Most receipts have a single payment item. **If two distinct tender methods are clearly shown on the same receipt** (e.g. 60₪ on credit + 40₪ in cash), emit 2 separate items whose amounts sum to total_amount.
 - If the tender method is unclear → payments=[{method:"other", amount: total_amount, card_last4: null}].
