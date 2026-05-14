@@ -640,7 +640,7 @@ export async function writeUserSettings(
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range: `${SHEET_TAB_SETTINGS}!A2`,
-    valueInputOption: "USER_ENTERED",
+    valueInputOption: "RAW",
     requestBody: {
       values: [[SETTINGS_KEY.MyCardsLast4, validCards.join(",")]],
     },
