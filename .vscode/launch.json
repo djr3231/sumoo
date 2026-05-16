@@ -1,0 +1,51 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Next.js: Debug Server",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run dev -- --inspect"
+    },
+    {
+      "name": "Next.js: Debug Client",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:3000",
+      "webRoot": "${workspaceFolder}"
+    },
+    {
+      "name": "Next.js: Debug Full Stack",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/next/dist/bin/next",
+      "args": ["dev"],
+      "runtimeArgs": ["--inspect"],
+      "skipFiles": ["<node_internals>/**"],
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "- Local:.*https?://.*",
+        "urlFormat": "http://localhost:3000",
+        "openExternally": true
+      }
+    },
+    {
+      "name": "Next.js: Debug Build",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run build"
+    },
+    {
+      "name": "Next.js: Debug Export",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run export"
+    },
+    {
+      "name": "Next.js: Debug Start",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run start"
+    }
+  ]
+}
