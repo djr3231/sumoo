@@ -19,13 +19,13 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     };
     const variants: Record<Variant, string> = {
       primary:
-        "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] hover:opacity-90",
+        "bg-primary text-primary-foreground hover:opacity-90",
       ghost:
-        "bg-transparent hover:bg-[hsl(var(--accent))] text-[hsl(var(--foreground))]",
+        "bg-transparent hover:bg-accent text-foreground",
       outline:
-        "border border-[hsl(var(--border))] bg-transparent hover:bg-[hsl(var(--accent))] text-[hsl(var(--foreground))]",
+        "border border-border bg-transparent hover:bg-accent text-foreground",
       destructive:
-        "bg-[hsl(var(--destructive))] text-white hover:opacity-90",
+        "bg-destructive text-white hover:opacity-90",
     };
     return (
       <button

@@ -171,7 +171,7 @@ export function DriveImport() {
           value={folderId}
           onChange={(e) => setFolderId(e.target.value)}
           placeholder="הדבק כתובת תיקיית Drive או מזהה תיקייה"
-          className="flex-1 h-10 px-3 rounded-md border border-[hsl(var(--border))] bg-transparent text-sm"
+          className="flex-1 h-10 px-3 border border-border bg-transparent text-sm"
         />
         <Button onClick={loadFolder} variant="outline" disabled={loadingFolder || running}>
           {loadingFolder ? "טוען..." : "טען תיקייה"}
@@ -179,7 +179,7 @@ export function DriveImport() {
       </div>
 
       {loadingFolder && (
-        <p className="text-sm text-[hsl(var(--muted-foreground))]">טוען תיקייה וקבצים קיימים...</p>
+        <p className="text-sm text-muted-foreground">טוען תיקייה וקבצים קיימים...</p>
       )}
 
       {!loadingFolder && files.length > 0 && (() => {
@@ -187,7 +187,7 @@ export function DriveImport() {
         const doneCount = files.length - newFiles.length;
         return (
           <>
-            <p className="text-sm text-[hsl(var(--muted-foreground))]">
+            <p className="text-sm text-muted-foreground">
               נמצאו {files.length} קבצים בתיקייה
               {doneCount > 0 && ` · ${doneCount} כבר עובדו · ${newFiles.length} חדשים`}.
             </p>
@@ -219,16 +219,16 @@ export function DriveImport() {
       })()}
 
       {progress.total > 0 && (
-        <div className="w-full bg-[hsl(var(--muted))] rounded h-2 overflow-hidden">
+        <div className="w-full bg-muted h-2 overflow-hidden">
           <div
-            className="h-full bg-[hsl(var(--primary))] transition-[width]"
+            className="h-full bg-primary transition-[width]"
             style={{ width: `${(progress.done / progress.total) * 100}%` }}
           />
         </div>
       )}
 
       {paused && (
-        <div className="rounded-lg border border-amber-500 bg-amber-50 dark:bg-amber-950 p-3 text-sm">
+        <div className="border border-border bg-muted p-3 text-sm">
           <p className="font-semibold mb-2">⏸ הסריקה הושהתה — Gemini עמוס</p>
           <p className="mb-2">
             {pendingFiles.length} קבצים ממתינים. נסה שוב כשהשרת ישתחרר (לעיתים נדרשות מספר דקות).
@@ -240,7 +240,7 @@ export function DriveImport() {
       )}
 
       {errors.length > 0 && (
-        <div className="rounded-lg border border-[hsl(var(--destructive))] p-3 text-sm">
+        <div className="border border-destructive p-3 text-sm">
           <p className="font-semibold mb-1">שגיאות ({errors.length})</p>
           <ul className="list-disc pr-5 space-y-1">
             {errors.map((e, i) => (

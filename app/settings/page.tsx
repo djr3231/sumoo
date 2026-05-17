@@ -10,7 +10,7 @@ export default async function SettingsPage() {
     <div className="space-y-4 max-w-lg">
       <header>
         <h1 className="text-2xl font-bold">הגדרות</h1>
-        <p className="text-sm text-[hsl(var(--muted-foreground))]">
+        <p className="text-sm text-muted-foreground">
           הגדרות אישיות נשמרות בגיליון Google Sheets שלך.
         </p>
       </header>

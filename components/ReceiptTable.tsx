@@ -257,7 +257,7 @@ export function ReceiptTable() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="חיפוש חופשי..."
-          className="h-9 px-3 rounded-md border border-[hsl(var(--border))] bg-transparent text-sm"
+          className="h-9 px-3 border border-border bg-transparent text-sm"
         />
         <Button
           size="sm"
@@ -308,7 +308,7 @@ export function ReceiptTable() {
         )}
       </div>
 
-      <div className="text-xs text-[hsl(var(--muted-foreground))] flex items-center gap-3">
+      <div className="text-xs text-muted-foreground flex items-center gap-3">
         <span>{sorted.length} מתוך {rows.length} שורות</span>
         {(sort || Object.values(colFilters).some((s) => s && s.size > 0)) && (
           <button
@@ -323,9 +323,9 @@ export function ReceiptTable() {
       {loading ? (
         <p className="text-sm">טוען...</p>
       ) : (
-        <div className="rounded-lg border border-[hsl(var(--border))] overflow-x-auto overflow-y-visible">
+        <div className="border border-border overflow-x-auto overflow-y-visible">
           <table className="w-full text-sm">
-            <thead className="bg-[hsl(var(--muted))]">
+            <thead className="bg-muted">
               <tr>
                 {COLUMNS.map((col) => (
                   <ColumnHeader
@@ -346,9 +346,9 @@ export function ReceiptTable() {
               {sorted.map((r) => (
                 <tr
                   key={r.id}
-                  className={`border-t border-[hsl(var(--border))] ${
+                  className={`border-t border-border ${
                     r.documentType === DOCUMENT_TYPE.Duplicate || r.documentType === DOCUMENT_TYPE.CreditSlip
-                      ? "bg-yellow-50/50 dark:bg-yellow-900/10"
+                      ? "bg-muted/50"
                       : ""
                   }`}
                 >
@@ -374,11 +374,11 @@ export function ReceiptTable() {
                       }}
                       className="bg-transparent w-20 text-right px-1"
                     />
-                    <div className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                    <div className="text-[10px] text-muted-foreground">
                       {formatILS(r.amount)}
                     </div>
                   </td>
-                  <td className="p-2 tabular-nums text-[hsl(var(--muted-foreground))]">
+                  <td className="p-2 tabular-nums text-muted-foreground">
                     {r.totalReceiptAmount == null ? "—" : formatILS(r.totalReceiptAmount)}
                   </td>
                   <td className="p-2">
@@ -392,7 +392,7 @@ export function ReceiptTable() {
                       ))}
                     </select>
                     {r.cardLast4 && (
-                      <div className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                      <div className="text-[10px] text-muted-foreground">
                         ★{r.cardLast4}
                       </div>
                     )}
@@ -407,7 +407,7 @@ export function ReceiptTable() {
                       }}
                       className="bg-transparent px-1"
                     />
-                    <div className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                    <div className="text-[10px] text-muted-foreground">
                       {formatDate(r.date)}
                     </div>
                   </td>
@@ -450,7 +450,7 @@ export function ReceiptTable() {
                       </span>
                     )}
                   </td>
-                  <td className="p-2 text-[hsl(var(--muted-foreground))]">{r.confidence}</td>
+                  <td className="p-2 text-muted-foreground">{r.confidence}</td>
                   <td className="p-2">
                     <input
                       type="checkbox"
@@ -462,7 +462,7 @@ export function ReceiptTable() {
               ))}
               {sorted.length === 0 && (
                 <tr>
-                  <td colSpan={COLUMNS.length} className="p-6 text-center text-[hsl(var(--muted-foreground))]">
+                  <td colSpan={COLUMNS.length} className="p-6 text-center text-muted-foreground">
                     אין שורות.
                   </td>
                 </tr>
@@ -504,7 +504,7 @@ function ColumnHeader({
       >
         <span>{col.label}</span>
         {sortIcon && <span className="text-[10px]">{sortIcon}</span>}
-        {hasFilter && <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500" />}
+        {hasFilter && <span className="inline-block w-1.5 h-1.5 bg-primary" />}
         <span className="text-[10px] opacity-50">⋮</span>
       </button>
       {isOpen && (
@@ -567,7 +567,7 @@ function ColumnPanel({
 
   return (
     <div
-      className="absolute top-full right-0 z-50 mt-1 w-56 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] shadow-lg p-2 text-right font-normal"
+      className="absolute top-full right-0 z-50 mt-1 w-56 border border-border bg-background shadow-sm p-2 text-right font-normal"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex gap-1 mb-2">
@@ -595,7 +595,7 @@ function ColumnPanel({
       </div>
       {col.filterable && values.length > 0 && (
         <>
-          <div className="border-t border-[hsl(var(--border))] my-2" />
+          <div className="border-t border-border my-2" />
           <div className="flex justify-between items-center text-xs mb-1 px-1">
             <span className="font-semibold">סנן ערכים</span>
             <button onClick={showAll} className="underline">
@@ -606,7 +606,7 @@ function ColumnPanel({
             {values.map((v) => (
               <div
                 key={v}
-                className="flex items-center gap-2 text-sm px-1 py-0.5 hover:bg-[hsl(var(--accent))] rounded"
+                className="flex items-center gap-2 text-sm px-1 py-0.5 hover:bg-accent rounded"
               >
                 <input
                   type="checkbox"

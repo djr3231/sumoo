@@ -12,7 +12,7 @@ export default async function UploadPage() {
     <div className="space-y-8">
       <header>
         <h1 className="text-2xl font-bold">העלאת קבלות</h1>
-        <p className="text-sm text-[hsl(var(--muted-foreground))]">
+        <p className="text-sm text-muted-foreground">
           תוכל להעלות מקומית, או לייבא תיקייה מ-Google Drive.
         </p>
       </header>
@@ -22,7 +22,7 @@ export default async function UploadPage() {
         <DriveImport />
       </section>
 
-      <hr className="border-[hsl(var(--border))]" />
+      <hr className="border-border" />
 
       <section className="space-y-3">
         <h2 className="font-semibold">העלאה ישירה (drag-and-drop)</h2>

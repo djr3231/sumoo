@@ -3,6 +3,7 @@ import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { Button } from "./ui/Button";
 import type { Receipt } from "@/lib/types";
+import { DEFAULT_STORE_NAME } from "@/lib/types";
 
 const CONCURRENCY = 2;
 const MAX_DIM = 1568;
@@ -181,10 +182,10 @@ export function UploadZone() {
     <div className="space-y-4">
       <div
         {...getRootProps()}
-        className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition ${
+        className={`border-2 border-dashed p-8 text-center cursor-pointer transition ${
           isDragActive
-            ? "border-[hsl(var(--primary))] bg-[hsl(var(--accent))]"
-            : "border-[hsl(var(--border))]"
+            ? "border-primary bg-accent"
+            : "border-border"
         }`}
       >
         <input {...getInputProps()} />
@@ -217,16 +218,16 @@ export function UploadZone() {
       )}
 
       {progress.total > 0 && (
-        <div className="w-full bg-[hsl(var(--muted))] rounded h-2 overflow-hidden">
+        <div className="w-full bg-muted h-2 overflow-hidden">
           <div
-            className="h-full bg-[hsl(var(--primary))] transition-[width]"
+            className="h-full bg-primary transition-[width]"
             style={{ width: `${(progress.done / progress.total) * 100}%` }}
           />
         </div>
       )}
 
       {paused && (
-        <div className="rounded-lg border border-amber-500 bg-amber-50 dark:bg-amber-950 p-3 text-sm">
+        <div className="border border-border bg-muted p-3 text-sm">
           <p className="font-semibold mb-2">⏸ הסריקה הושהתה — Gemini עמוס</p>
           <p className="mb-2">
             {pendingFiles.length} קבצים ממתינים. נסה שוב כשהשרת ישתחרר (לעיתים נדרשות מספר דקות).
@@ -238,9 +239,9 @@ export function UploadZone() {
       )}
 
       {results.length > 0 && (
-        <div className="rounded-lg border border-[hsl(var(--border))] overflow-hidden">
+        <div className="border border-border overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="bg-[hsl(var(--muted))]">
+            <thead className="bg-muted">
               <tr>
                 <th className="text-right p-2">שם חנות</th>
                 <th className="text-right p-2">סכום</th>
@@ -252,8 +253,8 @@ export function UploadZone() {
             </thead>
             <tbody>
               {results.map((r) => (
-                <tr key={r.id} className="border-t border-[hsl(var(--border))]">
-                  <td className="p-2">{r.storeName ?? "לא ידוע"}</td>
+                <tr key={r.id} className="border-t border-border">
+                  <td className="p-2">{r.storeName ?? DEFAULT_STORE_NAME}</td>
                   <td className="p-2 tabular-nums">
                     {r.amount === null ? "—" : r.amount.toFixed(2)}
                   </td>
@@ -271,7 +272,7 @@ export function UploadZone() {
       )}
 
       {errors.length > 0 && (
-        <div className="rounded-lg border border-[hsl(var(--destructive))] p-3 text-sm">
+        <div className="border border-destructive p-3 text-sm">
           <p className="font-semibold mb-1">שגיאות ({errors.length})</p>
           <ul className="list-disc pr-5 space-y-1">
             {errors.map((e, i) => (

@@ -82,19 +82,19 @@ export function SettingsForm() {
   }
 
   if (loading) {
-    return <p className="text-sm text-[hsl(var(--muted-foreground))]">טוען...</p>;
+    return <p className="text-sm text-muted-foreground">טוען...</p>;
   }
 
   return (
     <div className="space-y-4">
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">4 ספרות אחרונות של כרטיסי האשראי שלך</h2>
-        <p className="text-sm text-[hsl(var(--muted-foreground))]">
+        <p className="text-sm text-muted-foreground">
           קבלות שמחויבות באחד מהכרטיסים הללו יסווגו כ&quot;אשראי&quot;. כרטיסים אחרים יסווגו כ&quot;מזומן&quot;.
         </p>
 
         {cards.length === 0 ? (
-          <p className="text-sm rounded-md border border-dashed border-[hsl(var(--border))] p-3">
+          <p className="text-sm border border-dashed border-border p-3">
             ללא כרטיסים מוגדרים — כל חיוב באשראי יסווג כ&quot;אשראי&quot; לפי הקבלה.
           </p>
         ) : (
@@ -102,14 +102,14 @@ export function SettingsForm() {
             {cards.map((c) => (
               <li
                 key={c}
-                className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--muted))] px-3 py-1 text-sm"
+                className="inline-flex items-center gap-2 border border-border bg-muted px-3 py-1 text-sm"
               >
                 <span className="font-mono">★{c}</span>
                 <button
                   type="button"
                   onClick={() => removeCard(c)}
                   aria-label={`הסר ${c}`}
-                  className="text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--destructive))] leading-none"
+                  className="text-muted-foreground hover:text-destructive leading-none"
                 >
                   ×
                 </button>
@@ -136,12 +136,12 @@ export function SettingsForm() {
               inputMode="numeric"
               maxLength={4}
               placeholder="1234"
-              className={`w-full h-10 px-3 rounded-md border bg-transparent text-sm font-mono ${
-                draftError ? "border-[hsl(var(--destructive))]" : "border-[hsl(var(--border))]"
+              className={`w-full h-10 px-3 border bg-transparent text-sm font-mono ${
+                draftError ? "border-destructive" : "border-border"
               }`}
             />
             {draftError && (
-              <p className="text-xs text-[hsl(var(--destructive))] mt-1">{draftError}</p>
+              <p className="text-xs text-destructive mt-1">{draftError}</p>
             )}
           </div>
           <Button onClick={addDraft} variant="outline" disabled={!draft}>
@@ -150,17 +150,17 @@ export function SettingsForm() {
         </div>
       </section>
 
-      <div className="flex items-center gap-3 pt-2 border-t border-[hsl(var(--border))]">
+      <div className="flex items-center gap-3 pt-2 border-t border-border">
         <Button onClick={save} disabled={saving}>
           {saving ? "שומר..." : "שמור"}
         </Button>
         {savedAt && !saving && (
-          <span className="text-sm text-[hsl(var(--muted-foreground))]">נשמר ✓</span>
+          <span className="text-sm text-muted-foreground">נשמר ✓</span>
         )}
       </div>
 
       {error && (
-        <div className="rounded-md border border-[hsl(var(--destructive))] p-3 text-sm">
+        <div className="border border-destructive p-3 text-sm">
           {error}
         </div>
       )}

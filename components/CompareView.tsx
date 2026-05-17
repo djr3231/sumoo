@@ -65,9 +65,9 @@ export function CompareView() {
 
   return (
     <div className="space-y-6">
-      <section className="space-y-3 border border-[hsl(var(--border))] rounded-lg p-4">
+      <section className="space-y-3 border border-border p-4">
         <h2 className="font-semibold">העלה תדפיס בנק / אשראי</h2>
-        <p className="text-xs text-[hsl(var(--muted-foreground))]">
+        <p className="text-xs text-muted-foreground">
           תומך ב: PDF (ינותח בעזרת Claude), CSV, XLSX (ייצוא מבנקים ישראליים).
         </p>
         <div className="flex flex-wrap gap-2 items-center">
@@ -81,13 +81,13 @@ export function CompareView() {
             placeholder='תווית מקור (למשל "ויזה 1234")'
             value={sourceLabel}
             onChange={(e) => setSourceLabel(e.target.value)}
-            className="h-9 px-3 rounded-md border border-[hsl(var(--border))] bg-transparent text-sm flex-1 min-w-[200px]"
+            className="h-9 px-3 border border-border bg-transparent text-sm flex-1 min-w-[200px]"
           />
           <Button onClick={handleParse} disabled={!file || loading}>
             {loading ? "מעבד..." : "פרסר והשווה"}
           </Button>
         </div>
-        {error && <p className="text-sm text-[hsl(var(--destructive))]">{error}</p>}
+        {error && <p className="text-sm text-destructive">{error}</p>}
       </section>
 
       {result && (
@@ -113,9 +113,9 @@ export function CompareView() {
           {result.missingReceipts.length > 0 && (
             <div>
               <h3 className="font-semibold mb-2">תנועות ללא קבלה</h3>
-              <div className="rounded-lg border border-[hsl(var(--border))] overflow-hidden">
+              <div className="border border-border overflow-hidden">
                 <table className="w-full text-sm">
-                  <thead className="bg-[hsl(var(--muted))]">
+                  <thead className="bg-muted">
                     <tr>
                       <th className="text-right p-2">תאריך</th>
                       <th className="text-right p-2">סכום</th>
@@ -125,11 +125,11 @@ export function CompareView() {
                   </thead>
                   <tbody>
                     {result.missingReceipts.map((t, i) => (
-                      <tr key={i} className="border-t border-[hsl(var(--border))]">
+                      <tr key={i} className="border-t border-border">
                         <td className="p-2">{formatDate(t.date)}</td>
                         <td className="p-2 tabular-nums">{formatILS(t.amount)}</td>
                         <td className="p-2">{t.description ?? "—"}</td>
-                        <td className="p-2 text-[hsl(var(--muted-foreground))]">{t.source}</td>
+                        <td className="p-2 text-muted-foreground">{t.source}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -141,7 +141,7 @@ export function CompareView() {
       )}
 
       {parsedTxns.length > 0 && !result && (
-        <p className="text-sm text-[hsl(var(--muted-foreground))]">
+        <p className="text-sm text-muted-foreground">
           חולצו {parsedTxns.length} תנועות. ממתין להשוואה...
         </p>
       )}
@@ -159,13 +159,12 @@ function Stat({
   tone: "green" | "red" | "yellow";
 }) {
   const map = {
-    green: "bg-green-50 dark:bg-green-900/20 text-green-900 dark:text-green-100",
-    red: "bg-red-50 dark:bg-red-900/20 text-red-900 dark:text-red-100",
-    yellow:
-      "bg-yellow-50 dark:bg-yellow-900/20 text-yellow-900 dark:text-yellow-100",
+    green: "bg-accent text-accent-foreground",
+    red: "bg-destructive/10 text-destructive",
+    yellow: "bg-muted text-foreground",
   } as const;
   return (
-    <div className={`rounded-lg p-3 ${map[tone]}`}>
+    <div className={`p-3 ${map[tone]}`}>
       <div className="text-2xl font-bold tabular-nums">{value}</div>
       <div className="text-xs">{label}</div>
     </div>
