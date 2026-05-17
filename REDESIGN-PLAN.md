@@ -1,0 +1,433 @@
+# Redesign Plan — Sumoo
+
+> **Read this top-to-bottom before doing anything.** This document is written assuming the executor is a model that may be tempted to improvise. Do not improvise. Follow the protocols.
+
+---
+
+## 0. Mandatory pre-read
+
+Before starting any task in this plan, you must read these files in order:
+
+1. `CLAUDE.MD` — project rules. Branch protection, commit discipline, "teach first" rule.
+2. `ARCHITECTURE.md` — system architecture, module boundaries, type-system conventions.
+3. `DESIGN-SYSTEM.md` — locked theme tokens, allowed shadcn primitives, forbidden patterns.
+4. `SESSION-CONTEXT.md` — recent history (read once, skim).
+5. This file — execution order.
+
+After reading, **state explicitly in chat**: *"I have read CLAUDE.MD, ARCHITECTURE.md, DESIGN-SYSTEM.md, SESSION-CONTEXT.md, and REDESIGN-PLAN.md. I will follow these rules."*
+
+If you have not done step 0, do not start any task.
+
+---
+
+## 1. The four inviolable rules
+
+These come from the user. They are non-negotiable.
+
+1. **Mobile-first responsive.** Every layout must work at 375px wide. Add larger breakpoints (`sm:`, `md:`, `lg:`) on top. No design starts at desktop and gets squished down.
+
+2. **Always check the theme and existing shadcn components first.** Before adding any new pattern: scan `DESIGN-SYSTEM.md`, list `components/ui/`, and check https://ui.shadcn.com/docs/components. If a primitive exists for the job, use it. Do not roll your own.
+
+3. **Use only the locked theme.** The theme tokens in `DESIGN-SYSTEM.md` §2 are the entire color palette of the project. Do not introduce new tokens, new colors, new fonts. **If you think you need a new token, STOP and ask the user.**
+
+4. **Do not invent textual content.** If you are about to write a Hebrew label, button text, heading, helper text, error message — and the exact wording isn't already in the codebase or in this plan — **STOP and ask the user what to write**. Better to halt and ask than to invent.
+
+These rules override your judgment. When in doubt: stop, ask, wait.
+
+---
+
+## 2. STOP-and-ASK protocol
+
+Use this protocol every time you reach any of these triggers:
+
+| Trigger                                              | Action                                                 |
+| ---------------------------------------------------- | ------------------------------------------------------ |
+| You're about to write any Hebrew string              | Search codebase first. If not found → **ask**.         |
+| You're about to add a new color, font, or radius     | **Ask**. Tell the user which token and why.            |
+| You're about to install a non-shadcn library         | **Ask**. State what it does and what alternatives exist. |
+| You're about to add an `npm` dep                     | **Ask**. (Per CLAUDE.MD §5.)                           |
+| You're about to write CSS in `globals.css`           | **Ask**.                                               |
+| You're about to make a UI decision the spec doesn't cover | **Ask**.                                          |
+| The current task's acceptance criteria are ambiguous | **Ask**.                                               |
+| A `npm run typecheck` or `npm run build` fails       | Read the error, propose a fix, **ask** before applying. |
+
+The question to the user should always include:
+- What you're about to do.
+- Why you think it's needed.
+- What two or three alternatives you considered.
+
+---
+
+## 3. Tooling
+
+### Required MCPs
+
+Before starting, verify the following are connected (`claude mcp list` should show them as `connected`):
+
+- `context7` — for fresh shadcn/Tailwind/Next.js docs.
+- `shadcn-ui` (or `shadcn`) — for component install + reference.
+
+### Skills (optional but recommended)
+
+If installed, the following help with design work:
+
+- `frontend-design`
+- `taste-skill`
+
+If neither is installed, ask the user if they want them before continuing. Do not silently proceed without them — the user's intent was that you have them.
+
+### Forbidden tooling
+
+Per `CLAUDE.MD` §Visual and Runtime Verification:
+
+- **Do NOT run `npm run dev`, start servers, take screenshots, or attempt visual verification.**
+- **You may run** `npm run typecheck`, `npm run lint`, `npm run build`.
+- For visual checks: hand off to the user. State exactly what should be checked and the expected result. Wait.
+
+---
+
+## 4. Branching and commit policy
+
+Per `CLAUDE.MD` §Branch Protection: **never work on `main` or `dev`**.
+
+The current redesign work happens on **`feat/redesign-shadcn`**. If the branch you are on is not `feat/redesign-shadcn` (or a child of it), stop and ask.
+
+**Per task:**
+- One conceptual change = one commit.
+- Conventional commit prefixes: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`.
+- Verify `npm run typecheck` passes before committing.
+- Verify `npm run build` passes before declaring a page "done".
+- Do NOT push to remote until the user confirms a milestone is good.
+
+**Per page in this plan:**
+- One feature branch off `feat/redesign-shadcn`? No — the user's preference is that all redesign work lives on `feat/redesign-shadcn` itself. Use commits, not sub-branches.
+
+---
+
+## 5. Execution order
+
+We redesign from **simplest** to **most complex**, building patterns incrementally so each page reinforces what came before. Do not skip ahead.
+
+| Step | Target                          | Why this order                                                       |
+| ---- | ------------------------------- | -------------------------------------------------------------------- |
+| 5.1  | Foundation (layout, nav, theme) | Touched by every page. Get the shell right first.                    |
+| 5.2  | `/settings`                     | One small form. Establish the form pattern.                          |
+| 5.3  | `/upload`                       | Drag-drop + list. Slightly more complex, no table yet.               |
+| 5.4  | `/` (landing)                   | Sign-in. Simple but visible. Polish.                                 |
+| 5.5  | `/receipts`                     | The hard one — table → card-list on mobile, filters, editing.        |
+| 5.6  | `/compare`                      | Last. Also table-heavy but less critical.                            |
+| 5.7  | Final pass                      | Dark mode toggle (if user wants), accessibility audit, regressions.  |
+
+Inside each step there is a fixed protocol (§6 below).
+
+---
+
+## 6. Per-step protocol (apply to every step)
+
+For each step in §5, execute in order:
+
+### 6.1 Read the relevant existing code
+
+Read every file you might modify and every file that imports from those files. Build a mental map of what the page does **today**.
+
+If the page imports from `lib/types.ts` constants — **those constants stay**. Do not rename, replace, or reorganize them.
+
+### 6.2 Restate the task in your own words
+
+Write a short message to the user:
+- "This step touches: [list of files]."
+- "Current behavior: [one paragraph]."
+- "Target behavior: [one paragraph]."
+- "I will not touch: [the API routes / `lib/*` services / `lib/types.ts` constants — unless the step explicitly says otherwise]."
+
+Wait for the user to confirm before doing anything else.
+
+### 6.3 Identify shadcn primitives to use
+
+List every shadcn primitive you plan to use. For each:
+- Is it already in `components/ui/`? If yes, use it.
+- If no, install it with `npx shadcn@latest add <name>`. Commit the install as a separate `chore: add <name> primitive` commit before using it.
+
+### 6.4 Implement the changes
+
+Small commits. After each meaningful subtask:
+- Run `npm run typecheck` — must pass.
+- Run `npm run lint` — must pass (or report errors and ask).
+- Commit with conventional prefix.
+
+### 6.5 Verify (no visual)
+
+After the page is structurally complete:
+- `npm run typecheck` — pass.
+- `npm run build` — pass.
+- Run the design-system verification greps from `DESIGN-SYSTEM.md` §10.
+- State to the user: "Step X is complete. Please verify visually: [exact checklist]."
+
+### 6.6 Wait
+
+Do not proceed to the next step until the user says go.
+
+---
+
+## 7. The steps
+
+### 7.1 Foundation
+
+**Files in scope:**
+- `app/layout.tsx`
+- `components/Header.tsx`
+- `app/globals.css` (read only — do not edit)
+- `components/ui/Button.tsx` (already updated by shadcn init; verify only)
+- `components/Providers.tsx` (read only — do not edit unless required)
+
+**Goals:**
+- Header is mobile-friendly: on viewport < `md`, the nav should collapse into a `Sheet` (slide-out menu) triggered by a hamburger button. On `md+`, nav stays inline as today.
+- Footer (optional, ask user before adding).
+- Confirm the body font is correct (read `app/layout.tsx`; do not change the font without asking).
+- Ensure `<html dir="rtl" lang="he">` is preserved.
+
+**Shadcn primitives needed:**
+- `sheet` (`npx shadcn@latest add sheet`).
+- Possibly `button` (already installed; verify variants).
+
+**Acceptance criteria:**
+- At 375px width, Header shows: logo, hamburger button on the trailing side, no inline nav.
+- Tap hamburger → Sheet opens from the start side (RTL: right) with nav links stacked vertically + user email + sign-out.
+- At `md+` width, Header looks like today (per existing `Header.tsx`).
+- All current nav links present: העלאה, קבלות, השוואה, הגדרות.
+- No hardcoded text added; reuse existing strings from `Header.tsx`.
+
+**Hand off to user:** "Foundation done. Please verify: open the app on a phone (or DevTools at 375px), confirm hamburger nav works. Open at desktop, confirm nav is inline. Confirm no regression on auth state (signed out shows sign-in, signed in shows nav)."
+
+---
+
+### 7.2 `/settings`
+
+**Files in scope:**
+- `app/settings/page.tsx`
+- `components/SettingsForm.tsx`
+
+**Out of scope (do not touch):**
+- `app/api/settings/route.ts`
+- `lib/google.ts:getUserSettings` / `writeUserSettings`
+- `lib/types.ts` (`SETTINGS_KEY`, `UserSettings`)
+
+**Goals:**
+- Replace the current ad-hoc form with shadcn primitives.
+- The chip-list of card last-4 stays — that's the core UX.
+- Add visible validation messaging.
+- Layout: at mobile width, full width. At `md+`, max-width container.
+
+**Shadcn primitives needed:**
+- `card` (`npx shadcn@latest add card`).
+- `input`, `label` (`npx shadcn@latest add input label`).
+- `button` (already installed).
+- `badge` for the chips (`npx shadcn@latest add badge`).
+
+**Acceptance criteria:**
+- Page is contained inside a `Card` with `CardHeader` (title + description) and `CardContent` (the form).
+- Input is shadcn's `Input` with `Label` above it.
+- Add button uses `Button`.
+- Each chip is a shadcn `Badge` with a small `×` button on the trailing side.
+- "שמור" button at the bottom of `CardContent` (or in `CardFooter`, ask user which).
+- All existing strings preserved verbatim from current `SettingsForm.tsx` — do not invent new copy.
+- Empty state preserved.
+- Validation error rendering uses muted-foreground text below the input, no raw red — use `text-destructive` token.
+
+**Hand off:** "Settings page redone with shadcn. Please verify: add a 4-digit card, remove it, save, refresh — state persists. Mobile view OK. No new strings introduced."
+
+---
+
+### 7.3 `/upload`
+
+**Files in scope:**
+- `app/upload/page.tsx`
+- `components/UploadZone.tsx`
+- `components/DriveImport.tsx`
+
+**Out of scope:**
+- `app/api/ocr/route.ts`
+- `app/api/drive/route.ts`
+- All `lib/*` services
+
+**Goals:**
+- Make the drop zone visually obvious as a target (dashed border using `border-dashed border-border`, large hit area).
+- Reorganize the page: two sections, "העלאה ישירה" (current uploader) and "ייבוא מ-Drive" (current DriveImport), separated visually.
+- Progress UI: use shadcn's `Progress` component, not the custom div.
+- Use `Alert` for the "Gemini overloaded" pause state.
+
+**Shadcn primitives needed:**
+- `card`
+- `progress` (`npx shadcn@latest add progress`)
+- `alert` (`npx shadcn@latest add alert`)
+- `input` (for the folder ID input)
+- `button`
+
+**Acceptance criteria:**
+- Both upload and Drive-import sections sit inside `Card`s.
+- Drop zone visually distinct — dashed border, centered icon + label.
+- On mobile, sections stack vertically; on `md+`, can sit side-by-side (or stay stacked — ask user).
+- Progress bar uses `<Progress value={pct} />`.
+- Error banner uses `<Alert variant="destructive">`.
+- Pause banner uses `<Alert>` (default).
+- All existing user-visible strings preserved exactly.
+
+**Hand off:** "Upload page redone. Please verify: upload a small image works end-to-end, Drive import works, error state appears correctly. Mobile responsive."
+
+---
+
+### 7.4 `/` (landing)
+
+**Files in scope:**
+- `app/page.tsx`
+
+**Goals:**
+- Center a sign-in card. Title, one-line description, sign-in button.
+- That's it. Do not add marketing copy without asking.
+
+**Shadcn primitives needed:**
+- `card`, `button`.
+
+**Acceptance criteria:**
+- Vertically and horizontally centered card.
+- Title is whatever the current `app/page.tsx` uses.
+- No new strings.
+
+**Hand off:** "Landing redone. Please verify: visit `/` while signed out, sign in works."
+
+---
+
+### 7.5 `/receipts` — the hard one
+
+**Files in scope:**
+- `app/receipts/page.tsx`
+- `components/ReceiptTable.tsx`
+
+**Out of scope:**
+- `lib/types.ts` constants (column definitions, enums)
+- `lib/google.ts`
+- `app/api/sheets/route.ts`
+- `app/api/dedup/route.ts`
+- `app/api/fix-drive-ids/route.ts`
+
+**Goals:**
+This is the most complex page. We rebuild it in three subtasks, each its own commit:
+
+#### 7.5.a Desktop table → shadcn `Table`
+
+- Replace the raw `<table>` with shadcn `Table` (`npx shadcn@latest add table`).
+- Headers, body rows, cells all using shadcn primitives.
+- Filter inputs use shadcn `Input`.
+- Category/payment/document dropdowns use shadcn `Select` (`npx shadcn@latest add select`).
+- Manually-edited cells use shadcn `Input` or `Select` consistently.
+- "Reviewed" toggle uses shadcn `Checkbox`.
+
+#### 7.5.b Mobile card-list
+
+At viewport `< md`, the table is **replaced** (not shrunk) with a card list. Each receipt becomes a `Card` showing:
+- Store name (heading)
+- Amount (large, prominent)
+- Date (small, muted)
+- Category + payment method as `Badge`s
+- A "View details" / "Edit" expand action — uses shadcn `Drawer` (`npx shadcn@latest add drawer`) for editing on mobile.
+
+Use `hidden md:block` / `block md:hidden` to swap presentations.
+
+**Ask the user:** what should the card show by default, and what should be hidden behind the drawer? Default proposal: store, amount, date, category, payment. Drawer reveals all 15 fields for editing. **Get approval before implementing.**
+
+#### 7.5.c Action toolbar
+
+The current page has buttons for: dedup, fix-drive-ids, CSV export, XLSX export. On desktop: a horizontal toolbar. On mobile: a shadcn `DropdownMenu` (`npx shadcn@latest add dropdown-menu`) labeled "פעולות" so it doesn't crowd the screen.
+
+Filters that today are dispersed in headers should:
+- Desktop: stay in headers.
+- Mobile: a "מסננים" button that opens a `Sheet` with all filters.
+
+**Acceptance criteria:**
+- All existing functionality preserved: inline edit, filter, dedup button, fix-drive-ids button, CSV + XLSX export.
+- All existing labels preserved verbatim.
+- `npm run build` passes.
+- Run all DESIGN-SYSTEM grep checks — clean.
+
+**Hand off:** "Receipts page redone. Please verify (desktop + mobile): inline edit a row, change a category, run dedup, run fix-drive-ids, export CSV, export XLSX. All should match prior behavior."
+
+---
+
+### 7.6 `/compare`
+
+**Files in scope:**
+- `app/compare/page.tsx`
+- `components/CompareView.tsx`
+
+**Out of scope:**
+- `lib/match.ts`, `lib/parsers.ts`
+- `app/api/match/route.ts`, `app/api/statements/route.ts`
+
+**Goals:**
+- Same patterns as `/receipts`: shadcn `Table` on desktop, card list on mobile.
+- File-upload input uses shadcn `Input type="file"` inside a `Card`.
+
+**Acceptance criteria:**
+- Existing functionality preserved.
+- Mobile responsive.
+
+**Hand off:** "Compare page redone. Please verify: upload a sample statement, match against receipts, see results."
+
+---
+
+### 7.7 Final pass
+
+After all pages are individually done:
+
+1. **Cross-page audit.** Click through every nav link at 375px and at 1280px. Note any regressions.
+2. **Theme audit.** Run all greps in `DESIGN-SYSTEM.md` §10. All should be empty (or match only the allowed exceptions).
+3. **Build + typecheck.** Both must pass.
+4. **Ask the user about dark mode.** Do they want a toggle? If yes: `npx shadcn@latest add theme-toggle` (or follow shadcn dark-mode docs) — install + wire it up. If no, do nothing.
+5. **Accessibility quick pass.** Every interactive element has a label, `aria-label`, or text content. Every input has a `Label`.
+
+---
+
+## 8. What you must NEVER do during the redesign
+
+- Touch files under `lib/` (except reading).
+- Touch files under `app/api/` (except reading).
+- Touch `lib/types.ts` (the const enums are the API).
+- Modify Hebrew domain values (the receipt categories, document types, payment methods).
+- Rename existing data fields.
+- Add new server-side logic.
+- Add tracking, analytics, telemetry.
+- Reformat unrelated files.
+- "Improve" code outside the page being redesigned.
+
+If you find a bug in code that's out of scope, **note it for the user; do not fix it in the redesign commit.**
+
+---
+
+## 9. Definition of done (whole redesign)
+
+The redesign is "done" when **all** of the following are true:
+
+- [ ] `npm run typecheck` passes on `feat/redesign-shadcn`.
+- [ ] `npm run lint` passes.
+- [ ] `npm run build` passes.
+- [ ] All five greps in `DESIGN-SYSTEM.md` §10 are clean (no unexpected matches).
+- [ ] Every page works at 375px width.
+- [ ] Every page works at 1280px width.
+- [ ] User has signed off on each page (`/settings`, `/upload`, `/`, `/receipts`, `/compare`).
+- [ ] All `SESSION-CONTEXT.md`-listed flows still work: scan a receipt, edit a row, dedup, fix-drive-ids, export, settings save, bank match.
+- [ ] No new strings exist in the codebase that the user did not approve.
+- [ ] No new colors, fonts, or radii exist beyond the locked theme.
+
+---
+
+## 10. Quick reference
+
+- Theme tokens: `DESIGN-SYSTEM.md` §2
+- Allowed primitives: `components/ui/` + https://ui.shadcn.com/docs/components
+- Install primitive: `npx shadcn@latest add <name>`
+- Verification greps: `DESIGN-SYSTEM.md` §10
+- Branch: `feat/redesign-shadcn` (never `main`, never `dev`)
+- Commit prefixes: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`
+- Verification commands you can run: `npm run typecheck`, `npm run lint`, `npm run build`
+- Verification commands you cannot run: `npm run dev`, anything that starts a server
+- When in doubt: **stop and ask the user.**

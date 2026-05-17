@@ -5,6 +5,27 @@ ARCHITECTURE.md is the authoritative blueprint for this template.
 Before making any structural decision, re-read the relevant section.
 If something isn't covered there, ask — don't improvise.
 
+For design / UI work, **DESIGN-SYSTEM.md** is the locked source of truth for
+theme tokens, allowed shadcn primitives, and forbidden patterns. Never introduce
+a new color, font, radius, or custom CSS without checking DESIGN-SYSTEM.md first.
+
+For the ongoing redesign, **REDESIGN-PLAN.md** defines the execution order and
+per-page acceptance criteria. Follow its STOP-and-ASK protocol exactly.
+
+## Shadcn Configuration (locked)
+The project's shadcn theme was generated with:
+
+```
+npx shadcn@latest init --preset b1tzID8AS --template next --rtl --pointer
+```
+
+- Preset: **`b1tzID8AS`** (registered theme on https://ui.shadcn.com/create)
+- `--radius: 0` (sharp corners — never add `rounded-*`)
+- RTL enabled
+- Full theme token list: see DESIGN-SYSTEM.md §2
+
+Never change theme tokens, the preset, or the font without explicit user approval.
+
 ## Git Workflow
 - After completing any meaningful step, commit with a clear message.
 - Use conventional commit prefixes: feat:, fix:, chore:, docs:, refactor:
