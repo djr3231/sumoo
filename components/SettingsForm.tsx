@@ -1,7 +1,11 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Badge } from "./ui/badge";
 import { Skeleton } from "./ui/Skeleton";
+import { Alert, AlertDescription } from "./ui/Alert";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -16,7 +20,6 @@ export function SettingsForm() {
   const [draftError, setDraftError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -38,9 +41,7 @@ export function SettingsForm() {
         if (alive) setLoading(false);
       }
     })();
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, []);
 
   function addDraft() {
@@ -76,7 +77,6 @@ export function SettingsForm() {
         setError(json.error || `HTTP ${res.status}`);
         return;
       }
-      setSavedAt(Date.now());
       toast.success("נשמר ✓");
     } catch (e) {
       setError((e as Error).message);
@@ -99,82 +99,79 @@ export function SettingsForm() {
   }
 
   return (
-    <div className="space-y-4">
-      <section className="space-y-2">
-        <h2 className="text-lg font-semibold">4 ספרות אחרונות של כרטיסי האשראי שלך</h2>
+    <div className="space-y-6">
+      <div className="space-y-3">
+        <Label htmlFor="card-input" className="text-base font-semibold">
+          4 ספרות אחרונות של כרטיסי האשראי שלך
+        </Label>
         <p className="text-sm text-muted-foreground">
           קבלות שמחויבות באחד מהכרטיסים הללו יסווגו כ&quot;אשראי&quot;. כרטיסים אחרים יסווגו כ&quot;מזומן&quot;.
         </p>
 
         {cards.length === 0 ? (
-          <p className="text-sm rounded-md border border-dashed border-border p-3">
+          <p className="text-sm border border-dashed border-border p-3">
             ללא כרטיסים מוגדרים — כל חיוב באשראי יסווג כ&quot;אשראי&quot; לפי הקבלה.
           </p>
         ) : (
           <ul className="flex flex-wrap gap-2">
             {cards.map((c) => (
-              <li
-                key={c}
-                className="inline-flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-1 text-sm"
-              >
-                <span className="font-mono">★{c}</span>
-                <button
-                  type="button"
-                  onClick={() => removeCard(c)}
-                  aria-label={`הסר ${c}`}
-                  className="text-muted-foreground hover:text-destructive leading-none"
-                >
-                  ×
-                </button>
+              <li key={c}>
+                <Badge variant="secondary" className="gap-1.5 ps-3 pe-1.5 py-1 font-normal text-sm">
+                  <span className="font-mono">★{c}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeCard(c)}
+                    aria-label={`הסר ${c}`}
+                    className="text-muted-foreground hover:text-destructive leading-none"
+                  >
+                    ×
+                  </button>
+                </Badge>
               </li>
             ))}
           </ul>
         )}
 
         <div className="flex gap-2 items-start">
-          <div className="flex-1">
-            <input
+          <div className="flex-1 space-y-1">
+            <Input
+              id="card-input"
               value={draft}
               onChange={(e) => {
                 setDraft(e.target.value.replace(/\D/g, "").slice(0, 4));
                 setDraftError(null);
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  addDraft();
-                }
+                if (e.key === "Enter") { e.preventDefault(); addDraft(); }
               }}
-              type="text"
               inputMode="numeric"
               maxLength={4}
               placeholder="1234"
-              className={`w-full h-10 px-3 rounded-md border bg-transparent text-sm font-mono ${
-                draftError ? "border-destructive" : "border-border"
-              }`}
+              aria-invalid={!!draftError}
+              className="font-mono"
             />
             {draftError && (
-              <p className="text-xs text-destructive mt-1">{draftError}</p>
+              <p className="text-xs text-destructive">{draftError}</p>
             )}
           </div>
           <Button onClick={addDraft} variant="outline" disabled={!draft}>
             הוסף
           </Button>
         </div>
-      </section>
+      </div>
 
-      <div className="flex items-center gap-3 pt-2 border-t border-border">
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      <div className="pt-2 border-t border-border">
         <Button onClick={save} disabled={saving}>
           {saving && <Loader2 className="animate-spin size-4 me-2" />}
           שמור
         </Button>
       </div>
-
-      {error && (
-        <div className="rounded-md border border-destructive p-3 text-sm">
-          {error}
-        </div>
-      )}
     </div>
   );
 }
