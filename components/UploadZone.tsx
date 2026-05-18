@@ -2,6 +2,7 @@
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { Button } from "./ui/button";
+import { Loader2 } from "lucide-react";
 import type { Receipt } from "@/lib/types";
 
 const CONCURRENCY = 2;
@@ -198,6 +199,7 @@ export function UploadZone() {
       {files.length > 0 && (
         <div className="flex items-center gap-3">
           <Button onClick={startProcessing} disabled={running || paused}>
+            {running && <Loader2 className="animate-spin size-4 me-2" />}
             {running
               ? `מעבד ${progress.done}/${progress.total}...`
               : `התחל סריקה (${files.length} קבצים)`}

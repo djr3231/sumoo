@@ -1,6 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Button } from "./ui/button";
+import { Skeleton } from "./ui/Skeleton";
+import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 interface SettingsResponse {
   myCardsLast4?: string[];
@@ -74,6 +77,7 @@ export function SettingsForm() {
         return;
       }
       setSavedAt(Date.now());
+      toast.success("נשמר ✓");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -82,7 +86,16 @@ export function SettingsForm() {
   }
 
   if (loading) {
-    return <p className="text-sm text-muted-foreground">טוען...</p>;
+    return (
+      <div className="space-y-4">
+        <div className="flex gap-2 flex-wrap">
+          <Skeleton className="h-8 w-20" />
+          <Skeleton className="h-8 w-20" />
+          <Skeleton className="h-8 w-20" />
+        </div>
+        <Skeleton className="h-10 w-48" />
+      </div>
+    );
   }
 
   return (
@@ -152,11 +165,9 @@ export function SettingsForm() {
 
       <div className="flex items-center gap-3 pt-2 border-t border-border">
         <Button onClick={save} disabled={saving}>
-          {saving ? "שומר..." : "שמור"}
+          {saving && <Loader2 className="animate-spin size-4 me-2" />}
+          שמור
         </Button>
-        {savedAt && !saving && (
-          <span className="text-sm text-muted-foreground">נשמר ✓</span>
-        )}
       </div>
 
       {error && (

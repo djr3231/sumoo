@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { Button } from "./ui/button";
 import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
 import type { BankTxn } from "@/lib/types";
 import { formatDate, formatILS } from "@/lib/utils";
 
@@ -101,6 +102,7 @@ export function CompareView() {
             className="h-9 px-3 rounded-md border border-border bg-transparent text-sm flex-1 min-w-[200px]"
           />
           <Button onClick={handleParse} disabled={!file || loading}>
+            {loading && <Loader2 className="animate-spin size-4 me-2" />}
             {loading ? "מעבד..." : "פרסר והשווה"}
           </Button>
         </div>

@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { Button } from "./ui/button";
 import { toast } from "sonner";
+import { Skeleton } from "./ui/Skeleton";
+import { Loader2 } from "lucide-react";
 import {
   CATEGORIES,
   DEFAULT_STORE_NAME,
@@ -265,6 +267,7 @@ export function ReceiptTable() {
           onClick={runDedup}
           disabled={dedupRunning || rows.length === 0}
         >
+          {dedupRunning && <Loader2 className="animate-spin size-4 me-2" />}
           {dedupRunning ? "מאחד..." : "איחוד שמות + זיהוי כפילויות וספחי אשראי"}
         </Button>
         <Button
@@ -288,6 +291,7 @@ export function ReceiptTable() {
           }}
           disabled={fixingIds || rows.length === 0}
         >
+          {fixingIds && <Loader2 className="animate-spin size-4 me-2" />}
           {fixingIds ? "מתקן..." : "תקן קישורי Drive"}
         </Button>
         <div className="flex-1" />
@@ -322,7 +326,11 @@ export function ReceiptTable() {
       </div>
 
       {loading ? (
-        <p className="text-sm">טוען...</p>
+        <div className="space-y-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-10 w-full" />
+          ))}
+        </div>
       ) : (
         <div className="rounded-lg border border-border overflow-x-auto overflow-y-visible">
           <table className="w-full text-sm">

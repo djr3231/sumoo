@@ -2,6 +2,8 @@
 import { useState } from "react";
 import { Button } from "./ui/button";
 import { toast } from "sonner";
+import { Skeleton } from "./ui/Skeleton";
+import { Loader2 } from "lucide-react";
 import type { Receipt } from "@/lib/types";
 
 const CONCURRENCY = 2;
@@ -182,6 +184,7 @@ export function DriveImport() {
             className={`flex-1 h-10 px-3 rounded-md border bg-transparent text-sm ${folderIdError ? "border-destructive" : "border-border"}`}
           />
           <Button onClick={loadFolder} variant="outline" disabled={loadingFolder || running}>
+            {loadingFolder && <Loader2 className="animate-spin size-4 me-2" />}
             {loadingFolder ? "טוען..." : "טען תיקייה"}
           </Button>
         </div>
@@ -189,7 +192,12 @@ export function DriveImport() {
       </div>
 
       {loadingFolder && (
-        <p className="text-sm text-muted-foreground">טוען תיקייה וקבצים קיימים...</p>
+        <div className="space-y-2" aria-label="טוען תיקייה וקבצים קיימים...">
+          <Skeleton className="h-4 w-48" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-3/4" />
+        </div>
       )}
 
       {!loadingFolder && files.length > 0 && (() => {
@@ -203,7 +211,10 @@ export function DriveImport() {
             </p>
             <div className="flex gap-2 flex-wrap">
               {running ? (
-                <Button disabled>מעבד {progress.done}/{progress.total}...</Button>
+                <Button disabled>
+                  <Loader2 className="animate-spin size-4 me-2" />
+                  מעבד {progress.done}/{progress.total}...
+                </Button>
               ) : (
                 <>
                   <Button
