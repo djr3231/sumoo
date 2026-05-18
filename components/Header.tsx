@@ -14,16 +14,16 @@ export default async function Header() {
         {session?.user ? (
           <>
             <nav className="flex items-center gap-2 text-sm">
-              <Link href="/upload" className="px-3 py-1.5 rounded hover:bg-accent">
+              <Link href="/upload" className="px-3 py-1.5 rounded-sm hover:bg-accent">
                 העלאה
               </Link>
-              <Link href="/receipts" className="px-3 py-1.5 rounded hover:bg-accent">
+              <Link href="/receipts" className="px-3 py-1.5 rounded-sm hover:bg-accent">
                 קבלות
               </Link>
-              <Link href="/compare" className="px-3 py-1.5 rounded hover:bg-accent">
+              <Link href="/compare" className="px-3 py-1.5 rounded-sm hover:bg-accent">
                 השוואה
               </Link>
-              <Link href="/settings" className="px-3 py-1.5 rounded hover:bg-accent">
+              <Link href="/settings" className="px-3 py-1.5 rounded-sm hover:bg-accent">
                 הגדרות
               </Link>
             </nav>

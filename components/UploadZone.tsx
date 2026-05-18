@@ -217,7 +217,7 @@ export function UploadZone() {
       )}
 
       {progress.total > 0 && (
-        <div className="w-full bg-muted rounded h-2 overflow-hidden">
+        <div className="w-full bg-muted rounded-sm h-2 overflow-hidden">
           <div
             className="h-full bg-primary transition-[width]"
             style={{ width: `${(progress.done / progress.total) * 100}%` }}

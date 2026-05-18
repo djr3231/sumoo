@@ -171,6 +171,25 @@ Do not proceed to the next step until the user says go.
 
 ## 7. The steps
 
+### 7.0 Theme syntax migration (pre-redesign sweep)
+
+Before §7.1 Foundation, do a global sweep:
+
+1. Run: grep -rn '\[hsl(var(--' app components --include='*.tsx' --include='*.ts'
+2. For each match, replace the arbitrary `[hsl(var(--token))]` with the 
+   bare utility class:
+   - `bg-[hsl(var(--background))]` → `bg-background`
+   - `text-[hsl(var(--foreground))]` → `text-foreground`
+   - `border-[hsl(var(--border))]` → `border-border`
+   - etc.
+3. Verify `npm run typecheck` and `npm run build` still pass.
+4. Run the §10 greps from DESIGN-SYSTEM.md — all should be clean.
+5. Commit as `refactor: migrate theme syntax to token utilities`.
+
+Do NOT touch logic, layout, or structure in this step — only the className 
+transformations. If a line uses an arbitrary value that doesn't map to a 
+token (e.g., `bg-[#fff]`), STOP and ask.
+
 ### 7.1 Foundation
 
 **Files in scope:**
@@ -191,8 +210,9 @@ Do not proceed to the next step until the user says go.
 - Possibly `button` (already installed; verify variants).
 
 **Acceptance criteria:**
-- At 375px width, Header shows: logo, hamburger button on the trailing side, no inline nav.
-- Tap hamburger → Sheet opens from the start side (RTL: right) with nav links stacked vertically + user email + sign-out.
+- At < md width: Header shows hamburger button on the start side (right in RTL) and logo on the end side (left in RTL). No inline nav.
+- Tap hamburger → shadcn Sheet opens from the start side (right in RTL) with nav links stacked vertically + user email + sign-out.
+- At md+ width: layout unchanged from current (logo on start, inline nav in middle, email + sign-out on end).
 - At `md+` width, Header looks like today (per existing `Header.tsx`).
 - All current nav links present: העלאה, קבלות, השוואה, הגדרות.
 - No hardcoded text added; reuse existing strings from `Header.tsx`.

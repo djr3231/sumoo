@@ -606,7 +606,7 @@ function ColumnPanel({
             {values.map((v) => (
               <div
                 key={v}
-                className="flex items-center gap-2 text-sm px-1 py-0.5 hover:bg-accent rounded"
+                className="flex items-center gap-2 text-sm px-1 py-0.5 hover:bg-accent rounded-sm"
               >
                 <input
                   type="checkbox"
