@@ -5,6 +5,7 @@ import { List } from "@phosphor-icons/react";
 import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
 import { Button } from "./ui/button";
 import { SignOutButton } from "./SignOutButton";
+import { ThemeToggle } from "./ThemeToggle";
 
 interface MobileNavProps {
   email: string;
@@ -35,9 +36,12 @@ export function MobileNav({ email }: MobileNavProps) {
             הגדרות
           </Link>
         </nav>
-        <div className="mt-auto pt-6 flex flex-col gap-3 text-sm">
-          <span className="text-muted-foreground px-3">{email}</span>
-          <div className="px-3">
+        <div className="mt-auto pt-6 flex flex-col gap-3 text-sm border-t border-border">
+          <div className="flex items-center justify-between px-3 pt-3">
+            <span className="text-muted-foreground">{email}</span>
+            <ThemeToggle />
+          </div>
+          <div className="px-3 pb-3">
             <SignOutButton />
           </div>
         </div>

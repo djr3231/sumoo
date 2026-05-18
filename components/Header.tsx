@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { SignOutButton } from "./SignOutButton";
 import { SignInButton } from "./SignInButton";
 import { MobileNav } from "./MobileNav";
+import { ThemeToggle } from "./ThemeToggle";
 
 export default async function Header() {
   const session = await getServerSession(authOptions);
@@ -37,6 +38,7 @@ export default async function Header() {
                 </Link>
               </nav>
               <div className="text-sm flex items-center gap-3">
+                <ThemeToggle />
                 <span className="text-muted-foreground">
                   {session.user.email}
                 </span>
@@ -47,7 +49,10 @@ export default async function Header() {
         ) : (
           <div className="flex items-center justify-between w-full">
             <Link href="/" className="font-bold text-lg">סומו</Link>
-            <SignInButton />
+            <div className="flex items-center gap-2">
+              <ThemeToggle />
+              <SignInButton />
+            </div>
           </div>
         )}
       </div>
