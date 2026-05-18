@@ -29,10 +29,7 @@ export function SettingsForm() {
         const res = await fetch("/api/settings");
         const json = (await res.json()) as SettingsResponse;
         if (!alive) return;
-        if (!res.ok) {
-          setError(json.error || `HTTP ${res.status}`);
-          return;
-        }
+        if (!res.ok) { setError(json.error || `HTTP ${res.status}`); return; }
         setCards(Array.isArray(json.myCardsLast4) ? json.myCardsLast4 : []);
       } catch (e) {
         if (!alive) return;
@@ -44,45 +41,40 @@ export function SettingsForm() {
     return () => { alive = false; };
   }, []);
 
-  function addDraft() {
-    const v = draft.trim();
-    if (!/^\d{4}$/.test(v)) {
-      setDraftError("יש להזין בדיוק 4 ספרות");
-      return;
-    }
-    if (cards.includes(v)) {
-      setDraftError("כבר ברשימה");
-      return;
-    }
-    setCards([...cards, v]);
-    setDraft("");
-    setDraftError(null);
-  }
-
-  function removeCard(c: string) {
-    setCards(cards.filter((x) => x !== c));
-  }
-
-  async function save() {
+  async function persist(newCards: string[]) {
     setSaving(true);
     setError(null);
     try {
       const res = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ myCardsLast4: cards }),
+        body: JSON.stringify({ myCardsLast4: newCards }),
       });
       const json = (await res.json()) as SettingsResponse;
-      if (!res.ok) {
-        setError(json.error || `HTTP ${res.status}`);
-        return;
-      }
+      if (!res.ok) { setError(json.error || `HTTP ${res.status}`); return; }
       toast.success("נשמר ✓");
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setSaving(false);
     }
+  }
+
+  async function addAndSave() {
+    const v = draft.trim();
+    if (!/^\d{4}$/.test(v)) { setDraftError("יש להזין בדיוק 4 ספרות"); return; }
+    if (cards.includes(v)) { setDraftError("כבר ברשימה"); return; }
+    const next = [...cards, v];
+    setCards(next);
+    setDraft("");
+    setDraftError(null);
+    await persist(next);
+  }
+
+  async function removeAndSave(c: string) {
+    const next = cards.filter((x) => x !== c);
+    setCards(next);
+    await persist(next);
   }
 
   if (loading) {
@@ -116,13 +108,17 @@ export function SettingsForm() {
           <ul className="flex flex-wrap gap-2">
             {cards.map((c) => (
               <li key={c}>
-                <Badge variant="secondary" className="border border-border bg-muted px-3 py-1 text-sm font-normal tracking-normal normal-case gap-1.5">
+                <Badge
+                  variant="secondary"
+                  className="border border-border bg-muted px-3 py-1 text-sm font-normal tracking-normal normal-case gap-1.5"
+                >
                   <span className="font-mono">★{c}</span>
                   <button
                     type="button"
-                    onClick={() => removeCard(c)}
+                    onClick={() => removeAndSave(c)}
+                    disabled={saving}
                     aria-label={`הסר ${c}`}
-                    className="text-muted-foreground hover:text-destructive leading-none"
+                    className="text-muted-foreground hover:text-destructive leading-none disabled:opacity-50"
                   >
                     ×
                   </button>
@@ -142,7 +138,7 @@ export function SettingsForm() {
                 setDraftError(null);
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter") { e.preventDefault(); addDraft(); }
+                if (e.key === "Enter") { e.preventDefault(); addAndSave(); }
               }}
               inputMode="numeric"
               maxLength={4}
@@ -150,11 +146,10 @@ export function SettingsForm() {
               aria-invalid={!!draftError}
               className="font-mono"
             />
-            {draftError && (
-              <p className="text-xs text-destructive">{draftError}</p>
-            )}
+            {draftError && <p className="text-xs text-destructive">{draftError}</p>}
           </div>
-          <Button onClick={addDraft} variant="outline" disabled={!draft}>
+          <Button onClick={addAndSave} variant="outline" disabled={!draft || saving}>
+            {saving && <Loader2 className="animate-spin size-4 me-2" />}
             הוסף
           </Button>
         </div>
@@ -165,13 +160,6 @@ export function SettingsForm() {
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-
-      <div className="pt-2 border-t border-border">
-        <Button onClick={save} disabled={saving}>
-          {saving && <Loader2 className="animate-spin size-4 me-2" />}
-          שמור
-        </Button>
-      </div>
     </div>
   );
 }
