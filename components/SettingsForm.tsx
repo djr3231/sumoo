@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Button } from "./ui/Button";
+import { Button } from "./ui/button";
 
 interface SettingsResponse {
   myCardsLast4?: string[];

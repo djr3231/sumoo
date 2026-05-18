@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
-import { Button } from "./ui/Button";
+import { Button } from "./ui/button";
 import {
   CATEGORIES,
   DEFAULT_STORE_NAME,

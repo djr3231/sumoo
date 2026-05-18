@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { Button } from "./ui/Button";
+import { Button } from "./ui/button";
 import type { BankTxn } from "@/lib/types";
 import { formatDate, formatILS } from "@/lib/utils";
 

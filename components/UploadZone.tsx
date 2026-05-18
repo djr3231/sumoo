@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
-import { Button } from "./ui/Button";
+import { Button } from "./ui/button";
 import type { Receipt } from "@/lib/types";
 
 const CONCURRENCY = 2;
