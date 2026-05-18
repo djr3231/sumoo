@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Button } from "./ui/button";
+import { toast } from "sonner";
 import type { BankTxn } from "@/lib/types";
 import { formatDate, formatILS } from "@/lib/utils";
 
@@ -12,11 +13,24 @@ interface MatchResult {
 
 export function CompareView() {
   const [file, setFile] = useState<File | null>(null);
+  const [fileTypeError, setFileTypeError] = useState<string | null>(null);
   const [sourceLabel, setSourceLabel] = useState("");
   const [parsedTxns, setParsedTxns] = useState<BankTxn[]>([]);
   const [result, setResult] = useState<MatchResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  function handleFileChange(f: File | null) {
+    setFileTypeError(null);
+    if (!f) { setFile(null); return; }
+    const ext = f.name.split(".").pop()?.toLowerCase() ?? "";
+    if (!["csv", "xlsx", "xls", "pdf"].includes(ext)) {
+      setFileTypeError("סוג קובץ לא נתמך — CSV, XLSX או PDF בלבד");
+      setFile(null);
+      return;
+    }
+    setFile(f);
+  }
 
   async function handleParse() {
     if (!file) return;
@@ -60,7 +74,7 @@ export function CompareView() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ txns: all, saveToSheet: true }),
     });
-    if (r.ok) alert("נשמר ל-tab התנועות בגיליון.");
+    if (r.ok) toast.success("נשמר ל-tab התנועות בגיליון.");
   }
 
   return (
@@ -71,12 +85,15 @@ export function CompareView() {
           תומך ב: PDF (ינותח בעזרת Claude), CSV, XLSX (ייצוא מבנקים ישראליים).
         </p>
         <div className="flex flex-wrap gap-2 items-center">
-          <input
-            type="file"
-            accept=".pdf,.csv,.xlsx,.xls,application/pdf,text/csv"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="text-sm"
-          />
+          <div className="space-y-1">
+            <input
+              type="file"
+              accept=".pdf,.csv,.xlsx,.xls"
+              onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
+              className="text-sm"
+            />
+            {fileTypeError && <p className="text-xs text-destructive">{fileTypeError}</p>}
+          </div>
           <input
             placeholder='תווית מקור (למשל "ויזה 1234")'
             value={sourceLabel}

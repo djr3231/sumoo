@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { Button } from "./ui/button";
+import { toast } from "sonner";
 import {
   CATEGORIES,
   DEFAULT_STORE_NAME,
@@ -133,7 +134,7 @@ export function ReceiptTable() {
       const r = await fetch("/api/dedup", { method: "POST" });
       const j = await r.json();
       if (!r.ok) {
-        alert("שגיאה: " + (j.error || r.status));
+        toast.error("שגיאה: " + (j.error || r.status));
         return;
       }
       const s = j.summary || {};
@@ -149,7 +150,7 @@ export function ReceiptTable() {
       msg +=
         `\n• ${s.duplicates ?? 0} כפילויות\n` +
         `• ${s.creditSlips ?? 0} ספחי אשראי משויכים`;
-      alert(msg);
+      toast.success(msg);
       await load();
     } finally {
       setDedupRunning(false);
@@ -274,8 +275,8 @@ export function ReceiptTable() {
             try {
               const r = await fetch("/api/fix-drive-ids", { method: "POST" });
               const j = await r.json();
-              if (!r.ok) { alert("שגיאה: " + (j.error || r.status)); return; }
-              alert(
+              if (!r.ok) { toast.error("שגיאה: " + (j.error || r.status)); return; }
+              toast.success(
                 `תוקנו ${j.fixed} קישורים\n` +
                 `${j.alreadyCorrect} היו תקינים\n` +
                 `${j.notFound} קבצים לא נמצאו ב-Drive`,

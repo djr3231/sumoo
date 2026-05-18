@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Button } from "./ui/button";
+import { toast } from "sonner";
 import type { Receipt } from "@/lib/types";
 
 const CONCURRENCY = 2;
@@ -41,6 +42,7 @@ export function DriveImport() {
   const [errors, setErrors] = useState<{ name: string; error: string }[]>([]);
   const [paused, setPaused] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<DriveFile[]>([]);
+  const [folderIdError, setFolderIdError] = useState<string | null>(null);
 
   function extractFolderId(input: string): string {
     const m = input.match(/folders\/([\w-]+)/);
@@ -48,13 +50,18 @@ export function DriveImport() {
   }
 
   async function loadFolder() {
+    if (!folderId.trim()) {
+      setFolderIdError("הדבק קישור או מזהה תיקייה");
+      return;
+    }
+    setFolderIdError(null);
     setLoadingFolder(true);
     try {
       const id = extractFolderId(folderId);
       const res = await fetch(`/api/drive?folderId=${encodeURIComponent(id)}`);
       const json = await res.json();
       if (!res.ok) {
-        alert(json.error || "שגיאה בטעינת התיקייה");
+        toast.error(json.error || "שגיאה בטעינת התיקייה");
         return;
       }
       setFiles(json.files);
@@ -166,16 +173,19 @@ export function DriveImport() {
 
   return (
     <div className="space-y-3">
-      <div className="flex gap-2">
-        <input
-          value={folderId}
-          onChange={(e) => setFolderId(e.target.value)}
-          placeholder="הדבק כתובת תיקיית Drive או מזהה תיקייה"
-          className="flex-1 h-10 px-3 rounded-md border border-border bg-transparent text-sm"
-        />
-        <Button onClick={loadFolder} variant="outline" disabled={loadingFolder || running}>
-          {loadingFolder ? "טוען..." : "טען תיקייה"}
-        </Button>
+      <div className="space-y-1">
+        <div className="flex gap-2">
+          <input
+            value={folderId}
+            onChange={(e) => { setFolderId(e.target.value); setFolderIdError(null); }}
+            placeholder="הדבק כתובת תיקיית Drive או מזהה תיקייה"
+            className={`flex-1 h-10 px-3 rounded-md border bg-transparent text-sm ${folderIdError ? "border-destructive" : "border-border"}`}
+          />
+          <Button onClick={loadFolder} variant="outline" disabled={loadingFolder || running}>
+            {loadingFolder ? "טוען..." : "טען תיקייה"}
+          </Button>
+        </div>
+        {folderIdError && <p className="text-xs text-destructive">{folderIdError}</p>}
       </div>
 
       {loadingFolder && (
