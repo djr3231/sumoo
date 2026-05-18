@@ -201,6 +201,78 @@ Do not proceed to the next step until the user says go.
 
 ---
 
+### 7.1.5 Cross-cutting foundation (run before §7.2)
+
+Three project-wide patterns must be in place before per-page work continues. Each is a separate commit.
+
+#### 7.1.5.a — Dark mode toggle
+
+- `npm i next-themes` *(~2 KB. Industry standard for Next.js dark-mode. Handles SSR hydration without flash, persists via localStorage.)*
+- `components/Providers.tsx`: wrap `<SessionProvider>` with `<ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>` from `next-themes`.
+- New file `components/ThemeToggle.tsx` (client): `useTheme()`, lucide `Sun` + `Moon` icons, `<Button variant="ghost" className="size-10 p-0">`. `aria-label="החלף ערכת נושא"` with `sr-only` text. Toggles between `"light"` and `"dark"` only — no `system`.
+- `components/Header.tsx`: place the toggle in the desktop right-cluster (next to email/sign-out) AND inside the mobile Sheet (after nav links, before sign-out).
+- Default theme = **dark** (user decision; no `prefers-color-scheme` auto-follow).
+
+**Verification:** load `/`, page is dark on first paint (no white flash); click toggle, page flips to light; reload, choice persists.
+
+#### 7.1.5.b — Messaging foundation (replace every `alert()`)
+
+- `npm i sonner` *(~5 KB. shadcn's official toast since v3, theme-aware via `richColors`.)*
+- `components/Providers.tsx`: add `<Toaster richColors position="top-center" dir="rtl" />` inside the ThemeProvider tree.
+- New file `components/ui/Alert.tsx` written manually (shadcn CLI registry auth is broken for this repo — see `SESSION-CONTEXT.md`). API: `<Alert variant="default" | "destructive">` + `<AlertTitle>` + `<AlertDescription>`. Tokens only: `border border-border bg-background` (default), `border-destructive text-destructive` (destructive). Single CVA, no rounded.
+- **Replace every `alert()` call** (find with `grep -rn "alert(" components/ app/ --include='*.tsx'` — currently 6 sites):
+
+  | File:line | Replace with |
+  |-----------|--------------|
+  | `components/ReceiptTable.tsx:136` (dedup error) | `toast.error("שגיאה: " + (j.error \|\| r.status))` |
+  | `components/ReceiptTable.tsx:152` (dedup multi-line success) | `toast.success(msg)` — keep the existing `msg` string verbatim |
+  | `components/ReceiptTable.tsx:277` (fix-drive-ids error) | `toast.error("שגיאה: " + (j.error \|\| r.status))` |
+  | `components/ReceiptTable.tsx:278` (fix-drive-ids success) | `toast.success(...)` — preserve existing message string |
+  | `components/DriveImport.tsx:57` (folder load fail) | `toast.error(json.error \|\| "שגיאה בטעינת התיקייה")` |
+  | `components/CompareView.tsx:63` (statements saved) | `toast.success("נשמר ל-tab התנועות בגיליון.")` |
+
+- **Inline field validation** — replace any "alert on submit" pattern with inline error text under the field (`<p className="text-xs text-destructive mt-1">`):
+  - `SettingsForm.tsx` — already has `draftError`. Polish: add `aria-describedby` linking the input to the helper text. No new strings.
+  - `DriveImport.tsx` folder-id input — add `required`; if `folderId.trim() === ""` on submit, show inline error and skip the fetch. **STOP-and-ASK** the user for the exact error string (suggested: "הדבק קישור או מזהה תיקייה").
+  - `CompareView.tsx` file input — before parse, validate file MIME (csv/xlsx/pdf); on mismatch show inline error. **STOP-and-ASK** for the exact error string.
+
+**Verification:** `grep -rn "alert(" components/ app/ --include='*.tsx'` → zero matches. Simulate a 500 from `/api/dedup` → `toast.error` appears with server message.
+
+#### 7.1.5.c — Pretty loaders
+
+No new deps.
+
+- New file `components/ui/Skeleton.tsx`: `<div className="animate-pulse bg-muted">` wrapper. `animate-pulse` is built into Tailwind v3 — no plugin needed.
+- Replace every plain `<p>טוען…</p>` with shape-matched Skeletons:
+
+  | File:line | Today | Replace with |
+  |-----------|-------|--------------|
+  | `SettingsForm.tsx:85` | `<p>טוען...</p>` | 2–3 chip-shaped Skeletons (`h-8 w-20`) inside `flex gap-2 flex-wrap` |
+  | `ReceiptTable.tsx:323-324` | `<p>טוען...</p>` | 6 row-shaped Skeletons (`h-10 w-full`) inside the table container |
+  | `DriveImport.tsx:182` | `<p>טוען תיקייה וקבצים קיימים...</p>` | 3–4 row Skeletons + keep the existing label as `sr-only` for screen readers |
+
+- **Button spinner pattern** — `Loader2` from `lucide-react` with `className="animate-spin size-4 me-2"` (RTL-aware margin). Apply while in-progress state is true:
+  - `UploadZone` "התחל סריקה" while `running`
+  - `DriveImport` "טען תיקייה" while `loadingFolder`, scan buttons while `running`
+  - `CompareView` "פרסר והשווה" while `loading`
+  - `SettingsForm` "שמור" while `saving`
+  - `ReceiptTable` dedup + fix-drive-ids buttons while their respective state is true
+
+**Verification:** every loading state shows shape-matched Skeleton or button spinner; zero bare "טוען…" text remains.
+
+**Files touched during §7.1.5:**
+- New: `components/ThemeToggle.tsx`, `components/ui/Alert.tsx`, `components/ui/Skeleton.tsx`
+- Modified: `package.json` (next-themes, sonner), `components/Providers.tsx`, `components/Header.tsx`, `components/ReceiptTable.tsx`, `components/DriveImport.tsx`, `components/CompareView.tsx`, `components/SettingsForm.tsx`, `components/UploadZone.tsx`
+
+**STOP-and-ASK triggers in §7.1.5:**
+- Writing any new Hebrew string not already in the codebase or in this section (specifically the two inline-validation strings flagged above).
+- Adding a `size="icon"` variant to `Button` — defer; use `className="size-10 p-0"` workaround.
+- Any deviation from `defaultTheme="dark"` / `enableSystem={false}`.
+
+**Hand off to user:** "§7.1.5 complete. Please verify: dark theme on first paint, toggle persists across reload, every failure path shows a toast not an alert, every loading state shows a skeleton or button spinner. Confirm before I start §7.2."
+
+---
+
 ### 7.2 `/settings`
 
 **Files in scope:**
@@ -233,6 +305,7 @@ Do not proceed to the next step until the user says go.
 - All existing strings preserved verbatim from current `SettingsForm.tsx` — do not invent new copy.
 - Empty state preserved.
 - Validation error rendering uses muted-foreground text below the input, no raw red — use `text-destructive` token.
+- (per §7.1.5) SettingsForm uses Skeleton on initial load; "שמור" button shows `Loader2` spinner while `saving`; save success → `toast.success("נשמר ✓")` instead of the inline "נשמר ✓" indicator.
 
 **Hand off:** "Settings page redone with shadcn. Please verify: add a 4-digit card, remove it, save, refresh — state persists. Mobile view OK. No new strings introduced."
 
@@ -271,6 +344,7 @@ Do not proceed to the next step until the user says go.
 - Error banner uses `<Alert variant="destructive">`.
 - Pause banner uses `<Alert>` (default).
 - All existing user-visible strings preserved exactly.
+- (per §7.1.5) Every scan button shows `Loader2` spinner during work; `alert()` in `DriveImport.tsx` is gone (replaced with `toast.error`); folder-id input has inline validation.
 
 **Hand off:** "Upload page redone. Please verify: upload a small image works end-to-end, Drive import works, error state appears correctly. Mobile responsive."
 
@@ -348,6 +422,7 @@ Filters that today are dispersed in headers should:
 - All existing labels preserved verbatim.
 - `npm run build` passes.
 - Run all DESIGN-SYSTEM grep checks — clean.
+- (per §7.1.5) Initial table load shows 6 row-shaped Skeletons; dedup + fix-drive-ids buttons show `Loader2` spinner; results surface as toast (success/error); inline cell edits remain inline — no toast/alert per edit.
 
 **Hand off:** "Receipts page redone. Please verify (desktop + mobile): inline edit a row, change a category, run dedup, run fix-drive-ids, export CSV, export XLSX. All should match prior behavior."
 
@@ -370,6 +445,7 @@ Filters that today are dispersed in headers should:
 **Acceptance criteria:**
 - Existing functionality preserved.
 - Mobile responsive.
+- (per §7.1.5) File input has inline validation (file MIME/extension check before parse); parse button shows `Loader2` spinner while `loading`; save action surfaces as toast.
 
 **Hand off:** "Compare page redone. Please verify: upload a sample statement, match against receipts, see results."
 
@@ -382,7 +458,7 @@ After all pages are individually done:
 1. **Cross-page audit.** Click through every nav link at 375px and at 1280px. Note any regressions.
 2. **Theme audit.** Run all greps in `DESIGN-SYSTEM.md` §10. All should be empty (or match only the allowed exceptions).
 3. **Build + typecheck.** Both must pass.
-4. **Ask the user about dark mode.** Do they want a toggle? If yes: `npx shadcn@latest add theme-toggle` (or follow shadcn dark-mode docs) — install + wire it up. If no, do nothing.
+4. ~~**Ask the user about dark mode.** Do they want a toggle? If yes: `npx shadcn@latest add theme-toggle` (or follow shadcn dark-mode docs) — install + wire it up. If no, do nothing.~~ *(Resolved in §7.1.5.a: dark by default, toggle wired into Header.)*
 5. **Accessibility quick pass.** Every interactive element has a label, `aria-label`, or text content. Every input has a `Label`.
 
 ---
