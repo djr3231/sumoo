@@ -116,7 +116,7 @@ export function SettingsForm() {
           <ul className="flex flex-wrap gap-2">
             {cards.map((c) => (
               <li key={c}>
-                <Badge variant="secondary" className="gap-1.5 ps-3 pe-1.5 py-1 font-normal text-sm">
+                <Badge variant="secondary" className="border border-border bg-muted px-3 py-1 text-sm font-normal tracking-normal normal-case gap-1.5">
                   <span className="font-mono">★{c}</span>
                   <button
                     type="button"
