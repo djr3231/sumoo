@@ -2,7 +2,9 @@
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { Button } from "./ui/button";
-import { Loader2 } from "lucide-react";
+import { Progress } from "./ui/progress";
+import { Alert, AlertDescription, AlertTitle } from "./ui/Alert";
+import { Loader2, Upload } from "lucide-react";
 import type { Receipt } from "@/lib/types";
 
 const CONCURRENCY = 2;
@@ -178,18 +180,21 @@ export function UploadZone() {
     await runBatch(pendingFiles);
   }
 
+  const pct = progress.total > 0
+    ? Math.round((progress.done / progress.total) * 100)
+    : 0;
+
   return (
     <div className="space-y-4">
       <div
         {...getRootProps()}
-        className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition ${
-          isDragActive
-            ? "border-primary bg-accent"
-            : "border-border"
+        className={`border-2 border-dashed cursor-pointer transition-colors flex flex-col items-center justify-center gap-3 p-8 text-center min-h-[140px] ${
+          isDragActive ? "border-primary bg-accent" : "border-border hover:border-muted-foreground"
         }`}
       >
         <input {...getInputProps()} />
-        <p className="text-sm">
+        <Upload className="size-8 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">
           {isDragActive
             ? "שחרר כאן..."
             : "גרור תמונות קבלה לכאן, או לחץ לבחירה (ניתן לבחור מאות בבת אחת)"}
@@ -197,7 +202,7 @@ export function UploadZone() {
       </div>
 
       {files.length > 0 && (
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <Button onClick={startProcessing} disabled={running || paused}>
             {running && <Loader2 className="animate-spin size-4 me-2" />}
             {running
@@ -208,10 +213,7 @@ export function UploadZone() {
             נקה
           </Button>
           {!running && results.length > 0 && (
-            <a
-              href="/receipts"
-              className="text-sm underline"
-            >
+            <a href="/receipts" className="text-sm underline">
               עבור לטבלת הקבלות לזיהוי כפילויות וייצוא
             </a>
           )}
@@ -219,24 +221,19 @@ export function UploadZone() {
       )}
 
       {progress.total > 0 && (
-        <div className="w-full bg-muted rounded-sm h-2 overflow-hidden">
-          <div
-            className="h-full bg-primary transition-[width]"
-            style={{ width: `${(progress.done / progress.total) * 100}%` }}
-          />
-        </div>
+        <Progress value={pct} />
       )}
 
       {paused && (
-        <div className="rounded-lg border border-amber-500 bg-amber-50 dark:bg-amber-950 p-3 text-sm">
-          <p className="font-semibold mb-2">⏸ הסריקה הושהתה — Gemini עמוס</p>
-          <p className="mb-2">
+        <Alert>
+          <AlertTitle>⏸ הסריקה הושהתה — Gemini עמוס</AlertTitle>
+          <AlertDescription>
             {pendingFiles.length} קבצים ממתינים. נסה שוב כשהשרת ישתחרר (לעיתים נדרשות מספר דקות).
-          </p>
-          <Button onClick={resume} disabled={running}>
+          </AlertDescription>
+          <Button onClick={resume} disabled={running} className="mt-2">
             המשך סריקה ({pendingFiles.length})
           </Button>
-        </div>
+        </Alert>
       )}
 
       {results.length > 0 && (
@@ -273,16 +270,18 @@ export function UploadZone() {
       )}
 
       {errors.length > 0 && (
-        <div className="rounded-lg border border-destructive p-3 text-sm">
-          <p className="font-semibold mb-1">שגיאות ({errors.length})</p>
-          <ul className="list-disc pr-5 space-y-1">
-            {errors.map((e, i) => (
-              <li key={i}>
-                <span className="font-mono text-xs">{e.name}</span>: {e.error}
-              </li>
-            ))}
-          </ul>
-        </div>
+        <Alert variant="destructive">
+          <AlertTitle>שגיאות ({errors.length})</AlertTitle>
+          <AlertDescription>
+            <ul className="list-disc pr-5 space-y-1 mt-1">
+              {errors.map((e, i) => (
+                <li key={i}>
+                  <span className="font-mono text-xs">{e.name}</span>: {e.error}
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
       )}
     </div>
   );

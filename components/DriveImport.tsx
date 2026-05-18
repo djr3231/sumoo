@@ -1,9 +1,20 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "./ui/button";
-import { toast } from "sonner";
+import { Progress } from "./ui/progress";
+import { Alert, AlertDescription, AlertTitle } from "./ui/Alert";
 import { Skeleton } from "./ui/Skeleton";
-import { Loader2 } from "lucide-react";
+import { Loader2, ChevronsUpDown } from "lucide-react";
+import { toast } from "sonner";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "./ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import type { Receipt } from "@/lib/types";
 
 const CONCURRENCY = 2;
@@ -33,8 +44,21 @@ interface DriveFile {
   size: number;
 }
 
+interface DriveFolder {
+  id: string;
+  name: string;
+}
+
 export function DriveImport() {
   const [folderId, setFolderId] = useState("");
+  const [folderName, setFolderName] = useState("");
+  const [folderIdError, setFolderIdError] = useState<string | null>(null);
+
+  const [open, setOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [folders, setFolders] = useState<DriveFolder[]>([]);
+  const [searching, setSearching] = useState(false);
+
   const [files, setFiles] = useState<DriveFile[]>([]);
   const [existingDriveIds, setExistingDriveIds] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState({ done: 0, total: 0 });
@@ -44,7 +68,26 @@ export function DriveImport() {
   const [errors, setErrors] = useState<{ name: string; error: string }[]>([]);
   const [paused, setPaused] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<DriveFile[]>([]);
-  const [folderIdError, setFolderIdError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (searchQuery.length < 1) {
+      setFolders([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await fetch(`/api/drive/folders?q=${encodeURIComponent(searchQuery)}`);
+        const json = await res.json();
+        setFolders(json.folders ?? []);
+      } catch {
+        setFolders([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   function extractFolderId(input: string): string {
     const m = input.match(/folders\/([\w-]+)/);
@@ -53,7 +96,7 @@ export function DriveImport() {
 
   async function loadFolder() {
     if (!folderId.trim()) {
-      setFolderIdError("הדבק קישור או מזהה תיקייה");
+      setFolderIdError("יש להזין כתובת או מזהה תיקייה");
       return;
     }
     setFolderIdError(null);
@@ -173,16 +216,71 @@ export function DriveImport() {
     await runBatch(pendingFiles);
   }
 
+  const pct = progress.total > 0
+    ? Math.round((progress.done / progress.total) * 100)
+    : 0;
+
   return (
     <div className="space-y-3">
       <div className="space-y-1">
         <div className="flex gap-2">
-          <input
-            value={folderId}
-            onChange={(e) => { setFolderId(e.target.value); setFolderIdError(null); }}
-            placeholder="הדבק כתובת תיקיית Drive או מזהה תיקייה"
-            className={`flex-1 h-10 px-3 rounded-md border bg-transparent text-sm ${folderIdError ? "border-destructive" : "border-border"}`}
-          />
+          <div className="flex-1">
+            <Popover open={open} onOpenChange={setOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={open}
+                  aria-invalid={!!folderIdError}
+                  className="w-full justify-between font-normal"
+                >
+                  <span className="truncate">
+                    {folderName || "חפש תיקיית Drive..."}
+                  </span>
+                  <ChevronsUpDown className="ms-2 size-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="p-0 w-[var(--radix-popover-trigger-width)]" align="start">
+                <Command shouldFilter={false}>
+                  <CommandInput
+                    placeholder="חפש תיקיית Drive..."
+                    value={searchQuery}
+                    onValueChange={setSearchQuery}
+                  />
+                  <CommandList>
+                    {searching && (
+                      <div className="p-2 space-y-1">
+                        <Skeleton className="h-8 w-full" />
+                        <Skeleton className="h-8 w-3/4" />
+                      </div>
+                    )}
+                    {!searching && searchQuery.length > 0 && folders.length === 0 && (
+                      <CommandEmpty>לא נמצאו תיקיות</CommandEmpty>
+                    )}
+                    {!searching && folders.length > 0 && (
+                      <CommandGroup>
+                        {folders.map((folder) => (
+                          <CommandItem
+                            key={folder.id}
+                            value={folder.id}
+                            onSelect={() => {
+                              setFolderId(folder.id);
+                              setFolderName(folder.name);
+                              setFolderIdError(null);
+                              setOpen(false);
+                              setSearchQuery("");
+                            }}
+                          >
+                            {folder.name}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    )}
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+          </div>
           <Button onClick={loadFolder} variant="outline" disabled={loadingFolder || running}>
             {loadingFolder && <Loader2 className="animate-spin size-4 me-2" />}
             {loadingFolder ? "טוען..." : "טען תיקייה"}
@@ -240,37 +338,34 @@ export function DriveImport() {
       })()}
 
       {progress.total > 0 && (
-        <div className="w-full bg-muted rounded-sm h-2 overflow-hidden">
-          <div
-            className="h-full bg-primary transition-[width]"
-            style={{ width: `${(progress.done / progress.total) * 100}%` }}
-          />
-        </div>
+        <Progress value={pct} />
       )}
 
       {paused && (
-        <div className="rounded-lg border border-amber-500 bg-amber-50 dark:bg-amber-950 p-3 text-sm">
-          <p className="font-semibold mb-2">⏸ הסריקה הושהתה — Gemini עמוס</p>
-          <p className="mb-2">
+        <Alert>
+          <AlertTitle>⏸ הסריקה הושהתה — Gemini עמוס</AlertTitle>
+          <AlertDescription>
             {pendingFiles.length} קבצים ממתינים. נסה שוב כשהשרת ישתחרר (לעיתים נדרשות מספר דקות).
-          </p>
-          <Button onClick={resume} disabled={running}>
+          </AlertDescription>
+          <Button onClick={resume} disabled={running} className="mt-2">
             המשך סריקה ({pendingFiles.length})
           </Button>
-        </div>
+        </Alert>
       )}
 
       {errors.length > 0 && (
-        <div className="rounded-lg border border-destructive p-3 text-sm">
-          <p className="font-semibold mb-1">שגיאות ({errors.length})</p>
-          <ul className="list-disc pr-5 space-y-1">
-            {errors.map((e, i) => (
-              <li key={i}>
-                <span className="font-mono text-xs">{e.name}</span>: {e.error}
-              </li>
-            ))}
-          </ul>
-        </div>
+        <Alert variant="destructive">
+          <AlertTitle>שגיאות ({errors.length})</AlertTitle>
+          <AlertDescription>
+            <ul className="list-disc pr-5 space-y-1 mt-1">
+              {errors.map((e, i) => (
+                <li key={i}>
+                  <span className="font-mono text-xs">{e.name}</span>: {e.error}
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
       )}
 
       {results.length > 0 && (
