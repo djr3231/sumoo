@@ -409,10 +409,9 @@ export function ReceiptTable() {
           placeholder="חיפוש חופשי..."
           className="h-9 flex-1 min-w-[12rem]"
         />
-
       </div>
       <div className="flex md:hidden gap-2 items-center">
-                <DropdownMenu>
+        <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" disabled={rows.length === 0}>
               <Menu className="size-4 me-2" />
