@@ -1,20 +1,19 @@
 "use client";
-import { useEffect, useState } from "react";
+import * as React from "react";
 import { Button } from "./ui/button";
 import { Progress } from "./ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "./ui/Alert";
 import { Skeleton } from "./ui/Skeleton";
-import { Loader2, ChevronsUpDown } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "./ui/command";
-import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
+  Combobox,
+  ComboboxContent,
+  ComboboxList,
+  ComboboxItem,
+  ComboboxInput,
+  ComboboxEmpty,
+} from "./ui/combobox";
 import type { Receipt } from "@/lib/types";
 
 const CONCURRENCY = 2;
@@ -50,60 +49,69 @@ interface DriveFolder {
 }
 
 export function DriveImport() {
-  const [folderId, setFolderId] = useState("");
-  const [folderName, setFolderName] = useState("");
-  const [folderIdError, setFolderIdError] = useState<string | null>(null);
+  const [selectedFolder, setSelectedFolder] = React.useState<DriveFolder | null>(null);
+  const [searchResults, setSearchResults] = React.useState<DriveFolder[]>([]);
+  const [folderIdError, setFolderIdError] = React.useState<string | null>(null);
+  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = React.useRef<AbortController | null>(null);
 
-  const [open, setOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [folders, setFolders] = useState<DriveFolder[]>([]);
-  const [searching, setSearching] = useState(false);
+  const [files, setFiles] = React.useState<DriveFile[]>([]);
+  const [existingDriveIds, setExistingDriveIds] = React.useState<Set<string>>(new Set());
+  const [progress, setProgress] = React.useState({ done: 0, total: 0 });
+  const [loadingFolder, setLoadingFolder] = React.useState(false);
+  const [running, setRunning] = React.useState(false);
+  const [results, setResults] = React.useState<Receipt[]>([]);
+  const [errors, setErrors] = React.useState<{ name: string; error: string }[]>([]);
+  const [paused, setPaused] = React.useState(false);
+  const [pendingFiles, setPendingFiles] = React.useState<DriveFile[]>([]);
 
-  const [files, setFiles] = useState<DriveFile[]>([]);
-  const [existingDriveIds, setExistingDriveIds] = useState<Set<string>>(new Set());
-  const [progress, setProgress] = useState({ done: 0, total: 0 });
-  const [loadingFolder, setLoadingFolder] = useState(false);
-  const [running, setRunning] = useState(false);
-  const [results, setResults] = useState<Receipt[]>([]);
-  const [errors, setErrors] = useState<{ name: string; error: string }[]>([]);
-  const [paused, setPaused] = useState(false);
-  const [pendingFiles, setPendingFiles] = useState<DriveFile[]>([]);
+  // Keep the currently-selected folder visible in the list even after results change.
+  const items = React.useMemo(() => {
+    if (!selectedFolder || searchResults.some((f) => f.id === selectedFolder.id)) {
+      return searchResults;
+    }
+    return [...searchResults, selectedFolder];
+  }, [searchResults, selectedFolder]);
 
-  useEffect(() => {
-    if (searchQuery.length < 1) {
-      setFolders([]);
+  function handleInputChange(
+    next: string,
+    details: { reason?: string },
+  ) {
+    if (details.reason === "item-press") return;
+    if (next.trim() === "") {
+      setSearchResults([]);
       return;
     }
-    const timer = setTimeout(async () => {
-      setSearching(true);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      const controller = new AbortController();
+      abortRef.current?.abort();
+      abortRef.current = controller;
       try {
-        const res = await fetch(`/api/drive/folders?q=${encodeURIComponent(searchQuery)}`);
+        const res = await fetch(
+          `/api/drive/folders?q=${encodeURIComponent(next)}`,
+          { signal: controller.signal },
+        );
         const json = await res.json();
-        setFolders(json.folders ?? []);
+        if (controller.signal.aborted) return;
+        setSearchResults(json.folders ?? []);
       } catch {
-        setFolders([]);
-      } finally {
-        setSearching(false);
+        // abort or network error — ignore
       }
     }, 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
-
-  function extractFolderId(input: string): string {
-    const m = input.match(/folders\/([\w-]+)/);
-    return m ? m[1] : input.trim();
   }
 
   async function loadFolder() {
-    if (!folderId.trim()) {
+    if (!selectedFolder) {
       setFolderIdError("יש להזין כתובת או מזהה תיקייה");
       return;
     }
     setFolderIdError(null);
     setLoadingFolder(true);
     try {
-      const id = extractFolderId(folderId);
-      const res = await fetch(`/api/drive?folderId=${encodeURIComponent(id)}`);
+      const res = await fetch(
+        `/api/drive?folderId=${encodeURIComponent(selectedFolder.id)}`,
+      );
       const json = await res.json();
       if (!res.ok) {
         toast.error(json.error || "שגיאה בטעינת התיקייה");
@@ -225,61 +233,33 @@ export function DriveImport() {
       <div className="space-y-1">
         <div className="flex gap-2">
           <div className="flex-1">
-            <Popover open={open} onOpenChange={setOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={open}
-                  aria-invalid={!!folderIdError}
-                  className="w-full justify-between font-normal"
-                >
-                  <span className="truncate">
-                    {folderName || "חפש תיקיית Drive..."}
-                  </span>
-                  <ChevronsUpDown className="ms-2 size-4 shrink-0 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="p-0 w-[var(--radix-popover-trigger-width)]" align="start">
-                <Command shouldFilter={false}>
-                  <CommandInput
-                    placeholder="חפש תיקיית Drive..."
-                    value={searchQuery}
-                    onValueChange={setSearchQuery}
-                  />
-                  <CommandList>
-                    {searching && (
-                      <div className="p-2 space-y-1">
-                        <Skeleton className="h-8 w-full" />
-                        <Skeleton className="h-8 w-3/4" />
-                      </div>
-                    )}
-                    {!searching && searchQuery.length > 0 && folders.length === 0 && (
-                      <CommandEmpty>לא נמצאו תיקיות</CommandEmpty>
-                    )}
-                    {!searching && folders.length > 0 && (
-                      <CommandGroup>
-                        {folders.map((folder) => (
-                          <CommandItem
-                            key={folder.id}
-                            value={folder.id}
-                            onSelect={() => {
-                              setFolderId(folder.id);
-                              setFolderName(folder.name);
-                              setFolderIdError(null);
-                              setOpen(false);
-                              setSearchQuery("");
-                            }}
-                          >
-                            {folder.name}
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    )}
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
+            <Combobox
+              items={items}
+              value={selectedFolder}
+              filter={null}
+              itemToStringLabel={(f: DriveFolder) => f.name}
+              onValueChange={(next: DriveFolder | null) => {
+                setSelectedFolder(next);
+                setFolderIdError(null);
+              }}
+              onInputValueChange={handleInputChange}
+            >
+              <ComboboxInput
+                placeholder="חפש תיקיית Drive..."
+                aria-invalid={!!folderIdError}
+                showClear={!!selectedFolder}
+              />
+              <ComboboxContent>
+                <ComboboxEmpty>לא נמצאו תיקיות</ComboboxEmpty>
+                <ComboboxList>
+                  {(folder: DriveFolder) => (
+                    <ComboboxItem key={folder.id} value={folder}>
+                      {folder.name}
+                    </ComboboxItem>
+                  )}
+                </ComboboxList>
+              </ComboboxContent>
+            </Combobox>
           </div>
           <Button onClick={loadFolder} variant="outline" disabled={loadingFolder || running}>
             {loadingFolder && <Loader2 className="animate-spin size-4 me-2" />}
