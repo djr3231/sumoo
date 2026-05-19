@@ -2,6 +2,23 @@
 import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Checkbox } from "./ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "./ui/table";
 import { toast } from "sonner";
 import { Skeleton } from "./ui/Skeleton";
 import { Loader2 } from "lucide-react";
@@ -256,11 +273,11 @@ export function ReceiptTable() {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap gap-2 items-center">
-        <input
+        <Input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="חיפוש חופשי..."
-          className="h-9 px-3 rounded-md border border-border bg-transparent text-sm"
+          className="h-9 max-w-xs"
         />
         <Button
           size="sm"
@@ -332,153 +349,163 @@ export function ReceiptTable() {
           ))}
         </div>
       ) : (
-        <div className="rounded-lg border border-border overflow-x-auto overflow-y-visible">
-          <table className="w-full text-sm">
-            <thead className="bg-muted">
-              <tr>
-                {COLUMNS.map((col) => (
-                  <ColumnHeader
-                    key={col.key}
-                    col={col}
-                    sort={sort}
-                    setSort={setSort}
-                    colFilters={colFilters}
-                    setColFilters={setColFilters}
-                    openCol={openCol}
-                    setOpenCol={setOpenCol}
-                    values={uniqueValues[col.key] || []}
-                  />
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((r) => (
-                <tr
-                  key={r.id}
-                  className={`border-t border-border ${
-                    r.documentType === DOCUMENT_TYPE.Duplicate || r.documentType === DOCUMENT_TYPE.CreditSlip
-                      ? "bg-yellow-50/50 dark:bg-yellow-900/10"
-                      : ""
-                  }`}
-                >
-                  <td className="p-2">
-                    <input
-                      defaultValue={r.storeName ?? ""}
-                      onBlur={(e) => {
-                        const v = e.target.value.trim();
-                        if (v !== (r.storeName ?? "")) patch(r.id, { storeName: v || null });
-                      }}
-                      className="bg-transparent w-32 px-1"
-                    />
-                  </td>
-                  <td className="p-2 tabular-nums">
-                    <input
-                      defaultValue={r.amount ?? ""}
-                      onBlur={(e) => {
-                        const raw = e.target.value.trim();
-                        const v = raw === "" ? null : Number(raw);
-                        if (v !== r.amount && (v === null || !Number.isNaN(v))) {
-                          patch(r.id, { amount: v });
-                        }
-                      }}
-                      className="bg-transparent w-20 text-right px-1"
-                    />
-                    <div className="text-[10px] text-muted-foreground">
-                      {formatILS(r.amount)}
-                    </div>
-                  </td>
-                  <td className="p-2 tabular-nums text-muted-foreground">
-                    {r.totalReceiptAmount == null ? "—" : formatILS(r.totalReceiptAmount)}
-                  </td>
-                  <td className="p-2">
-                    <select
-                      value={r.paymentMethod || PAYMENT_METHOD.Unknown}
-                      onChange={(e) => patch(r.id, { paymentMethod: e.target.value as PaymentMethod })}
-                      className="bg-transparent px-1"
-                    >
-                      {PAYMENT_METHODS.map((m) => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
-                    {r.cardLast4 && (
-                      <div className="text-[10px] text-muted-foreground">
-                        ★{r.cardLast4}
-                      </div>
-                    )}
-                  </td>
-                  <td className="p-2">
-                    <input
-                      type="date"
-                      defaultValue={r.date ?? ""}
-                      onBlur={(e) => {
-                        const v = e.target.value || null;
-                        if (v !== r.date) patch(r.id, { date: v });
-                      }}
-                      className="bg-transparent px-1"
-                    />
-                    <div className="text-[10px] text-muted-foreground">
-                      {formatDate(r.date)}
-                    </div>
-                  </td>
-                  <td className="p-2">
-                    <select
-                      value={r.category}
-                      onChange={(e) => patch(r.id, { category: e.target.value as Category })}
-                      className="bg-transparent px-1"
-                    >
-                      {CATEGORIES.map((c) => (
-                        <option key={c} value={c}>{c}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="p-2">
-                    <select
-                      value={r.documentType}
-                      onChange={(e) => patch(r.id, { documentType: e.target.value as DocumentType })}
-                      className="bg-transparent px-1"
-                    >
-                      {DOC_TYPES.map((c) => (
-                        <option key={c} value={c}>{c}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="p-2 max-w-[200px]">
-                    {r.driveFileId ? (
-                      <a
-                        href={`https://drive.google.com/file/d/${r.driveFileId}/view`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline truncate inline-block max-w-full"
-                        title={r.fileName}
-                      >
-                        {r.fileName}
-                      </a>
-                    ) : (
-                      <span className="truncate inline-block max-w-full" title={r.fileName}>
-                        {r.fileName}
-                      </span>
-                    )}
-                  </td>
-                  <td className="p-2 text-muted-foreground">{r.confidence}</td>
-                  <td className="p-2">
-                    <input
-                      type="checkbox"
-                      checked={r.reviewed}
-                      onChange={(e) => patch(r.id, { reviewed: e.target.checked })}
-                    />
-                  </td>
-                </tr>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              {COLUMNS.map((col) => (
+                <ColumnHeader
+                  key={col.key}
+                  col={col}
+                  sort={sort}
+                  setSort={setSort}
+                  colFilters={colFilters}
+                  setColFilters={setColFilters}
+                  openCol={openCol}
+                  setOpenCol={setOpenCol}
+                  values={uniqueValues[col.key] || []}
+                />
               ))}
-              {sorted.length === 0 && (
-                <tr>
-                  <td colSpan={COLUMNS.length} className="p-6 text-center text-muted-foreground">
-                    אין שורות.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sorted.map((r) => (
+              <TableRow
+                key={r.id}
+                className={
+                  r.documentType === DOCUMENT_TYPE.Duplicate ||
+                  r.documentType === DOCUMENT_TYPE.CreditSlip
+                    ? "bg-yellow-50/50 dark:bg-yellow-900/10"
+                    : ""
+                }
+              >
+                <TableCell>
+                  <Input
+                    defaultValue={r.storeName ?? ""}
+                    onBlur={(e) => {
+                      const v = e.target.value.trim();
+                      if (v !== (r.storeName ?? "")) patch(r.id, { storeName: v || null });
+                    }}
+                    className="h-8 w-32"
+                  />
+                </TableCell>
+                <TableCell className="tabular-nums">
+                  <Input
+                    defaultValue={r.amount ?? ""}
+                    onBlur={(e) => {
+                      const raw = e.target.value.trim();
+                      const v = raw === "" ? null : Number(raw);
+                      if (v !== r.amount && (v === null || !Number.isNaN(v))) {
+                        patch(r.id, { amount: v });
+                      }
+                    }}
+                    className="h-8 w-20 text-right"
+                  />
+                  <div className="text-[10px] text-muted-foreground">
+                    {formatILS(r.amount)}
+                  </div>
+                </TableCell>
+                <TableCell className="tabular-nums text-muted-foreground">
+                  {r.totalReceiptAmount == null ? "—" : formatILS(r.totalReceiptAmount)}
+                </TableCell>
+                <TableCell>
+                  <Select
+                    value={r.paymentMethod || PAYMENT_METHOD.Unknown}
+                    onValueChange={(v) => patch(r.id, { paymentMethod: v as PaymentMethod })}
+                  >
+                    <SelectTrigger size="sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PAYMENT_METHODS.map((m) => (
+                        <SelectItem key={m} value={m}>{m}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {r.cardLast4 && (
+                    <div className="text-[10px] text-muted-foreground">
+                      ★{r.cardLast4}
+                    </div>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <Input
+                    type="date"
+                    defaultValue={r.date ?? ""}
+                    onBlur={(e) => {
+                      const v = e.target.value || null;
+                      if (v !== r.date) patch(r.id, { date: v });
+                    }}
+                    className="h-8"
+                  />
+                  <div className="text-[10px] text-muted-foreground">
+                    {formatDate(r.date)}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Select
+                    value={r.category}
+                    onValueChange={(v) => patch(r.id, { category: v as Category })}
+                  >
+                    <SelectTrigger size="sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CATEGORIES.map((c) => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+                <TableCell>
+                  <Select
+                    value={r.documentType}
+                    onValueChange={(v) => patch(r.id, { documentType: v as DocumentType })}
+                  >
+                    <SelectTrigger size="sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DOC_TYPES.map((c) => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+                <TableCell className="max-w-[200px]">
+                  {r.driveFileId ? (
+                    <a
+                      href={`https://drive.google.com/file/d/${r.driveFileId}/view`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline truncate inline-block max-w-full"
+                      title={r.fileName}
+                    >
+                      {r.fileName}
+                    </a>
+                  ) : (
+                    <span className="truncate inline-block max-w-full" title={r.fileName}>
+                      {r.fileName}
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell className="text-muted-foreground">{r.confidence}</TableCell>
+                <TableCell>
+                  <Checkbox
+                    checked={r.reviewed}
+                    onCheckedChange={(c) => patch(r.id, { reviewed: c === true })}
+                  />
+                </TableCell>
+              </TableRow>
+            ))}
+            {sorted.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={COLUMNS.length} className="p-6 text-center text-muted-foreground">
+                  אין שורות.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
       )}
     </div>
   );
@@ -502,7 +529,7 @@ function ColumnHeader({
   const hasFilter = !!filterSet && filterSet.size > 0 && filterSet.size < values.length;
 
   return (
-    <th className="text-right p-2 whitespace-nowrap relative select-none">
+    <TableHead className="relative select-none">
       <button
         type="button"
         onClick={(e) => {
@@ -526,7 +553,7 @@ function ColumnHeader({
           values={values}
         />
       )}
-    </th>
+    </TableHead>
   );
 }
 
@@ -576,7 +603,7 @@ function ColumnPanel({
 
   return (
     <div
-      className="absolute top-full right-0 z-50 mt-1 w-56 rounded-md border border-border bg-background shadow-lg p-2 text-right font-normal"
+      className="absolute top-full right-0 z-50 mt-1 w-56 border border-border bg-popover text-popover-foreground shadow-lg p-2 text-right font-normal"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex gap-1 mb-2">
@@ -615,12 +642,11 @@ function ColumnPanel({
             {values.map((v) => (
               <div
                 key={v}
-                className="flex items-center gap-2 text-sm px-1 py-0.5 hover:bg-accent rounded-sm"
+                className="flex items-center gap-2 text-sm px-1 py-0.5 hover:bg-accent"
               >
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={isChecked(v)}
-                  onChange={() => toggleValue(v)}
+                  onCheckedChange={() => toggleValue(v)}
                 />
                 <span className="flex-1 truncate" title={v}>
                   {v || "(ריק)"}
