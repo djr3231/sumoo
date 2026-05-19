@@ -26,7 +26,7 @@ export default async function HomePage() {
             אחסון ב-Google Sheets, והשוואה לתדפיסי בנק ואשראי.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="flex flex-col items-center space-y-4">
           <SignInButton />
           <p className="text-xs text-muted-foreground">
             נדרשת הרשאה ל-Google Drive (לקריאת התמונות) ו-Google Sheets (לכתיבת הטבלה).
