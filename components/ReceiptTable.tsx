@@ -31,6 +31,24 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "./ui/drawer";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "./ui/sheet";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import { toast } from "sonner";
 import { Skeleton } from "./ui/Skeleton";
 import {
@@ -41,6 +59,9 @@ import {
   Wallet,
   MoreHorizontal,
   HelpCircle,
+  ListFilter,
+  ArrowUpDown,
+  Menu,
 } from "lucide-react";
 import {
   CATEGORIES,
@@ -189,6 +210,23 @@ export function ReceiptTable() {
     });
   }
 
+  async function runFixDriveIds() {
+    setFixingIds(true);
+    try {
+      const r = await fetch("/api/fix-drive-ids", { method: "POST" });
+      const j = await r.json();
+      if (!r.ok) { toast.error("שגיאה: " + (j.error || r.status)); return; }
+      toast.success(
+        `תוקנו ${j.fixed} קישורים\n` +
+        `${j.alreadyCorrect} היו תקינים\n` +
+        `${j.notFound} קבצים לא נמצאו ב-Drive`,
+      );
+      if (j.fixed > 0) await load();
+    } finally {
+      setFixingIds(false);
+    }
+  }
+
   async function runDedup() {
     setDedupRunning(true);
     try {
@@ -319,7 +357,8 @@ export function ReceiptTable() {
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap gap-2 items-center">
+      {/* Desktop toolbar */}
+      <div className="hidden md:flex flex-wrap gap-2 items-center">
         <Input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -337,22 +376,7 @@ export function ReceiptTable() {
         <Button
           size="sm"
           variant="outline"
-          onClick={async () => {
-            setFixingIds(true);
-            try {
-              const r = await fetch("/api/fix-drive-ids", { method: "POST" });
-              const j = await r.json();
-              if (!r.ok) { toast.error("שגיאה: " + (j.error || r.status)); return; }
-              toast.success(
-                `תוקנו ${j.fixed} קישורים\n` +
-                `${j.alreadyCorrect} היו תקינים\n` +
-                `${j.notFound} קבצים לא נמצאו ב-Drive`,
-              );
-              if (j.fixed > 0) await load();
-            } finally {
-              setFixingIds(false);
-            }
-          }}
+          onClick={runFixDriveIds}
           disabled={fixingIds || rows.length === 0}
         >
           {fixingIds && <Loader2 className="animate-spin size-4 me-2" />}
@@ -375,6 +399,158 @@ export function ReceiptTable() {
             פתח ב-Google Sheets
           </a>
         )}
+      </div>
+
+      {/* Mobile toolbar */}
+      <div className="flex md:hidden gap-2 items-start">
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="חיפוש חופשי..."
+          className="h-9 flex-1 min-w-[12rem]"
+        />
+
+      </div>
+      <div className="flex md:hidden gap-2 items-center">
+                <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" disabled={rows.length === 0}>
+              <Menu className="size-4 me-2" />
+              פעולות
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onSelect={runDedup}
+              disabled={dedupRunning || rows.length === 0}
+            >
+              {dedupRunning && <Loader2 className="animate-spin size-4 me-2" />}
+              {dedupRunning ? "מאחד..." : "איחוד שמות + זיהוי כפילויות וספחי אשראי"}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={runFixDriveIds}
+              disabled={fixingIds || rows.length === 0}
+            >
+              {fixingIds && <Loader2 className="animate-spin size-4 me-2" />}
+              {fixingIds ? "מתקן..." : "תקן קישורי Drive"}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={downloadCSV}>הורד CSV</DropdownMenuItem>
+            <DropdownMenuItem onSelect={downloadXLSX}>הורד Excel</DropdownMenuItem>
+            {spreadsheetId && (
+              <DropdownMenuItem
+                onSelect={() => {
+                  window.open(
+                    `https://docs.google.com/spreadsheets/d/${spreadsheetId}`,
+                    "_blank",
+                    "noopener,noreferrer",
+                  );
+                }}
+              >
+                פתח ב-Google Sheets
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Sheet>
+          <SheetTrigger asChild>
+            <Button variant="outline" size="sm" disabled={rows.length === 0}>
+              <ListFilter className="size-4 me-2" />
+              מסננים
+            </Button>
+          </SheetTrigger>
+          <SheetContent side="right" className="overflow-y-auto">
+            <SheetHeader>
+              <SheetTitle>מסננים</SheetTitle>
+            </SheetHeader>
+            <div className="px-4 pb-4 space-y-6">
+              {COLUMNS.filter((c) => c.filterable).map((col) => {
+                const values = uniqueValues[col.key] || [];
+                if (values.length === 0) return null;
+                return (
+                  <section key={col.key} className="space-y-2">
+                    <Label>{col.label}</Label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {values.map((v) => {
+                        const set = colFilters[col.key];
+                        const active = !!set && set.has(v);
+                        return (
+                          <Button
+                            key={v}
+                            size="sm"
+                            variant={active ? "default" : "outline"}
+                            onClick={() => {
+                              setColFilters((prev) => {
+                                const cur = prev[col.key];
+                                const next = cur ? new Set(cur) : new Set(values);
+                                if (next.has(v)) next.delete(v);
+                                else next.add(v);
+                                if (next.size === values.length || next.size === 0) {
+                                  const { [col.key]: _omit, ...rest } = prev;
+                                  return rest;
+                                }
+                                return { ...prev, [col.key]: next };
+                              });
+                            }}
+                          >
+                            {v || "(ריק)"}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+            <SheetFooter>
+              <Button variant="ghost" onClick={() => setColFilters({})}>
+                הצג הכל
+              </Button>
+              <SheetClose asChild>
+                <Button variant="outline">סגור</Button>
+              </SheetClose>
+            </SheetFooter>
+          </SheetContent>
+        </Sheet>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" disabled={rows.length === 0}>
+              <ArrowUpDown className="size-4 me-2" />
+              מיין לפי
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuRadioGroup
+              value={sort?.key ?? ""}
+              onValueChange={(k) =>
+                setSort({ key: k as SortKey, dir: sort?.dir ?? "asc" })
+              }
+            >
+              {COLUMNS.map((col) => (
+                <DropdownMenuRadioItem key={col.key} value={col.key}>
+                  {col.label}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuRadioGroup
+              value={sort?.dir ?? "asc"}
+              onValueChange={(d) => {
+                if (!sort) return;
+                setSort({ key: sort.key, dir: d as "asc" | "desc" });
+              }}
+            >
+              <DropdownMenuRadioItem value="asc">A→Z</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="desc">Z→A</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+            {sort && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => setSort(null)}>ניקוי</DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       <div className="text-xs text-muted-foreground flex items-center gap-3">
