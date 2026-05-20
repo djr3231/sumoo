@@ -10,7 +10,7 @@ export default async function ComparePage() {
     <div className="space-y-4">
       <header>
         <h1 className="text-2xl font-bold">השוואה לתדפיס בנק / אשראי</h1>
-        <p className="text-sm text-[hsl(var(--muted-foreground))]">
+        <p className="text-sm text-muted-foreground">
           העלה תדפיס PDF / CSV / Excel. האפליקציה תחלץ תנועות, תשווה לקבלות בטבלה,
           ותראה איזה תנועות חסרות קבלה ואילו קבלות לא מופיעות בתדפיס.
         </p>

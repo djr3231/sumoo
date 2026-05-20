@@ -1,6 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Button } from "./ui/Button";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Badge } from "./ui/badge";
+import { Skeleton } from "./ui/Skeleton";
+import { Alert, AlertDescription } from "./ui/Alert";
+import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 interface SettingsResponse {
   myCardsLast4?: string[];
@@ -13,7 +20,6 @@ export function SettingsForm() {
   const [draftError, setDraftError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -23,10 +29,7 @@ export function SettingsForm() {
         const res = await fetch("/api/settings");
         const json = (await res.json()) as SettingsResponse;
         if (!alive) return;
-        if (!res.ok) {
-          setError(json.error || `HTTP ${res.status}`);
-          return;
-        }
+        if (!res.ok) { setError(json.error || `HTTP ${res.status}`); return; }
         setCards(Array.isArray(json.myCardsLast4) ? json.myCardsLast4 : []);
       } catch (e) {
         if (!alive) return;
@@ -35,45 +38,21 @@ export function SettingsForm() {
         if (alive) setLoading(false);
       }
     })();
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, []);
 
-  function addDraft() {
-    const v = draft.trim();
-    if (!/^\d{4}$/.test(v)) {
-      setDraftError("יש להזין בדיוק 4 ספרות");
-      return;
-    }
-    if (cards.includes(v)) {
-      setDraftError("כבר ברשימה");
-      return;
-    }
-    setCards([...cards, v]);
-    setDraft("");
-    setDraftError(null);
-  }
-
-  function removeCard(c: string) {
-    setCards(cards.filter((x) => x !== c));
-  }
-
-  async function save() {
+  async function persist(newCards: string[]) {
     setSaving(true);
     setError(null);
     try {
       const res = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ myCardsLast4: cards }),
+        body: JSON.stringify({ myCardsLast4: newCards }),
       });
       const json = (await res.json()) as SettingsResponse;
-      if (!res.ok) {
-        setError(json.error || `HTTP ${res.status}`);
-        return;
-      }
-      setSavedAt(Date.now());
+      if (!res.ok) { setError(json.error || `HTTP ${res.status}`); return; }
+      toast.success("נשמר ✓");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -81,88 +60,105 @@ export function SettingsForm() {
     }
   }
 
+  async function addAndSave() {
+    const v = draft.trim();
+    if (!/^\d{4}$/.test(v)) { setDraftError("יש להזין בדיוק 4 ספרות"); return; }
+    if (cards.includes(v)) { setDraftError("כבר ברשימה"); return; }
+    const next = [...cards, v];
+    setCards(next);
+    setDraft("");
+    setDraftError(null);
+    await persist(next);
+  }
+
+  async function removeAndSave(c: string) {
+    const next = cards.filter((x) => x !== c);
+    setCards(next);
+    await persist(next);
+  }
+
   if (loading) {
-    return <p className="text-sm text-[hsl(var(--muted-foreground))]">טוען...</p>;
+    return (
+      <div className="space-y-4">
+        <div className="flex gap-2 flex-wrap">
+          <Skeleton className="h-8 w-20" />
+          <Skeleton className="h-8 w-20" />
+          <Skeleton className="h-8 w-20" />
+        </div>
+        <Skeleton className="h-10 w-48" />
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-4">
-      <section className="space-y-2">
-        <h2 className="text-lg font-semibold">4 ספרות אחרונות של כרטיסי האשראי שלך</h2>
-        <p className="text-sm text-[hsl(var(--muted-foreground))]">
+    <div className="space-y-6">
+      <div className="space-y-3">
+        <Label htmlFor="card-input" className="text-base font-semibold">
+          4 ספרות אחרונות של כרטיסי האשראי שלך
+        </Label>
+        <p className="text-sm text-muted-foreground">
           קבלות שמחויבות באחד מהכרטיסים הללו יסווגו כ&quot;אשראי&quot;. כרטיסים אחרים יסווגו כ&quot;מזומן&quot;.
         </p>
 
         {cards.length === 0 ? (
-          <p className="text-sm rounded-md border border-dashed border-[hsl(var(--border))] p-3">
+          <p className="text-sm border border-dashed border-border p-3">
             ללא כרטיסים מוגדרים — כל חיוב באשראי יסווג כ&quot;אשראי&quot; לפי הקבלה.
           </p>
         ) : (
           <ul className="flex flex-wrap gap-2">
             {cards.map((c) => (
-              <li
-                key={c}
-                className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--muted))] px-3 py-1 text-sm"
-              >
-                <span className="font-mono">★{c}</span>
-                <button
-                  type="button"
-                  onClick={() => removeCard(c)}
-                  aria-label={`הסר ${c}`}
-                  className="text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--destructive))] leading-none"
+              <li key={c}>
+                <Badge
+                  variant="secondary"
+                  className="border border-border bg-muted px-3 py-1 text-sm font-normal tracking-normal normal-case gap-1.5"
                 >
-                  ×
-                </button>
+                  <span className="font-mono">★{c}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeAndSave(c)}
+                    disabled={saving}
+                    aria-label={`הסר ${c}`}
+                    className="text-muted-foreground hover:text-destructive leading-none disabled:opacity-50"
+                  >
+                    ×
+                  </button>
+                </Badge>
               </li>
             ))}
           </ul>
         )}
 
         <div className="flex gap-2 items-start">
-          <div className="flex-1">
-            <input
+          <div className="flex-1 space-y-1">
+            <Input
+              id="card-input"
               value={draft}
               onChange={(e) => {
                 setDraft(e.target.value.replace(/\D/g, "").slice(0, 4));
                 setDraftError(null);
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  addDraft();
-                }
+                if (e.key === "Enter") { e.preventDefault(); addAndSave(); }
               }}
-              type="text"
               inputMode="numeric"
               maxLength={4}
               placeholder="1234"
-              className={`w-full h-10 px-3 rounded-md border bg-transparent text-sm font-mono ${
-                draftError ? "border-[hsl(var(--destructive))]" : "border-[hsl(var(--border))]"
-              }`}
+              aria-invalid={!!draftError}
+              className="font-mono"
             />
-            {draftError && (
-              <p className="text-xs text-[hsl(var(--destructive))] mt-1">{draftError}</p>
-            )}
+            {draftError && <p className="text-xs text-destructive">{draftError}</p>}
           </div>
-          <Button onClick={addDraft} variant="outline" disabled={!draft}>
+          <Button onClick={addAndSave} variant="outline" disabled={!draft || saving}>
+            {saving && <Loader2 className="animate-spin size-4 me-2" />}
             הוסף
           </Button>
         </div>
-      </section>
-
-      <div className="flex items-center gap-3 pt-2 border-t border-[hsl(var(--border))]">
-        <Button onClick={save} disabled={saving}>
-          {saving ? "שומר..." : "שמור"}
-        </Button>
-        {savedAt && !saving && (
-          <span className="text-sm text-[hsl(var(--muted-foreground))]">נשמר ✓</span>
-        )}
       </div>
 
       {error && (
-        <div className="rounded-md border border-[hsl(var(--destructive))] p-3 text-sm">
-          {error}
-        </div>
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
     </div>
   );

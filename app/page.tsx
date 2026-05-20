@@ -3,29 +3,41 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { SignInButton } from "@/components/SignInButton";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 export default async function HomePage() {
   const session = await getServerSession(authOptions);
   if (session) redirect("/upload");
 
   return (
-    <div className="max-w-2xl mx-auto py-12 text-center space-y-6">
-      <h1 className="text-3xl font-bold">סומו</h1>
-      <p className="text-[hsl(var(--muted-foreground))]">
-        סריקת קבלות אישית, חילוץ אוטומטי של חנות, סכום, תאריך וקטגוריה,
-        אחסון ב-Google Sheets, והשוואה לתדפיסי בנק ואשראי.
-      </p>
-      <div className="flex justify-center">
-        <SignInButton />
-      </div>
-      <p className="text-xs text-[hsl(var(--muted-foreground))]">
-        נדרשת הרשאה ל-Google Drive (לקריאת התמונות) ו-Google Sheets (לכתיבת הטבלה).
-      </p>
-      <div className="text-sm pt-8">
-        <Link href="/upload" className="underline">
-          כבר מחובר? דלג להעלאה
-        </Link>
-      </div>
+    <div className="flex min-h-[calc(100vh-8rem)] items-center justify-center">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle>סומו</CardTitle>
+          <CardDescription>
+            סריקת קבלות אישית, חילוץ אוטומטי של חנות, סכום, תאריך וקטגוריה,
+            אחסון ב-Google Sheets, והשוואה לתדפיסי בנק ואשראי.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col items-center space-y-4">
+          <SignInButton />
+          <p className="text-xs text-muted-foreground">
+            נדרשת הרשאה ל-Google Drive (לקריאת התמונות) ו-Google Sheets (לכתיבת הטבלה).
+          </p>
+        </CardContent>
+        <CardFooter>
+          <Link href="/upload" className="text-sm underline">
+            כבר מחובר? דלג להעלאה
+          </Link>
+        </CardFooter>
+      </Card>
     </div>
   );
 }

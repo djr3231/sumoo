@@ -1,6 +1,19 @@
 "use client";
-import { useState } from "react";
-import { Button } from "./ui/Button";
+import * as React from "react";
+import { Button } from "./ui/button";
+import { Progress } from "./ui/progress";
+import { Alert, AlertDescription, AlertTitle } from "./ui/Alert";
+import { Skeleton } from "./ui/Skeleton";
+import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxList,
+  ComboboxItem,
+  ComboboxInput,
+  ComboboxEmpty,
+} from "./ui/combobox";
 import type { Receipt } from "@/lib/types";
 
 const CONCURRENCY = 2;
@@ -30,31 +43,78 @@ interface DriveFile {
   size: number;
 }
 
-export function DriveImport() {
-  const [folderId, setFolderId] = useState("");
-  const [files, setFiles] = useState<DriveFile[]>([]);
-  const [existingDriveIds, setExistingDriveIds] = useState<Set<string>>(new Set());
-  const [progress, setProgress] = useState({ done: 0, total: 0 });
-  const [loadingFolder, setLoadingFolder] = useState(false);
-  const [running, setRunning] = useState(false);
-  const [results, setResults] = useState<Receipt[]>([]);
-  const [errors, setErrors] = useState<{ name: string; error: string }[]>([]);
-  const [paused, setPaused] = useState(false);
-  const [pendingFiles, setPendingFiles] = useState<DriveFile[]>([]);
+interface DriveFolder {
+  id: string;
+  name: string;
+}
 
-  function extractFolderId(input: string): string {
-    const m = input.match(/folders\/([\w-]+)/);
-    return m ? m[1] : input.trim();
+export function DriveImport() {
+  const [selectedFolder, setSelectedFolder] = React.useState<DriveFolder | null>(null);
+  const [searchResults, setSearchResults] = React.useState<DriveFolder[]>([]);
+  const [folderIdError, setFolderIdError] = React.useState<string | null>(null);
+  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = React.useRef<AbortController | null>(null);
+
+  const [files, setFiles] = React.useState<DriveFile[]>([]);
+  const [existingDriveIds, setExistingDriveIds] = React.useState<Set<string>>(new Set());
+  const [progress, setProgress] = React.useState({ done: 0, total: 0 });
+  const [loadingFolder, setLoadingFolder] = React.useState(false);
+  const [running, setRunning] = React.useState(false);
+  const [results, setResults] = React.useState<Receipt[]>([]);
+  const [errors, setErrors] = React.useState<{ name: string; error: string }[]>([]);
+  const [paused, setPaused] = React.useState(false);
+  const [pendingFiles, setPendingFiles] = React.useState<DriveFile[]>([]);
+
+  // Keep the currently-selected folder visible in the list even after results change.
+  const items = React.useMemo(() => {
+    if (!selectedFolder || searchResults.some((f) => f.id === selectedFolder.id)) {
+      return searchResults;
+    }
+    return [...searchResults, selectedFolder];
+  }, [searchResults, selectedFolder]);
+
+  function handleInputChange(
+    next: string,
+    details: { reason?: string },
+  ) {
+    if (details.reason === "item-press") return;
+    if (next.trim() === "") {
+      setSearchResults([]);
+      return;
+    }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      const controller = new AbortController();
+      abortRef.current?.abort();
+      abortRef.current = controller;
+      try {
+        const res = await fetch(
+          `/api/drive/folders?q=${encodeURIComponent(next)}`,
+          { signal: controller.signal },
+        );
+        const json = await res.json();
+        if (controller.signal.aborted) return;
+        setSearchResults(json.folders ?? []);
+      } catch {
+        // abort or network error — ignore
+      }
+    }, 300);
   }
 
   async function loadFolder() {
+    if (!selectedFolder) {
+      setFolderIdError("יש להזין כתובת או מזהה תיקייה");
+      return;
+    }
+    setFolderIdError(null);
     setLoadingFolder(true);
     try {
-      const id = extractFolderId(folderId);
-      const res = await fetch(`/api/drive?folderId=${encodeURIComponent(id)}`);
+      const res = await fetch(
+        `/api/drive?folderId=${encodeURIComponent(selectedFolder.id)}`,
+      );
       const json = await res.json();
       if (!res.ok) {
-        alert(json.error || "שגיאה בטעינת התיקייה");
+        toast.error(json.error || "שגיאה בטעינת התיקייה");
         return;
       }
       setFiles(json.files);
@@ -164,22 +224,58 @@ export function DriveImport() {
     await runBatch(pendingFiles);
   }
 
+  const pct = progress.total > 0
+    ? Math.round((progress.done / progress.total) * 100)
+    : 0;
+
   return (
     <div className="space-y-3">
-      <div className="flex gap-2">
-        <input
-          value={folderId}
-          onChange={(e) => setFolderId(e.target.value)}
-          placeholder="הדבק כתובת תיקיית Drive או מזהה תיקייה"
-          className="flex-1 h-10 px-3 rounded-md border border-[hsl(var(--border))] bg-transparent text-sm"
-        />
-        <Button onClick={loadFolder} variant="outline" disabled={loadingFolder || running}>
-          {loadingFolder ? "טוען..." : "טען תיקייה"}
-        </Button>
+      <div className="space-y-1">
+        <div className="flex gap-2">
+          <div className="flex-1">
+            <Combobox
+              items={items}
+              value={selectedFolder}
+              filter={null}
+              itemToStringLabel={(f: DriveFolder) => f.name}
+              onValueChange={(next: DriveFolder | null) => {
+                setSelectedFolder(next);
+                setFolderIdError(null);
+              }}
+              onInputValueChange={handleInputChange}
+            >
+              <ComboboxInput
+                placeholder="חפש תיקיית Drive..."
+                aria-invalid={!!folderIdError}
+                showClear={!!selectedFolder}
+              />
+              <ComboboxContent>
+                <ComboboxEmpty>לא נמצאו תיקיות</ComboboxEmpty>
+                <ComboboxList>
+                  {(folder: DriveFolder) => (
+                    <ComboboxItem key={folder.id} value={folder}>
+                      {folder.name}
+                    </ComboboxItem>
+                  )}
+                </ComboboxList>
+              </ComboboxContent>
+            </Combobox>
+          </div>
+          <Button onClick={loadFolder} variant="outline" disabled={loadingFolder || running}>
+            {loadingFolder && <Loader2 className="animate-spin size-4 me-2" />}
+            {loadingFolder ? "טוען..." : "טען תיקייה"}
+          </Button>
+        </div>
+        {folderIdError && <p className="text-xs text-destructive">{folderIdError}</p>}
       </div>
 
       {loadingFolder && (
-        <p className="text-sm text-[hsl(var(--muted-foreground))]">טוען תיקייה וקבצים קיימים...</p>
+        <div className="space-y-2" aria-label="טוען תיקייה וקבצים קיימים...">
+          <Skeleton className="h-4 w-48" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-3/4" />
+        </div>
       )}
 
       {!loadingFolder && files.length > 0 && (() => {
@@ -187,13 +283,16 @@ export function DriveImport() {
         const doneCount = files.length - newFiles.length;
         return (
           <>
-            <p className="text-sm text-[hsl(var(--muted-foreground))]">
+            <p className="text-sm text-muted-foreground">
               נמצאו {files.length} קבצים בתיקייה
               {doneCount > 0 && ` · ${doneCount} כבר עובדו · ${newFiles.length} חדשים`}.
             </p>
             <div className="flex gap-2 flex-wrap">
               {running ? (
-                <Button disabled>מעבד {progress.done}/{progress.total}...</Button>
+                <Button disabled>
+                  <Loader2 className="animate-spin size-4 me-2" />
+                  מעבד {progress.done}/{progress.total}...
+                </Button>
               ) : (
                 <>
                   <Button
@@ -219,37 +318,34 @@ export function DriveImport() {
       })()}
 
       {progress.total > 0 && (
-        <div className="w-full bg-[hsl(var(--muted))] rounded h-2 overflow-hidden">
-          <div
-            className="h-full bg-[hsl(var(--primary))] transition-[width]"
-            style={{ width: `${(progress.done / progress.total) * 100}%` }}
-          />
-        </div>
+        <Progress value={pct} />
       )}
 
       {paused && (
-        <div className="rounded-lg border border-amber-500 bg-amber-50 dark:bg-amber-950 p-3 text-sm">
-          <p className="font-semibold mb-2">⏸ הסריקה הושהתה — Gemini עמוס</p>
-          <p className="mb-2">
+        <Alert>
+          <AlertTitle>⏸ הסריקה הושהתה — Gemini עמוס</AlertTitle>
+          <AlertDescription>
             {pendingFiles.length} קבצים ממתינים. נסה שוב כשהשרת ישתחרר (לעיתים נדרשות מספר דקות).
-          </p>
-          <Button onClick={resume} disabled={running}>
+          </AlertDescription>
+          <Button onClick={resume} disabled={running} className="mt-2">
             המשך סריקה ({pendingFiles.length})
           </Button>
-        </div>
+        </Alert>
       )}
 
       {errors.length > 0 && (
-        <div className="rounded-lg border border-[hsl(var(--destructive))] p-3 text-sm">
-          <p className="font-semibold mb-1">שגיאות ({errors.length})</p>
-          <ul className="list-disc pr-5 space-y-1">
-            {errors.map((e, i) => (
-              <li key={i}>
-                <span className="font-mono text-xs">{e.name}</span>: {e.error}
-              </li>
-            ))}
-          </ul>
-        </div>
+        <Alert variant="destructive">
+          <AlertTitle>שגיאות ({errors.length})</AlertTitle>
+          <AlertDescription>
+            <ul className="list-disc pr-5 space-y-1 mt-1">
+              {errors.map((e, i) => (
+                <li key={i}>
+                  <span className="font-mono text-xs">{e.name}</span>: {e.error}
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
       )}
 
       {results.length > 0 && (

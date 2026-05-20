@@ -528,6 +528,19 @@ export async function listDriveFolderImages(
   return out;
 }
 
+export async function searchDriveFolders(
+  accessToken: string,
+  query: string,
+): Promise<Array<{ id: string; name: string }>> {
+  const drive = driveClient(accessToken);
+  const res = await drive.files.list({
+    q: `mimeType='application/vnd.google-apps.folder' and name contains '${query.replace(/'/g, "\\'")}' and trashed=false`,
+    fields: "files(id,name)",
+    pageSize: 20,
+  });
+  return (res.data.files ?? []).map((f) => ({ id: f.id!, name: f.name! }));
+}
+
 export async function downloadDriveFile(
   accessToken: string,
   fileId: string,
