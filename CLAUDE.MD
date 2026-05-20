@@ -33,13 +33,19 @@ Never change theme tokens, the preset, or the font without explicit user approva
 - Auto-commit hooks are configured in .claude/settings.json — do not disable them.
 
 ## Package Versions
+- **Always use latest stable versions.** Before starting any major feature or redesign, run `npm outdated` to identify stale packages.
 - Never trust version numbers from memory or from ARCHITECTURE.md.
 - Always verify with `npm view <package> version` before adding to package.json.
 - Use latest stable unless I explicitly say otherwise. No beta/rc/next tags.
-- If a package has known incompatibility with another (e.g. AntD + React 19),
-  warn me before adding it.
+- When upgrading, check compatibility between packages (e.g. React 19 + ecosystem, Next.js major upgrades). Warn before any breaking change.
+- If a package has known incompatibility with another (e.g. AntD + React 19), warn me before adding it.
 
----
+## Tool usage rules
+- Before implementing anything with an external library/API
+  (shadcn, Next.js, Tailwind, Anthropic SDK, etc.), call the
+  `context7` MCP first to fetch the latest docs. Don't rely on memory.
+- Before any GitHub action, use `mcp__github__*` tools — never `gh` CLI.
+- Before non-trivial code search, prefer the `Explore` subagent over ad-hoc grep.
 
 ## Working Style
 

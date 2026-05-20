@@ -356,6 +356,13 @@ No new deps.
 - `input` (for the folder ID input)
 - `button`
 
+**Folder-select combobox (companion feature — same §7.3 commit):**
+Replace the folder-ID text input in `DriveImport.tsx` with a searchable combobox:
+- New function `searchDriveFolders(token: string, query: string)` in `lib/google.ts` — `drive.files.list` with `q: "mimeType='application/vnd.google-apps.folder' and name contains '${query}' and trashed=false"`, `fields: "files(id,name)"`, `pageSize: 20`.
+- New route `app/api/drive/folders/route.ts` — GET, reads `?q=` param, calls above, returns `{ folders: {id,name}[] }`. Require `q.length >= 1`.
+- `DriveImport.tsx` — replace the `<Input>` folder-ID field with a shadcn `Command`+`Popover` combobox. Debounce fetch 300 ms. On select, store `folderId` (the file id) internally — no paste required. Keep the existing `folderId` state shape so downstream fetch logic is unchanged.
+- No new OAuth scopes — `drive.readonly` already covers this.
+
 **Acceptance criteria:**
 - Both upload and Drive-import sections sit inside `Card`s.
 - Drop zone visually distinct — dashed border, centered icon + label.
@@ -365,6 +372,8 @@ No new deps.
 - Pause banner uses `<Alert>` (default).
 - All existing user-visible strings preserved exactly.
 - (per §7.1.5) Every scan button shows `Loader2` spinner during work; `alert()` in `DriveImport.tsx` is gone (replaced with `toast.error`); folder-id input has inline validation.
+- Folder combobox: typing ≥ 1 character shows matching Drive folders; selecting one loads it. Empty query shows no list.
+- Folder-ID inline validation string (if input is ever empty on submit): `"יש להזין כתובת או מזהה תיקייה"` (kept as fallback only).
 
 **Hand off:** "Upload page redone. Please verify: upload a small image works end-to-end, Drive import works, error state appears correctly. Mobile responsive."
 
@@ -433,9 +442,10 @@ Use `hidden md:block` / `block md:hidden` to swap presentations.
 
 The current page has buttons for: dedup, fix-drive-ids, CSV export, XLSX export. On desktop: a horizontal toolbar. On mobile: a shadcn `DropdownMenu` (`npx shadcn@latest add dropdown-menu`) labeled "פעולות" so it doesn't crowd the screen.
 
-Filters that today are dispersed in headers should:
+Filters AND sort that today live in headers should:
 - Desktop: stay in headers.
-- Mobile: a "מסננים" button that opens a `Sheet` with all filters.
+- Mobile: "מסננים" button → Sheet with chip multi-selects per filterable field;
+          "מיין לפי" DropdownMenu (sortable keys + asc/desc).
 
 **Acceptance criteria:**
 - All existing functionality preserved: inline edit, filter, dedup button, fix-drive-ids button, CSV + XLSX export.
