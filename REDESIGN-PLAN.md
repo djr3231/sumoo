@@ -456,6 +456,134 @@ Filters AND sort that today live in headers should:
 
 **Hand off:** "Receipts page redone. Please verify (desktop + mobile): inline edit a row, change a category, run dedup, run fix-drive-ids, export CSV, export XLSX. All should match prior behavior."
 
+#### 7.5.d Mobile filter Sheet — redesign (supersedes §7.5.c filter)
+
+**Why this exists:** §7.5.c shipped (commit `f889464`) with a broken mental model. Each filterable column rendered every unique value as a toggle `Button` chip (`variant={active ? "default" : "outline"}`). The handler, when `colFilters[col.key]` was `undefined`, *initialized the Set with every value* (`new Set(values)`) and then removed the clicked one. Net effect: tap one chip → every *other* chip flips to "default" variant, looking selected, while the one you tapped goes "outline". The semantic was "filter-out" but the visual screamed "select these" — inverted, unintuitive, unusable.
+
+We replace it with the canonical shadcn "product-list-filters" pattern (ref: `shadcndesign.com/pro-blocks/product-list-filters`): collapsible facets, checkbox rows, additive selection (empty = no filter), selection summary, sticky footer.
+
+**Component graph:**
+
+```
+Sheet (side="right" on mobile, "left" makes more sense in RTL — use side="right" anyway,
+       the Sheet primitive handles RTL via dir="rtl" on <html>)
+├─ SheetTrigger: Button "מסננים" + Badge with active-filter count
+├─ SheetContent (flex flex-col, h-full, max-w-sm)
+│  ├─ SheetHeader: SheetTitle "מסננים" + (right-aligned) Button ghost "נקה הכל"
+│  │                                       (visible only if any filter active)
+│  ├─ (optional) Selected-summary row: flex flex-wrap of <Badge variant="secondary"> chips,
+│  │              one per active value, each with a small X to remove. Hidden when nothing selected.
+│  ├─ ScrollArea (flex-1, overflow-y-auto, p-4)
+│  │  └─ Accordion type="multiple" defaultValue={facets with active filters}
+│  │     └─ AccordionItem per filterable column (one per COLUMNS.filter(c=>c.filterable))
+│  │        ├─ AccordionTrigger:
+│  │        │     <span>{col.label}</span>
+│  │        │     {active>0 && <Badge variant="secondary">{active}</Badge>}
+│  │        └─ AccordionContent:
+│  │           └─ vertical list of:
+│  │              <Label className="flex items-center gap-2 py-1.5 cursor-pointer">
+│  │                <Checkbox checked={set?.has(v) ?? false} onCheckedChange={...} />
+│  │                <span className="flex-1 truncate">{v || "(ריק)"}</span>
+│  │                <span className="text-xs text-muted-foreground tabular-nums">{count}</span>
+│  │              </Label>
+│  └─ SheetFooter (sticky, border-t, bg-background, p-4, gap-2):
+│     ├─ SheetClose asChild: Button "החל" (default variant) — closes sheet
+│     └─ Button variant="ghost" "סגור" — also closes (escape hatch)
+└─ end
+```
+
+**State semantics (the part that was wrong):**
+
+`colFilters[key]` is a `Set<string>` of **explicitly included** values.
+
+| State | Meaning |
+|-------|---------|
+| `colFilters[key]` is `undefined` (key absent) | No filter on this column — all values pass |
+| `colFilters[key]` is empty Set (`size === 0`) | No filter — same as undefined (cleanup to undefined) |
+| `colFilters[key]` has N values | Show only rows where the column equals one of those N values |
+
+Handler logic (replace the broken `new Set(values)` initializer):
+
+```ts
+function toggleFilterValue(key: SortKey, v: string) {
+  setColFilters((prev) => {
+    const cur = prev[key];
+    const next = cur ? new Set(cur) : new Set<string>();  // start EMPTY, not full
+    if (next.has(v)) next.delete(v);
+    else next.add(v);
+    if (next.size === 0) {
+      const { [key]: _drop, ...rest } = prev;
+      return rest;
+    }
+    return { ...prev, [key]: next };
+  });
+}
+```
+
+**Visual rules:**
+
+- Checked checkbox = value is included in the filter. Period. No "inverted" mode.
+- A facet with zero checked items behaves identically to a facet that's never been touched — no filter applied.
+- Trigger button shows `<Badge>` with `Object.values(colFilters).reduce((n, s) => n + (s?.size ?? 0), 0)`. Hide the badge if 0.
+- AccordionItem header shows the per-facet count badge (only when > 0). Items with active filters auto-expand on Sheet open.
+
+**Counts next to each value:**
+
+```ts
+const valueCounts: Record<string, Record<string, number>> = useMemo(() => {
+  const out: Record<string, Record<string, number>> = {};
+  for (const col of COLUMNS.filter((c) => c.filterable)) {
+    const counts: Record<string, number> = {};
+    for (const r of rows) {
+      const v = col.getValue(r);
+      counts[v] = (counts[v] ?? 0) + 1;
+    }
+    out[col.key] = counts;
+  }
+  return out;
+}, [rows]);
+```
+
+Use these inside the AccordionContent rows. Counts reflect the *unfiltered* row count for the given value — they don't recompute as the user toggles other facets (that adds a lot of complexity and slows scroll; not worth it here).
+
+**Sort dropdown — small fix while you're here:**
+
+The existing "מיין לפי" `DropdownMenu` has two real bugs:
+1. The direction `DropdownMenuRadioGroup` has an early-return `if (!sort) return;` — the user can't pick a direction before picking a key. Remove the guard: store dir even with no key (`useState<{ key: SortKey | null; dir: "asc" | "desc" }>({ key: null, dir: "asc" })`).
+2. Labels `"A→Z" / "Z→A"` are misleading for numbers/dates/booleans. Replace with `"עולה" / "יורד"`.
+
+**Out of scope for §7.5.d:**
+
+- Desktop column-header sort+filter panels (`openCol` panel logic) — keep unchanged.
+- Refactoring `colFilters` semantics elsewhere — the broken handler exists only in the mobile Sheet block.
+- Real-time recomputation of counts as filters interact — explicit non-goal.
+
+**New shadcn primitives needed:**
+
+- `Accordion` — `npx shadcn@latest add accordion` (registry is auth-broken for this repo — write manually following the shadcn source: `@radix-ui/react-accordion` + the four wrapper components, tokens-only styling, no animation deps beyond `data-[state=open]`).
+- `ScrollArea` — optional; if Sheet body already scrolls cleanly with `overflow-y-auto`, skip. Add only if scroll feels janky.
+- `Badge` — already installed (§7.2).
+- `Checkbox` — already installed (§7.5.a).
+- `Label` — already installed (§7.2).
+
+**Files modified:**
+
+- `components/ReceiptTable.tsx` — replace the mobile Sheet body block (currently lines ~470-520 in the post-§7.5.c file), the `toggleFilterValue` handler, and the sort DropdownMenu guard/labels.
+- `components/ui/Accordion.tsx` — new.
+
+**Acceptance criteria:**
+
+- Tap one value in any facet → only rows matching that value remain. Tap a second value in the same facet → both pass (OR within facet). Tap a value in a different facet → AND across facets.
+- Untap the last value in a facet → that facet's filter clears (no rows lost from facets touched).
+- Trigger button shows badge with total selected count. Badge hidden at 0.
+- Open Sheet a second time → facets that had selections are still expanded; others stay collapsed.
+- "נקה הכל" in header empties `colFilters` and collapses everything.
+- Sort dropdown: can pick "עולה / יורד" before picking a column; A→Z / Z→A strings gone from codebase.
+- Existing desktop column-header behavior unchanged.
+- `npm run build` passes; design-system greps clean.
+
+**Hand off:** "Mobile filter Sheet redesigned. Please verify on a real phone: open סינון, tap values across multiple facets, watch the table narrow correctly, hit נקה הכל, confirm reset. Then verify sort dropdown lets you change direction without first picking a column."
+
 ---
 
 ### 7.6 `/compare`
