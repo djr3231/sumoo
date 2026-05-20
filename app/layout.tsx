@@ -2,6 +2,10 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import Header from "@/components/Header";
 import Providers from "@/components/Providers";
+import { Public_Sans } from "next/font/google";
+import { cn } from "@/lib/utils";
+
+const publicSans = Public_Sans({subsets:['latin'],variable:'--font-sans'});
 
 export const metadata: Metadata = {
   title: "סומו · סורק קבלות",
@@ -18,7 +22,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="he" dir="rtl" suppressHydrationWarning>
+    <html lang="he" dir="rtl" suppressHydrationWarning className={cn("font-sans", publicSans.variable)}>
       <body className="min-h-screen flex flex-col">
         <Providers>
           <Header />

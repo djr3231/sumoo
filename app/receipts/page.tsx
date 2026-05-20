@@ -10,7 +10,7 @@ export default async function ReceiptsPage() {
     <div className="space-y-4">
       <header>
         <h1 className="text-2xl font-bold">קבלות</h1>
-        <p className="text-sm text-[hsl(var(--muted-foreground))]">
+        <p className="text-sm text-muted-foreground">
           טבלה מלאה. ניתן לערוך תאים inline; שינויים נשמרים אוטומטית ל-Google Sheets.
         </p>
       </header>

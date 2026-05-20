@@ -1,6 +1,8 @@
 "use client";
 import { useState } from "react";
-import { Button } from "./ui/Button";
+import { Button } from "./ui/button";
+import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
 import type { BankTxn } from "@/lib/types";
 import { formatDate, formatILS } from "@/lib/utils";
 
@@ -12,11 +14,24 @@ interface MatchResult {
 
 export function CompareView() {
   const [file, setFile] = useState<File | null>(null);
+  const [fileTypeError, setFileTypeError] = useState<string | null>(null);
   const [sourceLabel, setSourceLabel] = useState("");
   const [parsedTxns, setParsedTxns] = useState<BankTxn[]>([]);
   const [result, setResult] = useState<MatchResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  function handleFileChange(f: File | null) {
+    setFileTypeError(null);
+    if (!f) { setFile(null); return; }
+    const ext = f.name.split(".").pop()?.toLowerCase() ?? "";
+    if (!["csv", "xlsx", "xls", "pdf"].includes(ext)) {
+      setFileTypeError("סוג קובץ לא נתמך — CSV, XLSX או PDF בלבד");
+      setFile(null);
+      return;
+    }
+    setFile(f);
+  }
 
   async function handleParse() {
     if (!file) return;
@@ -60,34 +75,38 @@ export function CompareView() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ txns: all, saveToSheet: true }),
     });
-    if (r.ok) alert("נשמר ל-tab התנועות בגיליון.");
+    if (r.ok) toast.success("נשמר ל-tab התנועות בגיליון.");
   }
 
   return (
     <div className="space-y-6">
-      <section className="space-y-3 border border-[hsl(var(--border))] rounded-lg p-4">
+      <section className="space-y-3 border border-border rounded-lg p-4">
         <h2 className="font-semibold">העלה תדפיס בנק / אשראי</h2>
-        <p className="text-xs text-[hsl(var(--muted-foreground))]">
+        <p className="text-xs text-muted-foreground">
           תומך ב: PDF (ינותח בעזרת Claude), CSV, XLSX (ייצוא מבנקים ישראליים).
         </p>
         <div className="flex flex-wrap gap-2 items-center">
-          <input
-            type="file"
-            accept=".pdf,.csv,.xlsx,.xls,application/pdf,text/csv"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="text-sm"
-          />
+          <div className="space-y-1">
+            <input
+              type="file"
+              accept=".pdf,.csv,.xlsx,.xls"
+              onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
+              className="text-sm"
+            />
+            {fileTypeError && <p className="text-xs text-destructive">{fileTypeError}</p>}
+          </div>
           <input
             placeholder='תווית מקור (למשל "ויזה 1234")'
             value={sourceLabel}
             onChange={(e) => setSourceLabel(e.target.value)}
-            className="h-9 px-3 rounded-md border border-[hsl(var(--border))] bg-transparent text-sm flex-1 min-w-[200px]"
+            className="h-9 px-3 rounded-md border border-border bg-transparent text-sm flex-1 min-w-[200px]"
           />
           <Button onClick={handleParse} disabled={!file || loading}>
+            {loading && <Loader2 className="animate-spin size-4 me-2" />}
             {loading ? "מעבד..." : "פרסר והשווה"}
           </Button>
         </div>
-        {error && <p className="text-sm text-[hsl(var(--destructive))]">{error}</p>}
+        {error && <p className="text-sm text-destructive">{error}</p>}
       </section>
 
       {result && (
@@ -113,9 +132,9 @@ export function CompareView() {
           {result.missingReceipts.length > 0 && (
             <div>
               <h3 className="font-semibold mb-2">תנועות ללא קבלה</h3>
-              <div className="rounded-lg border border-[hsl(var(--border))] overflow-hidden">
+              <div className="rounded-lg border border-border overflow-hidden">
                 <table className="w-full text-sm">
-                  <thead className="bg-[hsl(var(--muted))]">
+                  <thead className="bg-muted">
                     <tr>
                       <th className="text-right p-2">תאריך</th>
                       <th className="text-right p-2">סכום</th>
@@ -125,11 +144,11 @@ export function CompareView() {
                   </thead>
                   <tbody>
                     {result.missingReceipts.map((t, i) => (
-                      <tr key={i} className="border-t border-[hsl(var(--border))]">
+                      <tr key={i} className="border-t border-border">
                         <td className="p-2">{formatDate(t.date)}</td>
                         <td className="p-2 tabular-nums">{formatILS(t.amount)}</td>
                         <td className="p-2">{t.description ?? "—"}</td>
-                        <td className="p-2 text-[hsl(var(--muted-foreground))]">{t.source}</td>
+                        <td className="p-2 text-muted-foreground">{t.source}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -141,7 +160,7 @@ export function CompareView() {
       )}
 
       {parsedTxns.length > 0 && !result && (
-        <p className="text-sm text-[hsl(var(--muted-foreground))]">
+        <p className="text-sm text-muted-foreground">
           חולצו {parsedTxns.length} תנועות. ממתין להשוואה...
         </p>
       )}
