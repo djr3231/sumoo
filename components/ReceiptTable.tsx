@@ -49,6 +49,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "./ui/accordion";
 import { toast } from "sonner";
 import { Skeleton } from "./ui/Skeleton";
 import {
@@ -75,7 +81,7 @@ import {
   type PaymentMethod,
   type Receipt,
 } from "@/lib/types";
-import { formatDate, formatILS } from "@/lib/utils";
+import { cn, formatDate, formatILS } from "@/lib/utils";
 
 const DOC_TYPES: DocumentType[] = DOCUMENT_TYPES;
 
@@ -166,7 +172,7 @@ export function ReceiptTable() {
   const [dedupRunning, setDedupRunning] = useState(false);
   const [fixingIds, setFixingIds] = useState(false);
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" } | null>(null);
+  const [sort, setSort] = useState<{ key: SortKey | null; dir: "asc" | "desc" }>({ key: null, dir: "asc" });
   const [colFilters, setColFilters] = useState<Partial<Record<SortKey, Set<string>>>>({});
   const [openCol, setOpenCol] = useState<SortKey | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -267,6 +273,53 @@ export function ReceiptTable() {
     return map;
   }, [rows]);
 
+  // Cross-facet-aware: for each facet, count values among rows that pass
+  // every OTHER filterable facet's filter (the facet itself is excluded
+  // from its own count basis, otherwise checking one value would zero out
+  // the siblings and prevent re-broadening).
+  const facetCounts = useMemo(() => {
+    const out: Partial<Record<SortKey, Record<string, number>>> = {};
+    for (const col of COLUMNS) {
+      if (!col.filterable) continue;
+      const counts: Record<string, number> = {};
+      for (const r of rows) {
+        let passes = true;
+        for (const other of COLUMNS) {
+          if (!other.filterable || other.key === col.key) continue;
+          const set = colFilters[other.key];
+          if (set && set.size > 0 && !set.has(other.getValue(r))) {
+            passes = false;
+            break;
+          }
+        }
+        if (!passes) continue;
+        const v = col.getValue(r);
+        counts[v] = (counts[v] ?? 0) + 1;
+      }
+      out[col.key] = counts;
+    }
+    return out;
+  }, [rows, colFilters]);
+
+  const activeFilterCount = useMemo(
+    () => Object.values(colFilters).reduce((n, s) => n + (s?.size ?? 0), 0),
+    [colFilters],
+  );
+
+  function toggleFilterValue(key: SortKey, v: string) {
+    setColFilters((prev) => {
+      const cur = prev[key];
+      const next = cur ? new Set(cur) : new Set<string>();
+      if (next.has(v)) next.delete(v);
+      else next.add(v);
+      if (next.size === 0) {
+        const { [key]: _drop, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [key]: next };
+    });
+  }
+
   const filtered = useMemo(() => {
     return rows.filter((r) => {
       if (search) {
@@ -287,8 +340,9 @@ export function ReceiptTable() {
   }, [rows, search, colFilters]);
 
   const sorted = useMemo(() => {
-    if (!sort) return filtered;
-    return [...filtered].sort((a, b) => compareReceipts(a, b, sort.key, sort.dir));
+    if (!sort.key) return filtered;
+    const key = sort.key;
+    return [...filtered].sort((a, b) => compareReceipts(a, b, key, sort.dir));
   }, [filtered, sort]);
 
   const editing = useMemo(
@@ -456,57 +510,112 @@ export function ReceiptTable() {
             <Button variant="outline" size="sm" disabled={rows.length === 0}>
               <ListFilter className="size-4 me-2" />
               מסננים
+              {activeFilterCount > 0 && (
+                <Badge className="ms-2 border border-border bg-muted px-1.5 py-0 text-[10px] font-normal tracking-normal normal-case">
+                  {activeFilterCount}
+                </Badge>
+              )}
             </Button>
           </SheetTrigger>
-          <SheetContent side="right" className="overflow-y-auto">
-            <SheetHeader>
+          <SheetContent side="right" className="flex flex-col p-0 max-w-sm">
+            <SheetHeader className="flex-row items-center justify-between border-b px-4 py-3 gap-2">
               <SheetTitle>מסננים</SheetTitle>
+              {activeFilterCount > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setColFilters({})}
+                >
+                  נקה הכל
+                </Button>
+              )}
             </SheetHeader>
-            <div className="px-4 pb-4 space-y-6">
-              {COLUMNS.filter((c) => c.filterable).map((col) => {
-                const values = uniqueValues[col.key] || [];
-                if (values.length === 0) return null;
-                return (
-                  <section key={col.key} className="space-y-2">
-                    <Label>{col.label}</Label>
-                    <div className="flex flex-wrap gap-1.5">
-                      {values.map((v) => {
-                        const set = colFilters[col.key];
-                        const active = !!set && set.has(v);
-                        return (
-                          <Button
-                            key={v}
-                            size="sm"
-                            variant={active ? "default" : "outline"}
-                            onClick={() => {
-                              setColFilters((prev) => {
-                                const cur = prev[col.key];
-                                const next = cur ? new Set(cur) : new Set(values);
-                                if (next.has(v)) next.delete(v);
-                                else next.add(v);
-                                if (next.size === values.length || next.size === 0) {
-                                  const { [col.key]: _omit, ...rest } = prev;
-                                  return rest;
+            <div className="flex-1 overflow-y-auto px-4">
+              <Accordion
+                type="multiple"
+                defaultValue={COLUMNS.filter(
+                  (c) => c.filterable && (colFilters[c.key]?.size ?? 0) > 0,
+                ).map((c) => c.key)}
+              >
+                {COLUMNS.filter((c) => c.filterable).map((col) => {
+                  const values = uniqueValues[col.key] || [];
+                  if (values.length === 0) return null;
+                  const set = colFilters[col.key];
+                  const active = set?.size ?? 0;
+                  const allSelected = active === values.length;
+                  return (
+                    <AccordionItem key={col.key} value={col.key}>
+                      <AccordionTrigger>
+                        <div className="flex items-center gap-2">
+                          <span>{col.label}</span>
+                          {active > 0 && (
+                            <Badge className="border border-border bg-muted px-1.5 py-0 text-[10px] font-normal tracking-normal normal-case">
+                              {active}
+                            </Badge>
+                          )}
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className="space-y-1">
+                          <Label className="flex items-center gap-2 py-1.5 cursor-pointer font-semibold">
+                            <Checkbox
+                              checked={allSelected}
+                              onCheckedChange={(c) => {
+                                if (c === true) {
+                                  setColFilters((prev) => ({
+                                    ...prev,
+                                    [col.key]: new Set(values),
+                                  }));
+                                } else {
+                                  setColFilters((prev) => {
+                                    const { [col.key]: _drop, ...rest } = prev;
+                                    return rest;
+                                  });
                                 }
-                                return { ...prev, [col.key]: next };
-                              });
-                            }}
-                          >
-                            {v || "(ריק)"}
-                          </Button>
-                        );
-                      })}
-                    </div>
-                  </section>
-                );
-              })}
+                              }}
+                            />
+                            <span className="flex-1">בחר הכל</span>
+                          </Label>
+                          <div className="border-t border-border my-1" />
+                          {values.map((v) => {
+                            const checked = set?.has(v) ?? false;
+                            const count = facetCounts[col.key]?.[v] ?? 0;
+                            const disabled = count === 0 && !checked;
+                            return (
+                              <Label
+                                key={v}
+                                className={cn(
+                                  "flex items-center gap-2 py-1.5 font-normal",
+                                  disabled
+                                    ? "text-muted-foreground opacity-50 cursor-not-allowed"
+                                    : "cursor-pointer",
+                                )}
+                              >
+                                <Checkbox
+                                  checked={checked}
+                                  disabled={disabled}
+                                  onCheckedChange={() => toggleFilterValue(col.key, v)}
+                                />
+                                <span className="flex-1 truncate">{v || "(ריק)"}</span>
+                                <span className="text-xs text-muted-foreground tabular-nums">
+                                  {count}
+                                </span>
+                              </Label>
+                            );
+                          })}
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  );
+                })}
+              </Accordion>
             </div>
-            <SheetFooter>
-              <Button variant="ghost" onClick={() => setColFilters({})}>
-                הצג הכל
-              </Button>
+            <SheetFooter className="border-t p-4">
               <SheetClose asChild>
-                <Button variant="outline">סגור</Button>
+                <Button>החל</Button>
+              </SheetClose>
+              <SheetClose asChild>
+                <Button variant="ghost">סגור</Button>
               </SheetClose>
             </SheetFooter>
           </SheetContent>
@@ -520,9 +629,9 @@ export function ReceiptTable() {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuRadioGroup
-              value={sort?.key ?? ""}
+              value={sort.key ?? ""}
               onValueChange={(k) =>
-                setSort({ key: k as SortKey, dir: sort?.dir ?? "asc" })
+                setSort({ key: k as SortKey, dir: sort.dir })
               }
             >
               {COLUMNS.map((col) => (
@@ -533,19 +642,22 @@ export function ReceiptTable() {
             </DropdownMenuRadioGroup>
             <DropdownMenuSeparator />
             <DropdownMenuRadioGroup
-              value={sort?.dir ?? "asc"}
-              onValueChange={(d) => {
-                if (!sort) return;
-                setSort({ key: sort.key, dir: d as "asc" | "desc" });
-              }}
+              value={sort.dir}
+              onValueChange={(d) =>
+                setSort({ key: sort.key, dir: d as "asc" | "desc" })
+              }
             >
-              <DropdownMenuRadioItem value="asc">A→Z</DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="desc">Z→A</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="asc">עולה</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="desc">יורד</DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
-            {sort && (
+            {sort.key && (
               <>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => setSort(null)}>ניקוי</DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => setSort({ key: null, dir: sort.dir })}
+                >
+                  ניקוי
+                </DropdownMenuItem>
               </>
             )}
           </DropdownMenuContent>
@@ -554,9 +666,9 @@ export function ReceiptTable() {
 
       <div className="text-xs text-muted-foreground flex items-center gap-3">
         <span>{sorted.length} מתוך {rows.length} שורות</span>
-        {(sort || Object.values(colFilters).some((s) => s && s.size > 0)) && (
+        {(sort.key || activeFilterCount > 0) && (
           <button
-            onClick={() => { setSort(null); setColFilters({}); }}
+            onClick={() => { setSort({ key: null, dir: "asc" }); setColFilters({}); }}
             className="underline"
           >
             נקה מיון וסינונים
@@ -981,8 +1093,8 @@ function ColumnHeader({
   col, sort, setSort, colFilters, setColFilters, openCol, setOpenCol, values,
 }: {
   col: ColumnDef;
-  sort: { key: SortKey; dir: "asc" | "desc" } | null;
-  setSort: (s: { key: SortKey; dir: "asc" | "desc" } | null) => void;
+  sort: { key: SortKey | null; dir: "asc" | "desc" };
+  setSort: (s: { key: SortKey | null; dir: "asc" | "desc" }) => void;
   colFilters: Partial<Record<SortKey, Set<string>>>;
   setColFilters: React.Dispatch<React.SetStateAction<Partial<Record<SortKey, Set<string>>>>>;
   openCol: SortKey | null;
@@ -990,7 +1102,7 @@ function ColumnHeader({
   values: string[];
 }) {
   const isOpen = openCol === col.key;
-  const sortIcon = sort?.key === col.key ? (sort.dir === "asc" ? "▲" : "▼") : "";
+  const sortIcon = sort.key === col.key ? (sort.dir === "asc" ? "▲" : "▼") : "";
   const filterSet = colFilters[col.key];
   const hasFilter = !!filterSet && filterSet.size > 0 && filterSet.size < values.length;
 
@@ -1027,13 +1139,13 @@ function ColumnPanel({
   col, sort, setSort, colFilters, setColFilters, values,
 }: {
   col: ColumnDef;
-  sort: { key: SortKey; dir: "asc" | "desc" } | null;
-  setSort: (s: { key: SortKey; dir: "asc" | "desc" } | null) => void;
+  sort: { key: SortKey | null; dir: "asc" | "desc" };
+  setSort: (s: { key: SortKey | null; dir: "asc" | "desc" }) => void;
   colFilters: Partial<Record<SortKey, Set<string>>>;
   setColFilters: React.Dispatch<React.SetStateAction<Partial<Record<SortKey, Set<string>>>>>;
   values: string[];
 }) {
-  const currentSort = sort?.key === col.key ? sort.dir : null;
+  const currentSort = sort.key === col.key ? sort.dir : null;
   const filterSet = colFilters[col.key];
   const noFilter = !filterSet || filterSet.size === 0;
 
@@ -1079,7 +1191,7 @@ function ColumnPanel({
           onClick={() => setSort({ key: col.key, dir: "asc" })}
           className="flex-1"
         >
-          A→Z
+          עולה
         </Button>
         <Button
           size="sm"
@@ -1087,10 +1199,10 @@ function ColumnPanel({
           onClick={() => setSort({ key: col.key, dir: "desc" })}
           className="flex-1"
         >
-          Z→A
+          יורד
         </Button>
-        {sort && (
-          <Button size="sm" variant="ghost" onClick={() => setSort(null)}>
+        {sort.key && (
+          <Button size="sm" variant="ghost" onClick={() => setSort({ key: null, dir: sort.dir })}>
             ניקוי
           </Button>
         )}
