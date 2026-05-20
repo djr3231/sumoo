@@ -5,7 +5,7 @@ import { Button } from "./ui/button";
 import { Progress } from "./ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "./ui/Alert";
 import { Loader2, Upload } from "lucide-react";
-import type { Receipt } from "@/lib/types";
+import { DEFAULT_STORE_NAME, type Receipt } from "@/lib/types";
 
 const CONCURRENCY = 2;
 const MAX_DIM = 1568;
@@ -237,7 +237,7 @@ export function UploadZone() {
       )}
 
       {results.length > 0 && (
-        <div className="rounded-lg border border-border overflow-hidden">
+        <div className="border border-border overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-muted">
               <tr>
@@ -252,7 +252,7 @@ export function UploadZone() {
             <tbody>
               {results.map((r) => (
                 <tr key={r.id} className="border-t border-border">
-                  <td className="p-2">{r.storeName ?? "לא ידוע"}</td>
+                  <td className="p-2">{r.storeName ?? DEFAULT_STORE_NAME}</td>
                   <td className="p-2 tabular-nums">
                     {r.amount === null ? "—" : r.amount.toFixed(2)}
                   </td>

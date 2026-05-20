@@ -417,6 +417,7 @@ export function ReceiptTable() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="חיפוש חופשי..."
+          aria-label="חיפוש חופשי"
           className="h-9 max-w-xs"
         />
         <Button
@@ -461,6 +462,7 @@ export function ReceiptTable() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="חיפוש חופשי..."
+          aria-label="חיפוש חופשי"
           className="h-9 flex-1 min-w-[12rem]"
         />
       </div>
@@ -1118,7 +1120,7 @@ function ColumnHeader({
       >
         <span>{col.label}</span>
         {sortIcon && <span className="text-[10px]">{sortIcon}</span>}
-        {hasFilter && <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500" />}
+        {hasFilter && <span className="inline-block w-1.5 h-1.5 bg-primary" />}
         <span className="text-[10px] opacity-50">⋮</span>
       </button>
       {isOpen && (
@@ -1181,7 +1183,7 @@ function ColumnPanel({
 
   return (
     <div
-      className="absolute top-full right-0 z-50 mt-1 w-56 border border-border bg-popover text-popover-foreground shadow-lg p-2 text-right font-normal"
+      className="absolute top-full right-0 z-50 mt-1 w-56 border border-border bg-popover text-popover-foreground shadow-sm p-2 text-right font-normal"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex gap-1 mb-2">

@@ -24,16 +24,16 @@ export default async function Header() {
             <div className="hidden md:flex items-center justify-between w-full gap-4">
               <Link href="/" className="font-bold text-lg">סומו</Link>
               <nav className="flex items-center gap-2 text-sm">
-                <Link href="/upload" className="px-3 py-1.5 rounded-sm hover:bg-accent">
+                <Link href="/upload" className="px-3 py-1.5 hover:bg-accent">
                   העלאה
                 </Link>
-                <Link href="/receipts" className="px-3 py-1.5 rounded-sm hover:bg-accent">
+                <Link href="/receipts" className="px-3 py-1.5 hover:bg-accent">
                   קבלות
                 </Link>
-                <Link href="/compare" className="px-3 py-1.5 rounded-sm hover:bg-accent">
+                <Link href="/compare" className="px-3 py-1.5 hover:bg-accent">
                   השוואה
                 </Link>
-                <Link href="/settings" className="px-3 py-1.5 rounded-sm hover:bg-accent">
+                <Link href="/settings" className="px-3 py-1.5 hover:bg-accent">
                   הגדרות
                 </Link>
               </nav>
