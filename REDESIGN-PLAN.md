@@ -621,6 +621,73 @@ After all pages are individually done:
 
 ---
 
+### 7.8 Feature: per-upload Drive folder picker
+
+**Why this exists.** Today every scanned file lands in a single hardcoded folder (`lib/google.ts:560` → `UPLOAD_FOLDER_NAME = "סומו - העלאות"`; the upload destination is set in `app/api/ocr/route.ts:~169` via `ensureUploadFolder()`). Users need to file receipts into per-vendor / per-month folders, so the destination must be chosen at upload time.
+
+**User decisions already confirmed (do not re-ask):**
+1. Picker appears **after** the user queues files, **before** "התחל סריקה".
+2. Last-picked folder is remembered in **`localStorage` only** (no Sheet/UserSettings field).
+3. The hardcoded "סומו - העלאות" folder appears as a **pinned default** in the picker; `ensureUploadFolder()` remains the auto-create fallback.
+
+**Files in scope:**
+- New: `components/DriveFolderPicker.tsx`
+- Modified: `components/UploadZone.tsx`
+- Modified: `app/api/ocr/route.ts`
+
+**Out of scope:**
+- `components/DriveImport.tsx` — leave as-is. Do NOT refactor it to consume the new picker. That's a follow-up cleanup commit, not this feature.
+- `lib/google.ts` — leave `ensureUploadFolder()` and `uploadFileToDrive()` untouched; both are already parameterized correctly.
+- Saving the default to Sheet / UserSettings.
+- "Create new folder" inline in the picker.
+- Per-file destinations (one folder per batch is the agreed UX).
+
+**Goals:**
+
+Reuse the Combobox + debounced `/api/drive/folders?q=…` pattern that already exists in `DriveImport.tsx:76-102, 236-262`. Extract it into a reusable `DriveFolderPicker`.
+
+Type:
+```ts
+type FolderSelection =
+  | { kind: "default" }                          // "סומו - העלאות"
+  | { kind: "drive"; id: string; name: string };
+
+interface DriveFolderPickerProps {
+  value: FolderSelection;
+  onChange: (v: FolderSelection) => void;
+  disabled?: boolean;
+}
+```
+
+The picker always renders the default-folder item pinned at the top of the dropdown, regardless of the user's search query.
+
+**Implementation (one commit per step):**
+
+1. `feat: extract DriveFolderPicker component` — create `components/DriveFolderPicker.tsx` by copying the Combobox + debounced search pattern from `DriveImport.tsx` (do NOT modify `DriveImport.tsx`). Pin the default-folder item.
+2. `feat(upload): folder picker on /upload` — wire into `UploadZone.tsx`. State, `localStorage` hydration (key: `sumoo:upload:folder`, JSON `FolderSelection`), persist-on-change, picker placement between dropzone and scan button, disabled while `running`.
+3. `feat(api/ocr): accept folderId override` + `refactor(upload): pass selected folderId to /api/ocr` — extend the request body schema with optional `folderId?: string`; replace `const folderId = await ensureUploadFolder(...)` with `const folderId = body.folderId ?? await ensureUploadFolder(...)`; pass it from `UploadZone.processOne()`. No new server-side validation — Drive API errors naturally if the user can't write to the folder.
+
+**STOP-and-ASK before writing these strings** (per §1.4):
+- Picker section label. Working title: **"תיקיית יעד ב-Drive"** — confirm.
+- Pinned default item display. Working title: **"סומו - העלאות (ברירת מחדל)"** — confirm that the "(ברירת מחדל)" suffix is OK; the base name "סומו - העלאות" is already in `lib/google.ts:560`, reuse don't retype.
+- Empty dropdown state. Suggestion: **"לא נמצאו תיקיות"** — confirm.
+- Any tooltip/helper text under the picker — only if the agent thinks one is needed; otherwise skip.
+
+**Acceptance criteria:**
+- Picker visible on `/upload` between dropzone and "התחל סריקה" button. (Confirm with user: always visible, or only after first file queued? Default proposal: always visible.)
+- Pinned "סומו - העלאות (ברירת מחדל)" item is the first dropdown entry; search-as-you-type populates the rest from `/api/drive/folders?q=…`.
+- Picking a real Drive folder → next scan uploads to it. Reload `/upload` → picker still shows that folder (localStorage hydration).
+- Picking the default item → next scan uploads to "סומו - העלאות" (created if missing).
+- Picker is `disabled` while a batch is `running`.
+- `npm run typecheck` and `npm run build` pass.
+- `grep -rn "alert(" components/ app/ --include='*.tsx'` still zero matches.
+- No new theme tokens, fonts, or colors introduced (per §1.3).
+- `components/DriveImport.tsx` is unchanged (verify with `git diff`).
+
+**Hand off:** "Upload folder picker shipped. Please verify: (1) drop 2 files on `/upload`, picker pre-selects the default; (2) pick a real Drive folder, scan, confirm both files landed there; (3) reload `/upload`, picker should still show that folder; (4) switch back to default, scan another file, confirm it lands in 'סומו - העלאות'; (5) `/upload` Drive-import flow is unaffected."
+
+---
+
 ## 8. What you must NEVER do during the redesign
 
 - Touch files under `lib/` (except reading).
