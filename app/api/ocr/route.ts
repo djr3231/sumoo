@@ -55,7 +55,7 @@ function asMediaType(
 }
 
 type Body =
-  | { kind: "upload"; fileName: string; mediaType: string; base64: string }
+  | { kind: "upload"; fileName: string; mediaType: string; base64: string; folderId?: string }
   | { kind: "drive"; driveFileId: string; fileName: string; mediaType: string };
 
 function classifyMethod(
@@ -163,10 +163,11 @@ export async function POST(req: Request) {
       knownStores,
     });
 
-    // Auto-upload local files to Drive so they get a permanent link
+    // Auto-upload local files to Drive so they get a permanent link.
+    // Honor a client-supplied folderId; fall back to the default "סומו - העלאות".
     if (body.kind === "upload" && token && originalBuffer) {
       try {
-        const folderId = await ensureUploadFolder(token);
+        const folderId = body.folderId ?? (await ensureUploadFolder(token));
         const uploaded = await uploadFileToDrive(
           token,
           folderId,
