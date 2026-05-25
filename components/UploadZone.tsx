@@ -1,11 +1,15 @@
 "use client";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { Button } from "./ui/button";
 import { Progress } from "./ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "./ui/Alert";
+import { Label } from "./ui/label";
 import { Loader2, Upload } from "lucide-react";
 import { DEFAULT_STORE_NAME, type Receipt } from "@/lib/types";
+import { DriveFolderPicker, type FolderSelection } from "./DriveFolderPicker";
+
+const FOLDER_STORAGE_KEY = "sumoo:upload:folder";
 
 const CONCURRENCY = 2;
 const MAX_DIM = 1568;
@@ -82,6 +86,33 @@ export function UploadZone() {
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [paused, setPaused] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [folder, setFolder] = useState<FolderSelection>({ kind: "default" });
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(FOLDER_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (
+        parsed?.kind === "drive" &&
+        typeof parsed.id === "string" &&
+        typeof parsed.name === "string"
+      ) {
+        setFolder({ kind: "drive", id: parsed.id, name: parsed.name });
+      }
+    } catch {
+      // ignore parse errors — keep default
+    }
+  }, []);
+
+  function handleFolderChange(next: FolderSelection) {
+    setFolder(next);
+    try {
+      localStorage.setItem(FOLDER_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // ignore quota errors
+    }
+  }
 
   const onDrop = useCallback((accepted: File[]) => {
     setFiles((prev) => [...prev, ...accepted]);
@@ -100,6 +131,7 @@ export function UploadZone() {
       fileName: file.name,
       mediaType,
       base64,
+      ...(folder.kind === "drive" ? { folderId: folder.id } : {}),
     });
     if (!json.ok) throw new Error(json.error || "OCR failed");
     return (json.receipts as Receipt[]) || [];
@@ -199,6 +231,15 @@ export function UploadZone() {
             ? "שחרר כאן..."
             : "גרור תמונות קבלה לכאן, או לחץ לבחירה (ניתן לבחור מאות בבת אחת)"}
         </p>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>תיקיית יעד ב-Drive</Label>
+        <DriveFolderPicker
+          value={folder}
+          onChange={handleFolderChange}
+          disabled={running}
+        />
       </div>
 
       {files.length > 0 && (
