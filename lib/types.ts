@@ -70,6 +70,81 @@ export const DEFAULT_STORE_NAME = "לא ידוע";
 export const DEFAULT_CATEGORY: Category = "שונות";
 
 // ============================================================================
+// Government insolvency report — fixed income/expense categories
+// ----------------------------------------------------------------------------
+// The official bi-monthly report ("דו"ח על הכנסות והוצאות") has a legally fixed
+// set of rows. These are the canonical target enum for the report feature:
+// every parsed transaction/income is mapped INTO one of these. Verbatim Hebrew
+// strings mirror the government template; do not edit without legal reason.
+// (See INSOLVENCY-REPORT-PLAN.md §3.) NOTE: distinct from CATEGORIES above,
+// which is the receipt-scanner's own taxonomy.
+// ============================================================================
+
+// 6 fixed income rows (template §3.1)
+export const GOV_INCOME_CATEGORY = {
+  Salary: "הכנסה ממשכורת (נטו)",
+  Business: "הכנסה מעסק",
+  Pension: "פנסיה",
+  RentAssistance: "הכנסה משכר דירה / סיוע בשכר דירה",
+  NationalInsurance: "קצבאות מהמוסד לביטוח לאומי",
+  Alimony: "הכנסות מתשלום מזונות",
+} as const;
+export type GovIncomeCategory = (typeof GOV_INCOME_CATEGORY)[keyof typeof GOV_INCOME_CATEGORY];
+export const GOV_INCOME_CATEGORIES: GovIncomeCategory[] = Object.values(GOV_INCOME_CATEGORY);
+
+// 22 named expense rows (template §3.2; the template's 23rd row is a blank
+// spare and is not a category). The Food label carries a dynamic "מס' נפשות __"
+// (household size) suffix on the actual report — stored here as the clean stem
+// and filled with the count at generate-time.
+export const GOV_EXPENSE_CATEGORY = {
+  Rent: "שכר דירה",
+  Mortgage: "משכנתא",
+  MunicipalTax: "מיסי עירייה",
+  Food: "כלכלה (מזון)",
+  HomeComms: "תקשורת ביתית (טלפון, טלוויזיה, אינטרנט)",
+  MobilePhone: "טלפון נייד",
+  Gas: "גז",
+  BuildingCommittee: "וועד בית",
+  Water: "מים",
+  Electricity: "חשמל",
+  Clothing: "הלבשה",
+  CarMaintenance: "אחזקת רכב",
+  Travel: "נסיעות",
+  TrusteePayment: "תשלום חודשי לממונה",
+  ExceptionalMedical: "הוצאות רפואיות חריגות",
+  PublicTransport: "נסיעות בתחבורה ציבורית",
+  ChildcareUnder3: "הוצאות טיפול בילדים עד גיל 3",
+  AlimonyPaid: "תשלום מזונות לזכאים",
+  Haircut: "תספורת",
+  Miscellaneous: "שונות",
+  Lawyer: "עו\"ד",
+  HouseholdGoods: "כלי בית ותחזוקה",
+} as const;
+export type GovExpenseCategory = (typeof GOV_EXPENSE_CATEGORY)[keyof typeof GOV_EXPENSE_CATEGORY];
+export const GOV_EXPENSE_CATEGORIES: GovExpenseCategory[] = Object.values(GOV_EXPENSE_CATEGORY);
+
+// ============================================================================
+// Report period + individual (one report per individual; shared household data)
+// ============================================================================
+
+// One insolvency case-holder. The pipeline is identical per individual; only
+// these identity fields differ (figures are the shared household roll-up).
+export interface Individual {
+  name: string;
+  caseNumber: string; // תיק number
+  address: string;
+  phone: string;
+}
+
+// A bi-monthly reporting period, e.g. months 5+6 of 2026 → folder "5-6_2026".
+export interface ReportPeriod {
+  year: number;
+  month1: number; // 1-12
+  month2: number; // 1-12
+  folderName: string; // "<month1>-<month2>_<year>"
+}
+
+// ============================================================================
 // Settings (stored in הגדרות sheet tab)
 // ============================================================================
 
