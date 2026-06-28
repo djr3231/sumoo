@@ -32,6 +32,9 @@ export function MobileNav({ email }: MobileNavProps) {
           <Link href="/compare" onClick={() => setOpen(false)} className="px-3 py-3 hover:bg-accent">
             השוואה
           </Link>
+          <Link href="/report" onClick={() => setOpen(false)} className="px-3 py-3 hover:bg-accent">
+            דוח דו-חודשי
+          </Link>
           <Link href="/settings" onClick={() => setOpen(false)} className="px-3 py-3 hover:bg-accent">
             הגדרות
           </Link>
