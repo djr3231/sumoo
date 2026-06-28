@@ -579,6 +579,37 @@ export async function ensureUploadFolder(accessToken: string): Promise<string> {
   return created.data.id!;
 }
 
+// Generic find-or-create for a Drive folder, optionally nested under a parent.
+// Idempotent: returns the existing folder's id when one with the same name
+// already lives under the given parent, else creates it. Generalizes
+// ensureUploadFolder for the report feature's nested folder structure.
+export async function ensureDriveFolder(
+  accessToken: string,
+  name: string,
+  parentId?: string,
+): Promise<string> {
+  const drive = driveClient(accessToken);
+  const safeName = name.replace(/'/g, "\\'");
+  const parentClause = parentId ? ` and '${parentId}' in parents` : "";
+  const found = await drive.files.list({
+    q: `name = '${safeName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false${parentClause}`,
+    fields: "files(id,name)",
+    pageSize: 1,
+  });
+  if (found.data.files && found.data.files.length > 0) {
+    return found.data.files[0].id!;
+  }
+  const created = await drive.files.create({
+    requestBody: {
+      name,
+      mimeType: "application/vnd.google-apps.folder",
+      ...(parentId ? { parents: [parentId] } : {}),
+    },
+    fields: "id",
+  });
+  return created.data.id!;
+}
+
 export async function uploadFileToDrive(
   accessToken: string,
   folderId: string,
