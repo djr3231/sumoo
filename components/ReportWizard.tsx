@@ -5,13 +5,6 @@ import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import type { ReportFolders } from "@/lib/report/period";
 
 // Six wizard steps — labels verbatim from the spec (§4.2).
@@ -40,6 +33,16 @@ const MONTH_NAMES = [
   "דצמבר",
 ] as const;
 
+// The six bi-monthly periods of a year.
+const MONTH_PAIRS = [
+  { m1: 1, m2: 2 },
+  { m1: 3, m2: 4 },
+  { m1: 5, m2: 6 },
+  { m1: 7, m2: 8 },
+  { m1: 9, m2: 10 },
+  { m1: 11, m2: 12 },
+] as const;
+
 const CURRENT_YEAR = new Date().getFullYear();
 const YEAR_OPTIONS = [CURRENT_YEAR, CURRENT_YEAR - 1, CURRENT_YEAR - 2];
 
@@ -52,27 +55,23 @@ export function ReportWizard() {
   const [step, setStep] = useState(0);
 
   // Step 1 (period) form state.
-  const [year, setYear] = useState(String(CURRENT_YEAR));
-  const [month1, setMonth1] = useState("");
-  const [month2, setMonth2] = useState("");
+  const [year, setYear] = useState(CURRENT_YEAR);
+  const [pair, setPair] = useState<{ m1: number; m2: number } | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<CreatedPeriod | null>(null);
 
-  const canCreate = Boolean(year && month1 && month2) && !creating;
+  const canCreate = pair !== null && !creating;
 
   async function createPeriod() {
+    if (!pair) return;
     setCreating(true);
     setError(null);
     try {
       const res = await fetch("/api/report/period", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          year: Number(year),
-          month1: Number(month1),
-          month2: Number(month2),
-        }),
+        body: JSON.stringify({ year, month1: pair.m1, month2: pair.m2 }),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) {
@@ -120,62 +119,44 @@ export function ReportWizard() {
         <CardHeader>
           <CardTitle className="text-base">{STEPS[step]}</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-6">
           {step === 0 ? (
-            <div className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-3">
-                <div className="space-y-2">
-                  <Label>שנה</Label>
-                  <Select value={year} onValueChange={setYear}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {YEAR_OPTIONS.map((y) => (
-                        <SelectItem key={y} value={String(y)}>
-                          {y}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>חודש ראשון</Label>
-                  <Select value={month1} onValueChange={setMonth1}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="בחר חודש" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {MONTH_NAMES.map((name, i) => (
-                        <SelectItem key={name} value={String(i + 1)}>
-                          {name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>חודש שני</Label>
-                  <Select value={month2} onValueChange={setMonth2}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="בחר חודש" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {MONTH_NAMES.map((name, i) => (
-                        <SelectItem key={name} value={String(i + 1)}>
-                          {name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <Label>שנה</Label>
+                <div className="flex flex-wrap gap-2">
+                  {YEAR_OPTIONS.map((y) => (
+                    <Button
+                      key={y}
+                      variant={y === year ? "default" : "outline"}
+                      onClick={() => setYear(y)}
+                    >
+                      {y}
+                    </Button>
+                  ))}
                 </div>
               </div>
 
-              {error ? (
-                <p className="text-sm text-destructive">{error}</p>
-              ) : null}
+              <div className="space-y-2">
+                <Label>תקופה (חודשיים)</Label>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {MONTH_PAIRS.map((p) => {
+                    const selected = pair?.m1 === p.m1 && pair?.m2 === p.m2;
+                    return (
+                      <Button
+                        key={`${p.m1}-${p.m2}`}
+                        variant={selected ? "default" : "outline"}
+                        className="w-full"
+                        onClick={() => setPair({ m1: p.m1, m2: p.m2 })}
+                      >
+                        {MONTH_NAMES[p.m1 - 1]}–{MONTH_NAMES[p.m2 - 1]}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
               {created ? (
                 <p className="text-sm text-muted-foreground">
