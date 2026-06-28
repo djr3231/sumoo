@@ -17,21 +17,8 @@ const STEPS = [
   "הפקת דוח",
 ] as const;
 
-// Gregorian month names (Hebrew), index 0 = January.
-const MONTH_NAMES = [
-  "ינואר",
-  "פברואר",
-  "מרץ",
-  "אפריל",
-  "מאי",
-  "יוני",
-  "יולי",
-  "אוגוסט",
-  "ספטמבר",
-  "אוקטובר",
-  "נובמבר",
-  "דצמבר",
-] as const;
+// Two-digit month label, e.g. 3 -> "03".
+const pad2 = (n: number) => String(n).padStart(2, "0");
 
 // The six bi-monthly periods of a year.
 const MONTH_PAIRS = [
@@ -149,7 +136,7 @@ export function ReportWizard() {
                         className="w-full"
                         onClick={() => setPair({ m1: p.m1, m2: p.m2 })}
                       >
-                        {MONTH_NAMES[p.m1 - 1]}–{MONTH_NAMES[p.m2 - 1]}
+                        {pad2(p.m1)}-{pad2(p.m2)}
                       </Button>
                     );
                   })}
