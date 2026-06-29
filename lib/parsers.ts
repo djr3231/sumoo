@@ -12,6 +12,10 @@ const HEBREW_DESC_KEYS = ["תיאור", "תיאור פעולה", "תיאור ה�
 // and non-transaction sheets in bank exports).
 const HEADER_TOKENS = ["תאריך", "תיאור", "חובה", "זכות", "סכום", "אסמכתא"];
 
+// Description patterns of summary/total rows that must never be treated as a
+// transaction (e.g. card statements' "סה"כ חיוב לתאריך" subtotal lines).
+const SUMMARY_RE = /סה["'׳]?כ|סיכום/;
+
 // Normalize a header/key for matching: drop whitespace, parenthetical units
 // like "(₪)", and currency/quote symbols, so "חובה(₪)" matches "חובה".
 function normalizeKey(s: string): string {
@@ -114,6 +118,7 @@ function rowsToTxns(rows: Record<string, unknown>[], sourceLabel: string): BankT
       amount = parseAmount(pick(row, HEBREW_AMOUNT_KEYS));
     }
     const description = cleanText(pick(row, HEBREW_DESC_KEYS));
+    if (description && SUMMARY_RE.test(description)) continue; // drop summary rows
     if (date === null && amount === null && !description) continue;
     out.push({
       source: sourceLabel,
