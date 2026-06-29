@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -38,6 +38,62 @@ interface CreatedPeriod {
   folders: ReportFolders;
 }
 
+// A labeled file slot (hidden native input opened by a button).
+function FileSlot({
+  label,
+  hint,
+  accept,
+  multiple,
+  files,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  accept: string;
+  multiple?: boolean;
+  files: File[];
+  onChange: (files: File[]) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  return (
+    <div className="space-y-2 border border-border p-4">
+      <div>
+        <Label>{label}</Label>
+        <p className="text-xs text-muted-foreground">{hint}</p>
+      </div>
+      <input
+        ref={ref}
+        type="file"
+        accept={accept}
+        multiple={multiple}
+        className="hidden"
+        onChange={(e) => onChange(Array.from(e.target.files ?? []))}
+      />
+      <div className="flex items-center gap-3">
+        <Button variant="outline" type="button" onClick={() => ref.current?.click()}>
+          בחר קובץ
+        </Button>
+        {files.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className="text-xs text-muted-foreground underline"
+          >
+            נקה
+          </button>
+        ) : null}
+      </div>
+      {files.length > 0 ? (
+        <ul className="text-xs text-muted-foreground">
+          {files.map((f, i) => (
+            <li key={i}>{f.name}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 export function ReportWizard() {
   const [step, setStep] = useState(0);
 
@@ -47,6 +103,11 @@ export function ReportWizard() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<CreatedPeriod | null>(null);
+
+  // Step 2 (upload) — source docs held in state until step 3 processes them.
+  const [checkingFiles, setCheckingFiles] = useState<File[]>([]);
+  const [directFiles, setDirectFiles] = useState<File[]>([]);
+  const [salaryFiles, setSalaryFiles] = useState<File[]>([]);
 
   const canCreate = pair !== null && !creating;
 
@@ -154,6 +215,36 @@ export function ReportWizard() {
               <Button onClick={createPeriod} disabled={!canCreate}>
                 צור תיקייה והמשך
               </Button>
+            </div>
+          ) : step === 1 ? (
+            <div className="space-y-4">
+              {created ? (
+                <p className="text-sm text-muted-foreground">
+                  תיקיית התקופה: {created.folderName}
+                </p>
+              ) : null}
+              <FileSlot
+                label='עובר ושב (עו"ש)'
+                hint="XLS או PDF"
+                accept=".xls,.xlsx,.pdf,application/pdf"
+                files={checkingFiles}
+                onChange={setCheckingFiles}
+              />
+              <FileSlot
+                label="פירוט חיובים — דיירקט"
+                hint="PDF"
+                accept=".pdf,application/pdf"
+                files={directFiles}
+                onChange={setDirectFiles}
+              />
+              <FileSlot
+                label="תלושי שכר"
+                hint="PDF — ניתן לבחור כמה"
+                accept=".pdf,application/pdf"
+                multiple
+                files={salaryFiles}
+                onChange={setSalaryFiles}
+              />
             </div>
           ) : (
             <div className="space-y-2 text-sm text-muted-foreground">
