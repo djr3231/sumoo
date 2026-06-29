@@ -112,6 +112,16 @@ const isCashWithdrawal = (d: string) => /משיכה.*בנקט/.test(d);
 const isSalaryCredit = (d: string) => /משכורת/.test(d);
 const isChildAllowance = (d: string) => /קצבת\s*ילדים/.test(d);
 const isTransfer = (d: string) => /^\s*העברה/.test(d);
+// Foreign-currency settlement lines (the ₪ value of $/€ card charges).
+const isForexSettlement = (d: string) => /קיזוז\s*מטח/.test(d);
+
+// Turn the cryptic forex line into a readable expense label.
+// e.g. "קיזוז מטח או שח/קרן/USD/20/ILS/61.83/3.09" -> "חיוב מטבע חוץ USD 20".
+function forexLabel(d: string): string {
+  if (/עמלות|עמלה/.test(d)) return "עמלת מטבע חוץ";
+  const m = /\/([A-Z]{3})\/([\d.]+)\/ILS/.exec(d);
+  return m ? `חיוב מטבע חוץ ${m[1]} ${m[2]}` : "חיוב מטבע חוץ";
+}
 
 function transferName(d: string): string {
   const m = /העברה[\s/:.\-]+(.+)/.exec(d);
@@ -182,7 +192,8 @@ export function reconcile(input: {
         cashByMonth.set(month, (cashByMonth.get(month) ?? 0) + abs);
         continue;
       }
-      expenseItems.push({ month, amount: abs, description: desc, source: "checking" });
+      const label = isForexSettlement(desc) ? forexLabel(desc) : desc;
+      expenseItems.push({ month, amount: abs, description: label, source: "checking" });
     } else if (amt > 0) {
       if (isChildAllowance(desc)) {
         income.push({

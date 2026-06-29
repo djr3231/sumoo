@@ -525,12 +525,12 @@ const SALARY_SCHEMA = {
   required: ["month", "year", "net", "gross", "deductions", "employer"],
 };
 
-const SALARY_SYSTEM = `אתה מחלץ נתונים מתלוש שכר ישראלי (PDF).
-- month/year: החודש והשנה שעבורם משולם השכר (חודש השכר / "עבור חודש"), לא תאריך התשלום בפועל.
-- net: השכר נטו לתשלום — הסכום שמגיע לבנק. אם מופיע במפורש "נטו לתשלום" או "שכר חודשי נטו" — השתמש בו. אם לא מופיע במפורש — חשב סך התשלומים (ברוטו) פחות סך הניכויים.
-- gross: סך התשלומים/ברוטו. deductions: סך הניכויים.
-- employer: שם המעסיק או מקור ההכנסה (למשל "עיריית חריש", "מופת/צה\"ל").
-- אסור להמציא נתונים. העדף null על ניחוש. כל הסכומים בש"ח כמספרים (ללא ₪ או פסיקים).`;
+const SALARY_SYSTEM = `You extract data from an Israeli salary slip (PDF).
+- month/year: the month and year the salary is FOR (the pay month, "עבור חודש"), NOT the actual payment date.
+- net: the net pay that reaches the bank. If an explicit "נטו לתשלום" or "שכר חודשי נטו" line exists, use it. Otherwise compute total payments (gross) minus total deductions.
+- gross: total payments / gross. deductions: total deductions.
+- employer: the employer or income source (e.g. "עיריית חריש", "מופת/צה\"ל").
+- Never invent data. Prefer null over guessing. All amounts in ₪ as plain numbers (no ₪ sign or commas).`;
 
 export async function parseSalarySlip(args: {
   pdfBase64: string;
@@ -583,28 +583,27 @@ const CLASSIFY_SCHEMA = {
   required: ["results"],
 };
 
-const CLASSIFY_SYSTEM = `אתה מסווג הוצאות משק בית ישראלי לקטגוריות הקבועות של הדו"ח הממשלתי בהליך חדלות פירעון.
-לכל פריט בחר קטגוריה אחת בדיוק מתוך הרשימה הסגורה הבאה (החזר את המחרוזת בעברית בדיוק כפי שמופיעה):
+const CLASSIFY_SYSTEM = `You classify Israeli household expenses into the FIXED government insolvency-report categories. For each item pick exactly one category from this closed list, returning the Hebrew string verbatim:
 ${GOV_EXPENSE_CATEGORIES.map((c) => `- ${c}`).join("\n")}
 
-הנחיות מיפוי:
-- סופרמרקט/מכולת/חנות מזון/מאפייה (שופרסל, רמי לוי, ויקטורי, יינות ביתן) → "כלכלה (מזון)"
-- דלק/מוסך/חניון/כביש אגרה/ביטוח או טסט רכב → "אחזקת רכב"
-- תחבורה ציבורית (רב-קו, אגד, רכבת, מטרונית) → "נסיעות בתחבורה ציבורית"
-- חברת חשמל → "חשמל"; תאגיד מים → "מים"; חברת גז → "גז"
-- עירייה/ארנונה → "מיסי עירייה"
-- ספק סלולר (פרטנר, סלקום, פלאפון, הוט מובייל) → "טלפון נייד"
-- אינטרנט/טלוויזיה/טלפון קווי (בזק, הוט, יס) → "תקשורת ביתית (טלפון, טלוויזיה, אינטרנט)"
-- בית מרקחת/קופת חולים/מרפאה/רופא → "הוצאות רפואיות חריגות"
-- ביגוד/הנעלה → "הלבשה"
-- ספר/מספרה → "תספורת"
-- עורך דין → "עו\"ד"
-- ועד בית → "וועד בית"
-- כונס/ממונה/תשלום לממונה → "תשלום חודשי לממונה"
-- כלי בית/חומרי ניקיון/תחזוקת בית → "כלי בית ותחזוקה"
-- אם שום קטגוריה לא מתאימה בבירור → "שונות".
+Mapping hints (merchant → category):
+- supermarket / grocery / food store / bakery (שופרסל, רמי לוי, ויקטורי, יינות ביתן) → "כלכלה (מזון)"
+- fuel / garage / parking / toll road / car insurance or test → "אחזקת רכב"
+- public transport (רב-קו, אגד, רכבת, מטרונית) → "נסיעות בתחבורה ציבורית"
+- electricity company → "חשמל"; water corporation → "מים"; gas company → "גז"
+- municipality / ארנונה → "מיסי עירייה"
+- mobile carrier (פרטנר, סלקום, פלאפון, הוט מובייל) → "טלפון נייד"
+- internet / TV / landline (בזק, הוט, יס) → "תקשורת ביתית (טלפון, טלוויזיה, אינטרנט)"
+- pharmacy / HMO / clinic / doctor → "הוצאות רפואיות חריגות"
+- clothing / footwear → "הלבשה"
+- barber / hair salon → "תספורת"
+- lawyer → "עו\"ד"
+- house committee (ועד בית) → "וועד בית"
+- receiver / trustee / payment to trustee (כונס, ממונה) → "תשלום חודשי לממונה"
+- household goods / cleaning supplies / home maintenance → "כלי בית ותחזוקה"
+- if nothing clearly fits → "שונות".
 
-החזר עבור כל פריט את ה-i שלו ואת הקטגוריה. אל תמציא קטגוריות שאינן ברשימה.`;
+For each item return its i and its category. Do not invent categories outside the list.`;
 
 // Classify a batch of expense lines. Returns one category per item, aligned by
 // index; off-list / missing answers fall back to "שונות".
@@ -673,14 +672,15 @@ const DIRECT_SCHEMA = {
   required: ["charges"],
 };
 
-const DIRECT_SYSTEM = `אתה מחלץ חיובים בודדים מתדפיס כרטיס אשראי ישראלי לחיוב מיידי (למשל ישראכרט MC דירקט).
-- החזר אך ורק חיובים בודדים של בתי עסק. לכל חיוב: תאריך העסקה, שם בית העסק, וסכום החיוב בש"ח.
-- אסור להחזיר שורות סיכום מכל סוג: "סה\"כ חיוב לתאריך", "סה\"כ", סיכומי ביניים, יתרות, כותרות מקטעים (כגון "עסקות שחויבו / זוכו - בארץ", "רכישות בחו\"ל", "עסקות לתאריך החיוב"), שורות תאריך-חיוב, או כל שורת ריכוז.
-- זיכוי/החזר (למשל המסומן "זיכוי") → isCredit=true. חיוב רגיל → isCredit=false.
-- date בפורמט YYYY-MM-DD לפי תאריך העסקה.
-- merchant = שם בית העסק כפי שמופיע.
-- amount = סכום החיוב בש"ח כמספר חיובי (ללא ₪/פסיקים). הסימן נקבע ע"י isCredit.
-- אסור להמציא נתונים. דלג על כל שורה שאינה חיוב בודד של בית עסק.`;
+const DIRECT_SYSTEM = `You extract individual charges from an Israeli immediate-debit credit-card statement (e.g. Isracard "MC דירקט").
+- Return ONLY individual merchant charges. For each: the transaction date, the merchant name, and the shekel (₪) billing amount.
+- NEVER return summary or total rows of any kind: "סה\"כ חיוב לתאריך", "סה\"כ", subtotals, balances, section headers (e.g. "עסקות שחויבו / זוכו - בארץ", "רכישות בחו\"ל", "עסקות לתאריך החיוב"), billing-date dividers, or any roll-up line.
+- Refunds/credits (marked "זיכוי") → isCredit=true. A normal charge → isCredit=false.
+- date: YYYY-MM-DD, taken from the transaction date.
+- merchant: the business name exactly as printed (keep Hebrew or Latin script as-is).
+- amount: the ₪ billing amount as a positive number (no ₪ sign or commas). The sign is conveyed by isCredit.
+- IMPORTANT: skip charges billed in a foreign currency ($, €, etc.) that have no ₪ billing amount in the statement (e.g. ANTHROPIC, CLAUDE, HETZNER in foreign currency). Those settle in the bank account as "קיזוז מטח" lines and are handled from there. Return only charges that have a ₪ billing amount.
+- Never invent data (including currency conversions). Skip any row that is not a single ₪ merchant charge.`;
 
 export async function parseDirectStatement(args: {
   pdfBase64: string;
