@@ -495,3 +495,65 @@ export async function parseStatementPDF(args: {
     return { source_label: "לא ידוע", transactions: [] };
   }
 }
+
+// ============================================================================
+// parseSalarySlip
+// ============================================================================
+
+export interface SalarySlip {
+  month: number | null; // month the slip is FOR (work/eligibility month), 1-12
+  year: number | null;
+  net: number | null; // net pay (נטו לתשלום), the amount that reaches the bank
+  gross: number | null; // total payments (ברוטו)
+  deductions: number | null; // total deductions (ניכויים)
+  employer: string | null; // e.g. "עיריית חריש" / "מופת/צה\"ל"
+}
+
+const SALARY_SCHEMA = {
+  type: SchemaType.OBJECT,
+  properties: {
+    month: { type: SchemaType.NUMBER, nullable: true },
+    year: { type: SchemaType.NUMBER, nullable: true },
+    net: { type: SchemaType.NUMBER, nullable: true },
+    gross: { type: SchemaType.NUMBER, nullable: true },
+    deductions: { type: SchemaType.NUMBER, nullable: true },
+    employer: { type: SchemaType.STRING, nullable: true },
+  },
+  required: ["month", "year", "net", "gross", "deductions", "employer"],
+};
+
+const SALARY_SYSTEM = `אתה מחלץ נתונים מתלוש שכר ישראלי (PDF).
+- month/year: החודש והשנה שעבורם משולם השכר (חודש השכר / "עבור חודש"), לא תאריך התשלום בפועל.
+- net: השכר נטו לתשלום — הסכום שמגיע לבנק. אם מופיע במפורש "נטו לתשלום" או "שכר חודשי נטו" — השתמש בו. אם לא מופיע במפורש — חשב סך התשלומים (ברוטו) פחות סך הניכויים.
+- gross: סך התשלומים/ברוטו. deductions: סך הניכויים.
+- employer: שם המעסיק או מקור ההכנסה (למשל "עיריית חריש", "מופת/צה\"ל").
+- אסור להמציא נתונים. העדף null על ניחוש. כל הסכומים בש"ח כמספרים (ללא ₪ או פסיקים).`;
+
+export async function parseSalarySlip(args: {
+  pdfBase64: string;
+  hint?: string;
+}): Promise<SalarySlip> {
+  const m = model({
+    modelName: OCR_MODEL,
+    systemInstruction: SALARY_SYSTEM,
+    responseSchema: SALARY_SCHEMA,
+  });
+
+  const result = await withRetry(() =>
+    m.generateContent([
+      { inlineData: { data: args.pdfBase64, mimeType: "application/pdf" } },
+      {
+        text: args.hint
+          ? `רמז: ${args.hint}. חלץ את נתוני התלוש.`
+          : "חלץ את נתוני התלוש.",
+      },
+    ]),
+  );
+
+  const raw = result.response.text();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { month: null, year: null, net: null, gross: null, deductions: null, employer: null };
+  }
+}
