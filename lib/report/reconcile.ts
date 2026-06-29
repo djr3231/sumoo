@@ -79,14 +79,31 @@ function monthOf(date: string | null): number | null {
   return m ? Number(m[1]) : null;
 }
 
+function dayOf(date: string | null): number | null {
+  if (!date) return null;
+  const m = /^\d{4}-\d{2}-(\d{2})/.exec(date);
+  return m ? Number(m[1]) : null;
+}
+
+// Salaries deposited late in a month (>= this day) are an early payment for the
+// NEXT month and count as next month's income; earlier deposits count as the
+// deposit month's income. See INSOLVENCY domain note on pay-timing.
+const SALARY_LATE_DAY = 20;
+function salaryIncomeMonth(date: string | null): number | null {
+  const m = monthOf(date);
+  const d = dayOf(date);
+  if (m === null || d === null) return null;
+  return d >= SALARY_LATE_DAY ? (m % 12) + 1 : m;
+}
+
 function approxEqual(a: number, b: number, tol = 1): boolean {
   return Math.abs(a - b) <= Math.max(tol, 0.005 * Math.max(Math.abs(a), Math.abs(b)));
 }
 
-// The work/eligibility month for a salary deposited in `depositMonth`
-// (pay lands the month after the worked month; wraps Jan -> Dec).
-function workMonthFor(depositMonth: number): number {
-  return ((depositMonth - 2 + 12) % 12) + 1;
+// The work/eligibility month for a salary counted as `incomeMonth` income
+// (the worked month is the month before; wraps Jan -> Dec).
+function workMonthFor(incomeMonth: number): number {
+  return ((incomeMonth - 2 + 12) % 12) + 1;
 }
 
 // עו"ש line-family matchers (spec §2.2). Matched against `תיאור פעולה`.
@@ -126,10 +143,28 @@ export function reconcile(input: {
 
   // --- Checking account (עו"ש) ---
   for (const t of input.checkingTxns) {
-    const month = monthOf(t.date);
-    if (!inPeriod(month)) continue;
     const desc = (t.description ?? "").trim();
     const amt = t.amount ?? 0;
+
+    // Salaries are attributed by income month (deposit-day rule), which can
+    // differ from the deposit month — handle before the period filter so a
+    // salary deposited late in the prior month still lands in this period.
+    if (amt > 0 && isSalaryCredit(desc)) {
+      const incMonth = salaryIncomeMonth(t.date);
+      if (incMonth !== null && months.includes(incMonth)) {
+        income.push({
+          month: incMonth,
+          amount: amt,
+          category: GOV_INCOME_CATEGORY.Salary,
+          source: desc,
+        });
+        bankSalaries.push({ month: incMonth, amount: amt, desc });
+      }
+      continue;
+    }
+
+    const month = monthOf(t.date);
+    if (!inPeriod(month)) continue;
 
     if (amt < 0) {
       const abs = Math.abs(amt);
@@ -143,15 +178,7 @@ export function reconcile(input: {
       }
       expenseItems.push({ month, amount: abs, description: desc, source: "checking" });
     } else if (amt > 0) {
-      if (isSalaryCredit(desc)) {
-        income.push({
-          month,
-          amount: amt,
-          category: GOV_INCOME_CATEGORY.Salary,
-          source: desc,
-        });
-        bankSalaries.push({ month, amount: amt, desc });
-      } else if (isChildAllowance(desc)) {
+      if (isChildAllowance(desc)) {
         income.push({
           month,
           amount: amt,
