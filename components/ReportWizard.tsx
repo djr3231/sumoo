@@ -142,6 +142,7 @@ export function ReportWizard() {
   const [result, setResult] = useState<ProcessResult | null>(null);
   const [expenses, setExpenses] = useState<CategorizedExpense[]>([]);
   const [transferInclude, setTransferInclude] = useState<boolean[]>([]);
+  const [cardGapAck, setCardGapAck] = useState(false);
 
   const canCreate = pair !== null && !creating;
 
@@ -197,6 +198,7 @@ export function ReportWizard() {
       setResult(r);
       setExpenses(r.expenses);
       setTransferInclude(r.transfers.map(() => false));
+      setCardGapAck(false);
     } catch (e) {
       setProcessError((e as Error).message);
     } finally {
@@ -211,6 +213,14 @@ export function ReportWizard() {
   }
 
   const periodMonths = pair ? [pair.m1, pair.m2] : [];
+
+  // Card reconciliation: card detail total vs bank ישראכרט-דיירקט settlements.
+  const CARD_GAP_TOLERANCE = 1;
+  const cardGap = result
+    ? result.checksum.directDetailSum - result.checksum.directAggregateSum
+    : 0;
+  const cardGapBlocking =
+    result != null && Math.abs(cardGap) > CARD_GAP_TOLERANCE && !cardGapAck;
 
   return (
     <div className="space-y-6">
@@ -298,7 +308,7 @@ export function ReportWizard() {
             <div className="space-y-4">
               {created ? (
                 <p className="text-sm text-muted-foreground">
-                  תיקיית התקופה: {created.folderName}
+                  תיקיית הדו&quot;ח: {created.folderName}
                 </p>
               ) : null}
               <FileSlot
@@ -334,7 +344,7 @@ export function ReportWizard() {
                 </Button>
                 {created ? (
                   <span className="text-sm text-muted-foreground">
-                    תיקיית התקופה: {created.folderName}
+                    תיקיית הדו&quot;ח: {created.folderName}
                   </span>
                 ) : null}
               </div>
@@ -380,6 +390,41 @@ export function ReportWizard() {
                         })}
                       </TableBody>
                     </Table>
+                  </Section>
+
+                  <Section title="התאמת כרטיס אשראי">
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span>סה&quot;כ חיובים בפירוט הכרטיס</span>
+                        <span className="tabular-nums">
+                          {formatILS(result.checksum.directDetailSum)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>סה&quot;כ ישראכרט-דיירקט בבנק</span>
+                        <span className="tabular-nums">
+                          {formatILS(result.checksum.directAggregateSum)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between font-semibold">
+                        <span>הפרש</span>
+                        <span className="tabular-nums">{formatILS(cardGap)}</span>
+                      </div>
+                      {Math.abs(cardGap) > CARD_GAP_TOLERANCE ? (
+                        <div className="space-y-2 border border-destructive p-3 text-destructive">
+                          <p>קיים פער בין חיובי הכרטיס לבנק. ודא שכל החיובים נקלטו לפני המשך.</p>
+                          <label className="flex items-center gap-2">
+                            <Checkbox
+                              checked={cardGapAck}
+                              onCheckedChange={(v) => setCardGapAck(v === true)}
+                            />
+                            <span>אני מודע/ת לפער ומאשר/ת להמשיך</span>
+                          </label>
+                        </div>
+                      ) : (
+                        <p className="text-muted-foreground">החיובים תואמים את הבנק ✓</p>
+                      )}
+                    </div>
                   </Section>
 
                   <Section title="הכנסות">
@@ -555,7 +600,7 @@ export function ReportWizard() {
             </div>
           ) : (
             <div className="space-y-2 text-sm text-muted-foreground">
-              {created ? <p>תיקיית התקופה: {created.folderName}</p> : null}
+              {created ? <p>תיקיית הדו&quot;ח: {created.folderName}</p> : null}
               <p>שלב זה ייבנה בהמשך.</p>
             </div>
           )}
@@ -574,6 +619,7 @@ export function ReportWizard() {
         {step > 0 && step < STEPS.length - 1 ? (
           <Button
             variant="outline"
+            disabled={step === 2 && cardGapBlocking}
             onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}
           >
             המשך

@@ -179,15 +179,18 @@ export function reconcile(input: {
       continue;
     }
 
+    // Direct-card settlement aggregates: never an expense; sum ALL of them
+    // (regardless of period) as the card checksum vs the card detail.
+    if (amt < 0 && isDirectAggregate(desc)) {
+      directAggregateSum += Math.abs(amt);
+      continue;
+    }
+
     const month = monthOf(t.date);
     if (!inPeriod(month)) continue;
 
     if (amt < 0) {
       const abs = Math.abs(amt);
-      if (isDirectAggregate(desc)) {
-        directAggregateSum += abs; // dropped, kept only as checksum
-        continue;
-      }
       if (isCashWithdrawal(desc)) {
         cashByMonth.set(month, (cashByMonth.get(month) ?? 0) + abs);
         continue;
