@@ -641,3 +641,73 @@ export async function classifyExpenses(
   }
   return out;
 }
+
+// ============================================================================
+// parseDirectStatement — individual charges from a Direct/credit card statement
+// ============================================================================
+
+export interface DirectCharge {
+  date: string | null; // transaction date (YYYY-MM-DD)
+  merchant: string | null; // שם בית העסק
+  amount: number | null; // positive ₪ (סכום החיוב בש"ח); sign set by isCredit
+  isCredit: boolean; // זיכוי/refund
+}
+
+const DIRECT_SCHEMA = {
+  type: SchemaType.OBJECT,
+  properties: {
+    charges: {
+      type: SchemaType.ARRAY,
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          date: { type: SchemaType.STRING, nullable: true },
+          merchant: { type: SchemaType.STRING, nullable: true },
+          amount: { type: SchemaType.NUMBER, nullable: true },
+          isCredit: { type: SchemaType.BOOLEAN },
+        },
+        required: ["date", "merchant", "amount", "isCredit"],
+      },
+    },
+  },
+  required: ["charges"],
+};
+
+const DIRECT_SYSTEM = `אתה מחלץ חיובים בודדים מתדפיס כרטיס אשראי ישראלי לחיוב מיידי (למשל ישראכרט MC דירקט).
+- החזר אך ורק חיובים בודדים של בתי עסק. לכל חיוב: תאריך העסקה, שם בית העסק, וסכום החיוב בש"ח.
+- אסור להחזיר שורות סיכום מכל סוג: "סה\"כ חיוב לתאריך", "סה\"כ", סיכומי ביניים, יתרות, כותרות מקטעים (כגון "עסקות שחויבו / זוכו - בארץ", "רכישות בחו\"ל", "עסקות לתאריך החיוב"), שורות תאריך-חיוב, או כל שורת ריכוז.
+- זיכוי/החזר (למשל המסומן "זיכוי") → isCredit=true. חיוב רגיל → isCredit=false.
+- date בפורמט YYYY-MM-DD לפי תאריך העסקה.
+- merchant = שם בית העסק כפי שמופיע.
+- amount = סכום החיוב בש"ח כמספר חיובי (ללא ₪/פסיקים). הסימן נקבע ע"י isCredit.
+- אסור להמציא נתונים. דלג על כל שורה שאינה חיוב בודד של בית עסק.`;
+
+export async function parseDirectStatement(args: {
+  pdfBase64: string;
+  hint?: string;
+}): Promise<{ charges: DirectCharge[] }> {
+  const m = model({
+    modelName: OCR_MODEL,
+    systemInstruction: DIRECT_SYSTEM,
+    responseSchema: DIRECT_SCHEMA,
+  });
+
+  const result = await withRetry(() =>
+    m.generateContent([
+      { inlineData: { data: args.pdfBase64, mimeType: "application/pdf" } },
+      {
+        text: args.hint
+          ? `רמז: ${args.hint}. חלץ את כל החיובים הבודדים בלבד (ללא שורות סיכום).`
+          : "חלץ את כל החיובים הבודדים בלבד (ללא שורות סיכום).",
+      },
+    ]),
+  );
+
+  const raw = result.response.text();
+  try {
+    const parsed = JSON.parse(raw) as { charges: DirectCharge[] };
+    return { charges: parsed.charges ?? [] };
+  } catch {
+    return { charges: [] };
+  }
+}
