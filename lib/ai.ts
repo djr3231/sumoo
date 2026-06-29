@@ -7,10 +7,13 @@ import {
   CATEGORIES,
   EXTRACTED_DOC_TYPE,
   EXTRACTED_METHOD,
+  GOV_EXPENSE_CATEGORY,
+  GOV_EXPENSE_CATEGORIES,
   type Category,
   type Confidence,
   type ExtractedDocType,
   type ExtractedMethod,
+  type GovExpenseCategory,
 } from "./types";
 
 const OCR_MODEL = "gemini-2.5-pro";
@@ -556,4 +559,85 @@ export async function parseSalarySlip(args: {
   } catch {
     return { month: null, year: null, net: null, gross: null, deductions: null, employer: null };
   }
+}
+
+// ============================================================================
+// classifyExpenses — map expense lines to the fixed government categories
+// ============================================================================
+
+const CLASSIFY_SCHEMA = {
+  type: SchemaType.OBJECT,
+  properties: {
+    results: {
+      type: SchemaType.ARRAY,
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          i: { type: SchemaType.NUMBER },
+          category: { type: SchemaType.STRING },
+        },
+        required: ["i", "category"],
+      },
+    },
+  },
+  required: ["results"],
+};
+
+const CLASSIFY_SYSTEM = `אתה מסווג הוצאות משק בית ישראלי לקטגוריות הקבועות של הדו"ח הממשלתי בהליך חדלות פירעון.
+לכל פריט בחר קטגוריה אחת בדיוק מתוך הרשימה הסגורה הבאה (החזר את המחרוזת בעברית בדיוק כפי שמופיעה):
+${GOV_EXPENSE_CATEGORIES.map((c) => `- ${c}`).join("\n")}
+
+הנחיות מיפוי:
+- סופרמרקט/מכולת/חנות מזון/מאפייה (שופרסל, רמי לוי, ויקטורי, יינות ביתן) → "כלכלה (מזון)"
+- דלק/מוסך/חניון/כביש אגרה/ביטוח או טסט רכב → "אחזקת רכב"
+- תחבורה ציבורית (רב-קו, אגד, רכבת, מטרונית) → "נסיעות בתחבורה ציבורית"
+- חברת חשמל → "חשמל"; תאגיד מים → "מים"; חברת גז → "גז"
+- עירייה/ארנונה → "מיסי עירייה"
+- ספק סלולר (פרטנר, סלקום, פלאפון, הוט מובייל) → "טלפון נייד"
+- אינטרנט/טלוויזיה/טלפון קווי (בזק, הוט, יס) → "תקשורת ביתית (טלפון, טלוויזיה, אינטרנט)"
+- בית מרקחת/קופת חולים/מרפאה/רופא → "הוצאות רפואיות חריגות"
+- ביגוד/הנעלה → "הלבשה"
+- ספר/מספרה → "תספורת"
+- עורך דין → "עו\"ד"
+- ועד בית → "וועד בית"
+- כונס/ממונה/תשלום לממונה → "תשלום חודשי לממונה"
+- כלי בית/חומרי ניקיון/תחזוקת בית → "כלי בית ותחזוקה"
+- אם שום קטגוריה לא מתאימה בבירור → "שונות".
+
+החזר עבור כל פריט את ה-i שלו ואת הקטגוריה. אל תמציא קטגוריות שאינן ברשימה.`;
+
+// Classify a batch of expense lines. Returns one category per item, aligned by
+// index; off-list / missing answers fall back to "שונות".
+export async function classifyExpenses(
+  items: Array<{ description: string; amount: number }>,
+): Promise<GovExpenseCategory[]> {
+  if (items.length === 0) return [];
+
+  const m = model({
+    modelName: UTIL_MODEL,
+    systemInstruction: CLASSIFY_SYSTEM,
+    responseSchema: CLASSIFY_SCHEMA,
+  });
+
+  const payload = items.map((it, i) => ({ i, name: it.description, amount: it.amount }));
+  const result = await withRetry(() =>
+    m.generateContent([
+      { text: `סווג את הפריטים הבאים (JSON):\n${JSON.stringify(payload)}` },
+    ]),
+  );
+
+  const raw = result.response.text();
+  const out: GovExpenseCategory[] = items.map(() => GOV_EXPENSE_CATEGORY.Miscellaneous);
+  const allowed = GOV_EXPENSE_CATEGORIES as string[];
+  try {
+    const parsed = JSON.parse(raw) as { results: Array<{ i: number; category: string }> };
+    for (const r of parsed.results ?? []) {
+      if (r.i >= 0 && r.i < items.length && allowed.includes(r.category)) {
+        out[r.i] = r.category as GovExpenseCategory;
+      }
+    }
+  } catch {
+    // keep fallbacks
+  }
+  return out;
 }
