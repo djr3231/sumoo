@@ -14,7 +14,7 @@ import type { SalarySlip } from "@/lib/ai";
 // assigns the GOV_EXPENSE_CATEGORY and sums.
 export interface ExpenseItem {
   month: number; // report month (one of the period's two months)
-  amount: number; // positive ₪
+  amount: number; // ₪ expense (negative for a direct refund/credit)
   description: string;
   source: "direct" | "checking";
 }
@@ -194,15 +194,17 @@ export function reconcile(input: {
   }
 
   // --- Direct card (דיירקט) merchant-level charges ---
+  // Convention: positive = money spent, negative = refund/credit. The net sum
+  // should tie out against the bank's ישראכרט-דיירקט settlements (checksum).
   let directDetailSum = 0;
   for (const c of input.directCharges) {
-    const abs = Math.abs(c.amount ?? 0);
-    directDetailSum += abs;
+    const spent = c.amount ?? 0;
+    directDetailSum += spent;
     const month = monthOf(c.date);
     if (!inPeriod(month)) continue;
     expenseItems.push({
       month,
-      amount: abs,
+      amount: spent,
       description: (c.description ?? "").trim(),
       source: "direct",
     });

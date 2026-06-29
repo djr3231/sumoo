@@ -2,8 +2,10 @@ import { findDriveFileInFolder, uploadFileToDrive } from "@/lib/google";
 import { parseXLSX } from "@/lib/parsers";
 import {
   classifyExpenses,
+  parseDirectStatement,
   parseSalarySlip,
   parseStatementPDF,
+  type DirectCharge,
   type SalarySlip,
 } from "@/lib/ai";
 import {
@@ -64,6 +66,18 @@ async function pdfToTxns(f: SourceFile, hint: string): Promise<BankTxn[]> {
   }));
 }
 
+// Direct charges use the convention: positive = money spent, negative = refund.
+function directToTxns(charges: DirectCharge[]): BankTxn[] {
+  return charges.map((c) => ({
+    source: "דיירקט",
+    date: c.date,
+    amount:
+      c.amount == null ? null : c.isCredit ? -Math.abs(c.amount) : Math.abs(c.amount),
+    description: c.merchant,
+    status: null,
+  }));
+}
+
 // Orchestrates a full period run: store each source doc to the period's source
 // folder, parse by type, reconcile, then classify the expense lines.
 export async function processPeriodDocuments(args: {
@@ -107,12 +121,15 @@ export async function processPeriodDocuments(args: {
   }
 
   // דיירקט (card) — merchant-level charges; XLS or PDF; one file per month.
+  // PDF goes through the dedicated extractor (skips summary/total lines).
   const directCharges: BankTxn[] = [];
   for (const f of args.direct) {
     await store(f, "direct");
     const txns = isSpreadsheet(f)
       ? parseXLSX(f.buffer, "דיירקט")
-      : await pdfToTxns(f, "דיירקט");
+      : directToTxns(
+          (await parseDirectStatement({ pdfBase64: f.buffer.toString("base64") })).charges,
+        );
     directCharges.push(...txns);
   }
 
