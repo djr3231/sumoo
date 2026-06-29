@@ -610,6 +610,22 @@ export async function ensureDriveFolder(
   return created.data.id!;
 }
 
+// Returns the id of a non-trashed file with the given name in the folder, or
+// null. Used to avoid re-uploading the same source document across runs.
+export async function findDriveFileInFolder(
+  accessToken: string,
+  folderId: string,
+  name: string,
+): Promise<string | null> {
+  const drive = driveClient(accessToken);
+  const res = await drive.files.list({
+    q: `name = '${name.replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed = false`,
+    fields: "files(id,name)",
+    pageSize: 1,
+  });
+  return res.data.files?.[0]?.id ?? null;
+}
+
 export async function uploadFileToDrive(
   accessToken: string,
   folderId: string,

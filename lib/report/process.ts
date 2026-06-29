@@ -1,4 +1,4 @@
-import { uploadFileToDrive } from "@/lib/google";
+import { findDriveFileInFolder, uploadFileToDrive } from "@/lib/google";
 import { parseXLSX } from "@/lib/parsers";
 import {
   classifyExpenses,
@@ -29,7 +29,7 @@ export interface CategorizedExpense extends ExpenseItem {
 }
 
 export interface ProcessResult {
-  stored: Array<{ id: string; name: string; type: string }>;
+  stored: Array<{ id: string; name: string; type: string; reused: boolean }>;
   expenses: CategorizedExpense[];
   income: IncomeItem[];
   transfers: TransferItem[];
@@ -74,8 +74,18 @@ export async function processPeriodDocuments(args: {
   direct: SourceFile[]; // XLS or PDF; one file per month is allowed
   salaries: SourceFile[];
 }): Promise<ProcessResult> {
-  const stored: Array<{ id: string; name: string; type: string }> = [];
+  const stored: Array<{ id: string; name: string; type: string; reused: boolean }> = [];
   const store = async (f: SourceFile, type: string) => {
+    // Skip re-uploading a file that already exists in the folder (by name).
+    const existing = await findDriveFileInFolder(
+      args.accessToken,
+      args.sourceFolderId,
+      f.name,
+    );
+    if (existing) {
+      stored.push({ id: existing, name: f.name, type, reused: true });
+      return;
+    }
     const { id } = await uploadFileToDrive(
       args.accessToken,
       args.sourceFolderId,
@@ -83,7 +93,7 @@ export async function processPeriodDocuments(args: {
       f.buffer,
       f.mimeType,
     );
-    stored.push({ id, name: f.name, type });
+    stored.push({ id, name: f.name, type, reused: false });
   };
 
   // עו"ש (checking) — XLS (preferred) or PDF; one file per month allowed.
