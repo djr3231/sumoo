@@ -118,6 +118,12 @@ function transferName(d: string): string {
   return m ? m[1].trim() : "";
 }
 
+// Normalize an employer/description for matching: keep Hebrew letters only and
+// collapse runs of the same letter, so "עיריית"/"עירית" and "מופ\"ת"/"מופת" match.
+function normEmployer(s: string): string {
+  return s.replace(/[^א-ת]/g, "").replace(/(.)\1+/g, "$1");
+}
+
 // ----------------------------------------------------------------------------
 // Reconcile
 // ----------------------------------------------------------------------------
@@ -217,13 +223,20 @@ export function reconcile(input: {
   }));
 
   // --- Salary cross-check: bank credit vs slip net ---
+  // Pair a bank salary only with a slip whose employer actually corresponds to
+  // it (never fall back to an unrelated slip of the same month). Normalize to
+  // tolerate spelling variants (gershayim, double-yud, slashes).
   const salaryCrossChecks: SalaryCrossCheck[] = bankSalaries.map((bs) => {
     const work = workMonthFor(bs.month);
-    const candidates = input.salarySlips.filter((s) => s.month === work);
+    const nd = normEmployer(bs.desc);
     const slip =
-      candidates.find((s) => s.employer && bs.desc.includes(s.employer)) ??
-      candidates[0] ??
-      null;
+      input.salarySlips.find(
+        (s) =>
+          s.month === work &&
+          s.employer != null &&
+          normEmployer(s.employer).length > 0 &&
+          nd.includes(normEmployer(s.employer)),
+      ) ?? null;
     const slipNet = slip?.net ?? null;
     return {
       month: bs.month,
