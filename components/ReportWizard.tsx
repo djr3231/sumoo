@@ -225,15 +225,17 @@ export function ReportWizard() {
               ) : null}
               <FileSlot
                 label='עובר ושב (עו"ש)'
-                hint="XLS או PDF"
+                hint="XLS או PDF — אפשר קובץ לכל חודש"
                 accept=".xls,.xlsx,.pdf,application/pdf"
+                multiple
                 files={checkingFiles}
                 onChange={setCheckingFiles}
               />
               <FileSlot
                 label="פירוט חיובים — דיירקט"
-                hint="PDF"
-                accept=".pdf,application/pdf"
+                hint="XLS או PDF — אפשר קובץ לכל חודש"
+                accept=".xls,.xlsx,.pdf,application/pdf"
+                multiple
                 files={directFiles}
                 onChange={setDirectFiles}
               />

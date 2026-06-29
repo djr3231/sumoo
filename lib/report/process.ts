@@ -70,8 +70,8 @@ export async function processPeriodDocuments(args: {
   accessToken: string;
   period: ReportPeriod;
   sourceFolderId: string;
-  checking?: SourceFile;
-  direct?: SourceFile;
+  checking: SourceFile[]; // one file per month is allowed
+  direct: SourceFile[]; // XLS or PDF; one file per month is allowed
   salaries: SourceFile[];
 }): Promise<ProcessResult> {
   const stored: Array<{ id: string; name: string; type: string }> = [];
@@ -86,20 +86,24 @@ export async function processPeriodDocuments(args: {
     stored.push({ id, name: f.name, type });
   };
 
-  // עו"ש (checking) — prefer the XLS shape, fall back to PDF.
-  let checkingTxns: BankTxn[] = [];
-  if (args.checking) {
-    await store(args.checking, "checking");
-    checkingTxns = isSpreadsheet(args.checking)
-      ? parseXLSX(args.checking.buffer, 'עו"ש')
-      : await pdfToTxns(args.checking, 'עו"ש');
+  // עו"ש (checking) — XLS (preferred) or PDF; one file per month allowed.
+  const checkingTxns: BankTxn[] = [];
+  for (const f of args.checking) {
+    await store(f, "checking");
+    const txns = isSpreadsheet(f)
+      ? parseXLSX(f.buffer, 'עו"ש')
+      : await pdfToTxns(f, 'עו"ש');
+    checkingTxns.push(...txns);
   }
 
-  // דיירקט (card) — always a PDF of merchant-level charges.
-  let directCharges: BankTxn[] = [];
-  if (args.direct) {
-    await store(args.direct, "direct");
-    directCharges = await pdfToTxns(args.direct, "דיירקט");
+  // דיירקט (card) — merchant-level charges; XLS or PDF; one file per month.
+  const directCharges: BankTxn[] = [];
+  for (const f of args.direct) {
+    await store(f, "direct");
+    const txns = isSpreadsheet(f)
+      ? parseXLSX(f.buffer, "דיירקט")
+      : await pdfToTxns(f, "דיירקט");
+    directCharges.push(...txns);
   }
 
   // Salary slips — N PDFs.

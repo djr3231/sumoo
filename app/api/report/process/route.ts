@@ -29,16 +29,16 @@ export async function POST(req: Request) {
     }
     const period = JSON.parse(periodRaw) as ReportPeriod;
 
-    const checking = form.get("checking");
-    const direct = form.get("direct");
+    const checking = form.getAll("checking").filter((x): x is File => x instanceof File);
+    const direct = form.getAll("direct").filter((x): x is File => x instanceof File);
     const salaries = form.getAll("salary").filter((x): x is File => x instanceof File);
 
     const result = await processPeriodDocuments({
       accessToken: token,
       period,
       sourceFolderId,
-      checking: checking instanceof File ? await toSourceFile(checking) : undefined,
-      direct: direct instanceof File ? await toSourceFile(direct) : undefined,
+      checking: await Promise.all(checking.map(toSourceFile)),
+      direct: await Promise.all(direct.map(toSourceFile)),
       salaries: await Promise.all(salaries.map(toSourceFile)),
     });
 
