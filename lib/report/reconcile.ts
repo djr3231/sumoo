@@ -1,0 +1,217 @@
+import {
+  GOV_INCOME_CATEGORY,
+  type BankTxn,
+  type GovIncomeCategory,
+  type ReportPeriod,
+} from "@/lib/types";
+import type { SalarySlip } from "@/lib/ai";
+
+// ----------------------------------------------------------------------------
+// Output shapes
+// ----------------------------------------------------------------------------
+
+// An expense line, NOT yet mapped to a government category — Step 5 (classify)
+// assigns the GOV_EXPENSE_CATEGORY and sums.
+export interface ExpenseItem {
+  month: number; // report month (one of the period's two months)
+  amount: number; // positive ₪
+  description: string;
+  source: "direct" | "checking";
+}
+
+// Income is determinable by source, so it is categorized here.
+export interface IncomeItem {
+  month: number;
+  amount: number;
+  category: GovIncomeCategory;
+  source: string;
+}
+
+// העברה/<name> credits — surfaced for the user's per-transfer include/exclude.
+export interface TransferItem {
+  month: number;
+  amount: number;
+  name: string;
+  description: string;
+}
+
+// Any other positive checking line we couldn't classify — surfaced, default
+// excluded from income, so nothing slips silently into the totals.
+export interface ReviewCredit {
+  month: number;
+  amount: number;
+  description: string;
+}
+
+// Total cash withdrawn per report month — a control figure (justified later by
+// cash receipts), not itself a report row.
+export interface CashWithdrawal {
+  month: number;
+  amount: number;
+}
+
+// Bank-credit salary vs the matching slip net (Decision: bank is primary).
+export interface SalaryCrossCheck {
+  month: number; // deposit month = report column
+  bankNet: number;
+  slipNet: number | null;
+  employer: string | null;
+  matches: boolean;
+}
+
+export interface ReconcileResult {
+  expenseItems: ExpenseItem[];
+  income: IncomeItem[];
+  transfers: TransferItem[];
+  reviewCredits: ReviewCredit[];
+  cashWithdrawals: CashWithdrawal[];
+  salaryCrossChecks: SalaryCrossCheck[];
+  checksum: { directDetailSum: number; directAggregateSum: number };
+}
+
+// ----------------------------------------------------------------------------
+// Helpers
+// ----------------------------------------------------------------------------
+
+function monthOf(date: string | null): number | null {
+  if (!date) return null;
+  const m = /^\d{4}-(\d{2})-\d{2}/.exec(date);
+  return m ? Number(m[1]) : null;
+}
+
+function approxEqual(a: number, b: number, tol = 1): boolean {
+  return Math.abs(a - b) <= Math.max(tol, 0.005 * Math.max(Math.abs(a), Math.abs(b)));
+}
+
+// The work/eligibility month for a salary deposited in `depositMonth`
+// (pay lands the month after the worked month; wraps Jan -> Dec).
+function workMonthFor(depositMonth: number): number {
+  return ((depositMonth - 2 + 12) % 12) + 1;
+}
+
+// עו"ש line-family matchers (spec §2.2). Matched against `תיאור פעולה`.
+const isDirectAggregate = (d: string) => /ישראכרט.{0,3}דיירקט/.test(d);
+const isCashWithdrawal = (d: string) => /משיכה.*בנקט/.test(d);
+const isSalaryCredit = (d: string) => /משכורת/.test(d);
+const isChildAllowance = (d: string) => /קצבת\s*ילדים/.test(d);
+const isTransfer = (d: string) => /^\s*העברה/.test(d);
+
+function transferName(d: string): string {
+  const m = /העברה[\s/:.\-]+(.+)/.exec(d);
+  return m ? m[1].trim() : "";
+}
+
+// ----------------------------------------------------------------------------
+// Reconcile
+// ----------------------------------------------------------------------------
+
+export function reconcile(input: {
+  period: ReportPeriod;
+  checkingTxns: BankTxn[];
+  directCharges: BankTxn[];
+  salarySlips: SalarySlip[];
+}): ReconcileResult {
+  const months = [input.period.month1, input.period.month2];
+  const inPeriod = (m: number | null): m is number =>
+    m !== null && months.includes(m);
+
+  const expenseItems: ExpenseItem[] = [];
+  const income: IncomeItem[] = [];
+  const transfers: TransferItem[] = [];
+  const reviewCredits: ReviewCredit[] = [];
+  const cashByMonth = new Map<number, number>();
+  let directAggregateSum = 0;
+
+  const bankSalaries: { month: number; amount: number; desc: string }[] = [];
+
+  // --- Checking account (עו"ש) ---
+  for (const t of input.checkingTxns) {
+    const month = monthOf(t.date);
+    if (!inPeriod(month)) continue;
+    const desc = (t.description ?? "").trim();
+    const amt = t.amount ?? 0;
+
+    if (amt < 0) {
+      const abs = Math.abs(amt);
+      if (isDirectAggregate(desc)) {
+        directAggregateSum += abs; // dropped, kept only as checksum
+        continue;
+      }
+      if (isCashWithdrawal(desc)) {
+        cashByMonth.set(month, (cashByMonth.get(month) ?? 0) + abs);
+        continue;
+      }
+      expenseItems.push({ month, amount: abs, description: desc, source: "checking" });
+    } else if (amt > 0) {
+      if (isSalaryCredit(desc)) {
+        income.push({
+          month,
+          amount: amt,
+          category: GOV_INCOME_CATEGORY.Salary,
+          source: desc,
+        });
+        bankSalaries.push({ month, amount: amt, desc });
+      } else if (isChildAllowance(desc)) {
+        income.push({
+          month,
+          amount: amt,
+          category: GOV_INCOME_CATEGORY.NationalInsurance,
+          source: desc,
+        });
+      } else if (isTransfer(desc)) {
+        transfers.push({ month, amount: amt, name: transferName(desc), description: desc });
+      } else {
+        reviewCredits.push({ month, amount: amt, description: desc });
+      }
+    }
+  }
+
+  // --- Direct card (דיירקט) merchant-level charges ---
+  let directDetailSum = 0;
+  for (const c of input.directCharges) {
+    const abs = Math.abs(c.amount ?? 0);
+    directDetailSum += abs;
+    const month = monthOf(c.date);
+    if (!inPeriod(month)) continue;
+    expenseItems.push({
+      month,
+      amount: abs,
+      description: (c.description ?? "").trim(),
+      source: "direct",
+    });
+  }
+
+  // --- Cash withdrawals per report month ---
+  const cashWithdrawals: CashWithdrawal[] = months.map((m) => ({
+    month: m,
+    amount: cashByMonth.get(m) ?? 0,
+  }));
+
+  // --- Salary cross-check: bank credit vs slip net ---
+  const salaryCrossChecks: SalaryCrossCheck[] = bankSalaries.map((bs) => {
+    const work = workMonthFor(bs.month);
+    const candidates = input.salarySlips.filter((s) => s.month === work);
+    const slip =
+      candidates.find((s) => s.employer && bs.desc.includes(s.employer)) ??
+      candidates[0] ??
+      null;
+    const slipNet = slip?.net ?? null;
+    return {
+      month: bs.month,
+      bankNet: bs.amount,
+      slipNet,
+      employer: slip?.employer ?? null,
+      matches: slipNet !== null && approxEqual(bs.amount, slipNet),
+    };
+  });
+
+  return {
+    expenseItems,
+    income,
+    transfers,
+    reviewCredits,
+    cashWithdrawals,
+    salaryCrossChecks,
+    checksum: { directDetailSum, directAggregateSum },
+  };
+}
