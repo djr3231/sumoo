@@ -174,6 +174,14 @@ export function reconcile(input: {
   const inPeriod = (m: number | null): m is number =>
     m !== null && months.includes(m);
 
+  // The bank's latest activity date (YYYY-MM-DD compares lexicographically).
+  // Direct charges dated after this haven't settled in this bank file yet, so
+  // they belong to the next period and are excluded.
+  const bankLastDate = input.checkingTxns.reduce<string | null>(
+    (max, t) => (t.date && (max === null || t.date > max) ? t.date : max),
+    null,
+  );
+
   const expenseItems: ExpenseItem[] = [];
   const income: IncomeItem[] = [];
   const transfers: TransferItem[] = [];
@@ -244,10 +252,12 @@ export function reconcile(input: {
   // should tie out against the bank's ישראכרט-דיירקט settlements (checksum).
   let directDetailSum = 0;
   for (const c of input.directCharges) {
-    const spent = c.amount ?? 0;
-    directDetailSum += spent;
     const month = monthOf(c.date);
     if (!inPeriod(month)) continue;
+    // Cap at the bank's last settled date: later charges settle next period.
+    if (bankLastDate && c.date && c.date > bankLastDate) continue;
+    const spent = c.amount ?? 0;
+    directDetailSum += spent;
     expenseItems.push({
       month,
       amount: spent,

@@ -244,7 +244,7 @@ export function ReportWizard() {
   // bank ישראכרט-דיירקט settlements. Updates as the user adds/edits/deletes.
   const CARD_GAP_TOLERANCE = 1;
   const liveCardDetailSum = expenses.reduce(
-    (a, e) => a + (e.source === "direct" ? e.amount : 0),
+    (a, e, i) => a + (e.source === "direct" && expenseIncluded[i] ? e.amount : 0),
     0,
   );
   const cardGap = result
