@@ -150,6 +150,14 @@ export function ReportWizard() {
   const [expenseIncluded, setExpenseIncluded] = useState<boolean[]>([]);
   const [incomeIncluded, setIncomeIncluded] = useState<boolean[]>([]);
   const [cardGapAck, setCardGapAck] = useState(false);
+  const [expenseFilter, setExpenseFilter] = useState("");
+  const [expenseSourceFilter, setExpenseSourceFilter] = useState<
+    "all" | "direct" | "checking"
+  >("all");
+  const [expenseSort, setExpenseSort] = useState<{
+    key: "month" | "amount" | "description" | "source" | "category";
+    dir: "asc" | "desc";
+  }>({ key: "month", dir: "asc" });
 
   const canCreate = pair !== null && !creating;
 
@@ -252,6 +260,36 @@ export function ReportWizard() {
     : 0;
   const cardGapBlocking =
     result != null && Math.abs(cardGap) > CARD_GAP_TOLERANCE && !cardGapAck;
+
+  // Filtered + sorted view of expenses, keyed to the original index so the
+  // include/edit/delete handlers still target the right row.
+  const expenseView = expenses
+    .map((e, i) => ({ e, i }))
+    .filter(
+      ({ e }) =>
+        (expenseSourceFilter === "all" || e.source === expenseSourceFilter) &&
+        (expenseFilter === "" ||
+          e.description.includes(expenseFilter) ||
+          e.category.includes(expenseFilter)),
+    )
+    .sort((a, b) => {
+      const k = expenseSort.key;
+      const cmp =
+        k === "amount" || k === "month"
+          ? a.e[k] - b.e[k]
+          : String(a.e[k]).localeCompare(String(b.e[k]), "he");
+      return expenseSort.dir === "asc" ? cmp : -cmp;
+    });
+
+  function toggleSort(key: typeof expenseSort.key) {
+    setExpenseSort((s) =>
+      s.key === key
+        ? { key, dir: s.dir === "asc" ? "desc" : "asc" }
+        : { key, dir: "asc" },
+    );
+  }
+  const sortArrow = (key: typeof expenseSort.key) =>
+    expenseSort.key === key ? (expenseSort.dir === "asc" ? " ▲" : " ▼") : "";
 
   return (
     <div className="space-y-6">
@@ -497,20 +535,68 @@ export function ReportWizard() {
                   </Section>
 
                   <Section title="הוצאות">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Input
+                        value={expenseFilter}
+                        onChange={(ev) => setExpenseFilter(ev.target.value)}
+                        placeholder="סינון לפי תיאור/קטגוריה"
+                        className="w-64"
+                      />
+                      <Select
+                        value={expenseSourceFilter}
+                        onValueChange={(v) =>
+                          setExpenseSourceFilter(v as "all" | "direct" | "checking")
+                        }
+                      >
+                        <SelectTrigger className="w-32">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">הכל</SelectItem>
+                          <SelectItem value="direct">כרטיס</SelectItem>
+                          <SelectItem value="checking">בנק</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <Table>
                       <TableHeader>
                         <TableRow>
                           <TableHead>כלול</TableHead>
-                          <TableHead>תיאור</TableHead>
-                          <TableHead>מקור</TableHead>
-                          <TableHead>חודש</TableHead>
-                          <TableHead>סכום</TableHead>
-                          <TableHead>קטגוריה</TableHead>
+                          <TableHead
+                            className="cursor-pointer"
+                            onClick={() => toggleSort("description")}
+                          >
+                            תיאור{sortArrow("description")}
+                          </TableHead>
+                          <TableHead
+                            className="cursor-pointer"
+                            onClick={() => toggleSort("source")}
+                          >
+                            מקור{sortArrow("source")}
+                          </TableHead>
+                          <TableHead
+                            className="cursor-pointer"
+                            onClick={() => toggleSort("month")}
+                          >
+                            חודש{sortArrow("month")}
+                          </TableHead>
+                          <TableHead
+                            className="cursor-pointer"
+                            onClick={() => toggleSort("amount")}
+                          >
+                            סכום{sortArrow("amount")}
+                          </TableHead>
+                          <TableHead
+                            className="cursor-pointer"
+                            onClick={() => toggleSort("category")}
+                          >
+                            קטגוריה{sortArrow("category")}
+                          </TableHead>
                           <TableHead></TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {expenses.map((e, i) => (
+                        {expenseView.map(({ e, i }) => (
                           <TableRow key={i} className={expenseIncluded[i] ? "" : "opacity-50"}>
                             <TableCell>
                               <Checkbox

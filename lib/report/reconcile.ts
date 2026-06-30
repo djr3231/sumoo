@@ -123,16 +123,13 @@ const isCashWithdrawal = (d: string) => /משיכה.*בנקט/.test(d);
 const isSalaryCredit = (d: string) => /משכורת/.test(d);
 const isChildAllowance = (d: string) => /קצבת\s*ילדים/.test(d);
 const isTransfer = (d: string) => /^\s*העברה/.test(d);
-// Foreign-currency settlement lines (the ₪ value of $/€ card charges).
+// Foreign-currency settlement lines: the bank settles a $/€ card charge as a
+// "קרן" (principal ₪) line plus an "עמלות" (fee ₪) line.
 const isForexSettlement = (d: string) => /קיזוז\s*מטח/.test(d);
-
-// Turn the cryptic forex line into a readable expense label.
-// e.g. "קיזוז מטח או שח/קרן/USD/20/ILS/61.83/3.09" -> "חיוב מטבע חוץ USD 20".
-function forexLabel(d: string): string {
-  if (/עמלות|עמלה/.test(d)) return "עמלת מטבע חוץ";
-  const m = /\/([A-Z]{3})\/([\d.]+)\/ILS/.exec(d);
-  return m ? `חיוב מטבע חוץ ${m[1]} ${m[2]}` : "חיוב מטבע חוץ";
-}
+const isForexFee = (d: string) => isForexSettlement(d) && /עמלות|עמלה/.test(d);
+// "קיזוז מטח או שח/קרן/USD/20/ILS/58.92/2.94" -> ["USD", "20", "58.92"]
+const FOREX_PRINCIPAL_RE = /קרן\/([A-Za-z]{3})\/([\d.]+)\/ILS\/([\d.]+)/;
+const hasLatin = (s: string) => /[A-Za-z]/.test(s);
 
 function transferName(d: string): string {
   const m = /העברה[\s/:.\-]+(.+)/.exec(d);
@@ -191,8 +188,60 @@ export function reconcile(input: {
 
   const bankSalaries: { month: number; amount: number; desc: string }[] = [];
 
+  // --- Foreign-currency card charges ---
+  // Merge each "קרן" (principal) + "עמלות" (fee) bank pair into one ₪ amount,
+  // attach the card merchant name (matched by the foreign amount), and treat it
+  // as a single card (direct) charge. The raw bank lines and the raw foreign
+  // card row are consumed so nothing shows twice.
+  const skipChecking = new Set<number>();
+  const skipDirect = new Set<number>();
+  const foreignExpenses: ExpenseItem[] = [];
+  let forexIls = 0;
+
+  const forexFees: Array<{ ils: number; date: string | null; used: boolean }> = [];
+  input.checkingTxns.forEach((t, i) => {
+    if (isForexFee((t.description ?? "").trim())) {
+      skipChecking.add(i);
+      forexFees.push({ ils: Math.abs(t.amount ?? 0), date: t.date, used: false });
+    }
+  });
+
+  input.checkingTxns.forEach((t, i) => {
+    const m = FOREX_PRINCIPAL_RE.exec((t.description ?? "").trim());
+    if (!m) return;
+    skipChecking.add(i);
+    const foreign = Number(m[2]);
+    const fee = forexFees.find((f) => !f.used && f.date === t.date);
+    if (fee) fee.used = true;
+    const ils = Math.abs(t.amount ?? 0) + (fee?.ils ?? 0);
+    forexIls += ils;
+
+    // Match the card charge by foreign amount; prefer a Latin/English merchant
+    // so we don't grab a domestic ₪ charge of the same number.
+    let merchant = `מטבע חוץ ${m[1].toUpperCase()} ${m[2]}`;
+    let cardMonth: number | null = null;
+    for (let j = 0; j < input.directCharges.length; j++) {
+      if (skipDirect.has(j)) continue;
+      const c = input.directCharges[j];
+      const cd = (c.description ?? "").trim();
+      if (approxEqual(Math.abs(c.amount ?? 0), foreign, 0.5) && (cd === "" || hasLatin(cd))) {
+        skipDirect.add(j);
+        if (cd) merchant = cd;
+        cardMonth = monthOf(c.date);
+        break;
+      }
+    }
+
+    const month = cardMonth ?? monthOf(t.date);
+    if (inPeriod(month)) {
+      foreignExpenses.push({ month, amount: ils, description: merchant, source: "direct" });
+    }
+  });
+
   // --- Checking account (עו"ש) ---
-  for (const t of input.checkingTxns) {
+  for (let i = 0; i < input.checkingTxns.length; i++) {
+    if (skipChecking.has(i)) continue;
+    const t = input.checkingTxns[i];
     const desc = (t.description ?? "").trim();
     const amt = t.amount ?? 0;
 
@@ -229,8 +278,7 @@ export function reconcile(input: {
         cashByMonth.set(month, (cashByMonth.get(month) ?? 0) + abs);
         continue;
       }
-      const label = isForexSettlement(desc) ? forexLabel(desc) : desc;
-      expenseItems.push({ month, amount: abs, description: label, source: "checking" });
+      expenseItems.push({ month, amount: abs, description: desc, source: "checking" });
     } else if (amt > 0) {
       if (isChildAllowance(desc)) {
         income.push({
@@ -251,7 +299,9 @@ export function reconcile(input: {
   // Convention: positive = money spent, negative = refund/credit. The net sum
   // should tie out against the bank's ישראכרט-דיירקט settlements (checksum).
   let directDetailSum = 0;
-  for (const c of input.directCharges) {
+  for (let j = 0; j < input.directCharges.length; j++) {
+    if (skipDirect.has(j)) continue; // consumed by foreign matching
+    const c = input.directCharges[j];
     const month = monthOf(c.date);
     if (!inPeriod(month)) continue;
     // Cap at the bank's last settled date: later charges settle next period.
@@ -265,6 +315,14 @@ export function reconcile(input: {
       source: "direct",
     });
   }
+
+  // Merged foreign card charges count as card detail; the bank settled them via
+  // קיזוז, so add the same total to the aggregate side (they tie out).
+  for (const f of foreignExpenses) {
+    directDetailSum += f.amount;
+    expenseItems.push(f);
+  }
+  directAggregateSum += forexIls;
 
   // --- Auto-cancel expense ↔ refund pairs (same amount + similar name) ---
   const excluded: ExcludedItem[] = [];
