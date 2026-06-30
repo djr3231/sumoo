@@ -260,6 +260,7 @@ export function reconcile(input: {
   const excluded: ExcludedItem[] = [];
   const usedExpense = new Set<number>();
   const usedReview = new Set<number>();
+  const usedTransfer = new Set<number>();
 
   // (a) a negative expense (direct refund) paired with a positive expense
   for (let i = 0; i < expenseItems.length; i++) {
@@ -307,8 +308,35 @@ export function reconcile(input: {
     }
   }
 
+  // (c) a transfer credit (refund that arrived as העברה/) vs a positive expense
+  for (let i = 0; i < transfers.length; i++) {
+    const t = transfers[i];
+    if (usedTransfer.has(i)) continue;
+    for (let j = 0; j < expenseItems.length; j++) {
+      const charge = expenseItems[j];
+      if (usedExpense.has(j) || charge.amount <= 0) continue;
+      if (
+        approxEqual(charge.amount, t.amount) &&
+        descSimilar(charge.description, t.description)
+      ) {
+        usedExpense.add(j);
+        usedTransfer.add(i);
+        excluded.push({ ...charge, reason: "refund-pair" });
+        excluded.push({
+          month: t.month,
+          amount: t.amount,
+          description: t.description,
+          source: "checking",
+          reason: "refund-pair",
+        });
+        break;
+      }
+    }
+  }
+
   const keptExpenses = expenseItems.filter((_, i) => !usedExpense.has(i));
   const keptReview = reviewCredits.filter((_, i) => !usedReview.has(i));
+  const keptTransfers = transfers.filter((_, i) => !usedTransfer.has(i));
 
   // --- Cash withdrawals per report month ---
   const cashWithdrawals: CashWithdrawal[] = months.map((m) => ({
@@ -344,7 +372,7 @@ export function reconcile(input: {
   return {
     expenseItems: keptExpenses,
     income,
-    transfers,
+    transfers: keptTransfers,
     reviewCredits: keptReview,
     excluded,
     cashWithdrawals,
