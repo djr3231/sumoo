@@ -142,6 +142,8 @@ export function ReportWizard() {
   const [result, setResult] = useState<ProcessResult | null>(null);
   const [expenses, setExpenses] = useState<CategorizedExpense[]>([]);
   const [transferInclude, setTransferInclude] = useState<boolean[]>([]);
+  const [expenseIncluded, setExpenseIncluded] = useState<boolean[]>([]);
+  const [incomeIncluded, setIncomeIncluded] = useState<boolean[]>([]);
   const [cardGapAck, setCardGapAck] = useState(false);
 
   const canCreate = pair !== null && !creating;
@@ -197,6 +199,8 @@ export function ReportWizard() {
       const r = data as ProcessResult;
       setResult(r);
       setExpenses(r.expenses);
+      setExpenseIncluded(r.expenses.map(() => true));
+      setIncomeIncluded(r.income.map(() => true));
       setTransferInclude(r.transfers.map(() => false));
       setCardGapAck(false);
     } catch (e) {
@@ -367,15 +371,19 @@ export function ReportWizard() {
                       <TableBody>
                         {periodMonths.map((m) => {
                           const incomeTotal =
-                            result.income
-                              .filter((x) => x.month === m)
-                              .reduce((a, x) => a + x.amount, 0) +
+                            result.income.reduce(
+                              (a, x, i) =>
+                                a + (incomeIncluded[i] && x.month === m ? x.amount : 0),
+                              0,
+                            ) +
                             result.transfers
                               .filter((t, i) => transferInclude[i] && t.month === m)
                               .reduce((a, t) => a + t.amount, 0);
-                          const expenseTotal = expenses
-                            .filter((e) => e.month === m)
-                            .reduce((a, e) => a + e.amount, 0);
+                          const expenseTotal = expenses.reduce(
+                            (a, e, i) =>
+                              a + (expenseIncluded[i] && e.month === m ? e.amount : 0),
+                            0,
+                          );
                           return (
                             <TableRow key={m}>
                               <TableCell>{m}</TableCell>
@@ -431,6 +439,7 @@ export function ReportWizard() {
                     <Table>
                       <TableHeader>
                         <TableRow>
+                          <TableHead>כלול</TableHead>
                           <TableHead>מקור</TableHead>
                           <TableHead>חודש</TableHead>
                           <TableHead>סכום</TableHead>
@@ -439,7 +448,17 @@ export function ReportWizard() {
                       </TableHeader>
                       <TableBody>
                         {result.income.map((x, i) => (
-                          <TableRow key={i}>
+                          <TableRow key={i} className={incomeIncluded[i] ? "" : "opacity-50"}>
+                            <TableCell>
+                              <Checkbox
+                                checked={incomeIncluded[i] ?? true}
+                                onCheckedChange={(v) =>
+                                  setIncomeIncluded((p) =>
+                                    p.map((b, idx) => (idx === i ? v === true : b)),
+                                  )
+                                }
+                              />
+                            </TableCell>
                             <TableCell>{x.source}</TableCell>
                             <TableCell>{x.month}</TableCell>
                             <TableCell className="tabular-nums">{formatILS(x.amount)}</TableCell>
@@ -454,6 +473,7 @@ export function ReportWizard() {
                     <Table>
                       <TableHeader>
                         <TableRow>
+                          <TableHead>כלול</TableHead>
                           <TableHead>תיאור</TableHead>
                           <TableHead>חודש</TableHead>
                           <TableHead>סכום</TableHead>
@@ -462,7 +482,17 @@ export function ReportWizard() {
                       </TableHeader>
                       <TableBody>
                         {expenses.map((e, i) => (
-                          <TableRow key={i}>
+                          <TableRow key={i} className={expenseIncluded[i] ? "" : "opacity-50"}>
+                            <TableCell>
+                              <Checkbox
+                                checked={expenseIncluded[i] ?? true}
+                                onCheckedChange={(v) =>
+                                  setExpenseIncluded((p) =>
+                                    p.map((b, idx) => (idx === i ? v === true : b)),
+                                  )
+                                }
+                              />
+                            </TableCell>
                             <TableCell>{e.description}</TableCell>
                             <TableCell>{e.month}</TableCell>
                             <TableCell className="tabular-nums">{formatILS(e.amount)}</TableCell>
@@ -490,6 +520,29 @@ export function ReportWizard() {
                       </TableBody>
                     </Table>
                   </Section>
+
+                  {result.excluded.length > 0 ? (
+                    <Section title="לא ייכלל בחישוב (זוהו אוטומטית)">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>חודש</TableHead>
+                            <TableHead>תיאור</TableHead>
+                            <TableHead>סכום</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {result.excluded.map((x, i) => (
+                            <TableRow key={i}>
+                              <TableCell>{x.month}</TableCell>
+                              <TableCell>{x.description}</TableCell>
+                              <TableCell className="tabular-nums">{formatILS(x.amount)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </Section>
+                  ) : null}
 
                   {result.transfers.length > 0 ? (
                     <Section title="העברות — להחלטה">
