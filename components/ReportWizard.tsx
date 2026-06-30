@@ -5,6 +5,7 @@ import { cn, formatILS } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table,
@@ -21,7 +22,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { GOV_EXPENSE_CATEGORIES, type GovExpenseCategory } from "@/lib/types";
+import {
+  GOV_EXPENSE_CATEGORIES,
+  GOV_EXPENSE_CATEGORY,
+  type GovExpenseCategory,
+} from "@/lib/types";
 import type { ReportFolders } from "@/lib/report/period";
 import type { CategorizedExpense, ProcessResult } from "@/lib/report/process";
 
@@ -210,18 +215,40 @@ export function ReportWizard() {
     }
   }
 
-  function setExpenseCategory(i: number, category: GovExpenseCategory) {
-    setExpenses((prev) =>
-      prev.map((e, idx) => (idx === i ? { ...e, category } : e)),
-    );
+  function patchExpense(i: number, patch: Partial<CategorizedExpense>) {
+    setExpenses((prev) => prev.map((e, idx) => (idx === i ? { ...e, ...patch } : e)));
+  }
+
+  function deleteExpense(i: number) {
+    setExpenses((prev) => prev.filter((_, idx) => idx !== i));
+    setExpenseIncluded((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  function addExpense() {
+    setExpenses((prev) => [
+      ...prev,
+      {
+        month: pair?.m1 ?? 1,
+        amount: 0,
+        description: "",
+        category: GOV_EXPENSE_CATEGORY.Miscellaneous,
+        source: "direct",
+      },
+    ]);
+    setExpenseIncluded((prev) => [...prev, true]);
   }
 
   const periodMonths = pair ? [pair.m1, pair.m2] : [];
 
-  // Card reconciliation: card detail total vs bank ישראכרט-דיירקט settlements.
+  // Card reconciliation: live card-detail total (editable direct lines) vs the
+  // bank ישראכרט-דיירקט settlements. Updates as the user adds/edits/deletes.
   const CARD_GAP_TOLERANCE = 1;
+  const liveCardDetailSum = expenses.reduce(
+    (a, e) => a + (e.source === "direct" ? e.amount : 0),
+    0,
+  );
   const cardGap = result
-    ? result.checksum.directDetailSum - result.checksum.directAggregateSum
+    ? liveCardDetailSum - result.checksum.directAggregateSum
     : 0;
   const cardGapBlocking =
     result != null && Math.abs(cardGap) > CARD_GAP_TOLERANCE && !cardGapAck;
@@ -405,7 +432,7 @@ export function ReportWizard() {
                       <div className="flex justify-between">
                         <span>סה&quot;כ חיובים בפירוט הכרטיס</span>
                         <span className="tabular-nums">
-                          {formatILS(result.checksum.directDetailSum)}
+                          {formatILS(liveCardDetailSum)}
                         </span>
                       </div>
                       <div className="flex justify-between">
@@ -478,6 +505,7 @@ export function ReportWizard() {
                           <TableHead>חודש</TableHead>
                           <TableHead>סכום</TableHead>
                           <TableHead>קטגוריה</TableHead>
+                          <TableHead></TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -493,14 +521,47 @@ export function ReportWizard() {
                                 }
                               />
                             </TableCell>
-                            <TableCell>{e.description}</TableCell>
-                            <TableCell>{e.month}</TableCell>
-                            <TableCell className="tabular-nums">{formatILS(e.amount)}</TableCell>
+                            <TableCell>
+                              <Input
+                                value={e.description}
+                                onChange={(ev) =>
+                                  patchExpense(i, { description: ev.target.value })
+                                }
+                                className="min-w-40"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Select
+                                value={String(e.month)}
+                                onValueChange={(v) => patchExpense(i, { month: Number(v) })}
+                              >
+                                <SelectTrigger className="w-20">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {periodMonths.map((m) => (
+                                    <SelectItem key={m} value={String(m)}>
+                                      {m}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                type="number"
+                                value={e.amount}
+                                onChange={(ev) =>
+                                  patchExpense(i, { amount: ev.target.valueAsNumber || 0 })
+                                }
+                                className="w-24 tabular-nums"
+                              />
+                            </TableCell>
                             <TableCell>
                               <Select
                                 value={e.category}
                                 onValueChange={(v) =>
-                                  setExpenseCategory(i, v as GovExpenseCategory)
+                                  patchExpense(i, { category: v as GovExpenseCategory })
                                 }
                               >
                                 <SelectTrigger className="w-full min-w-48">
@@ -515,10 +576,22 @@ export function ReportWizard() {
                                 </SelectContent>
                               </Select>
                             </TableCell>
+                            <TableCell>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => deleteExpense(i)}
+                              >
+                                מחק
+                              </Button>
+                            </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
                     </Table>
+                    <Button variant="outline" size="sm" onClick={addExpense}>
+                      + הוסף שורה
+                    </Button>
                   </Section>
 
                   {result.excluded.length > 0 ? (
