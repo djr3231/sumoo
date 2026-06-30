@@ -502,6 +502,7 @@ export function ReportWizard() {
                         <TableRow>
                           <TableHead>כלול</TableHead>
                           <TableHead>תיאור</TableHead>
+                          <TableHead>מקור</TableHead>
                           <TableHead>חודש</TableHead>
                           <TableHead>סכום</TableHead>
                           <TableHead>קטגוריה</TableHead>
@@ -529,6 +530,9 @@ export function ReportWizard() {
                                 }
                                 className="min-w-40"
                               />
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-muted-foreground">
+                              {e.source === "direct" ? "כרטיס" : "בנק"}
                             </TableCell>
                             <TableCell>
                               <Select
