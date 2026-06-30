@@ -158,6 +158,9 @@ export function parseXLSX(buffer: ArrayBuffer | Buffer, sourceLabel: string): Ba
   const wb = XLSX.read(data, { type: "buffer", cellDates: true });
   const all: BankTxn[] = [];
   for (const sheetName of wb.SheetNames) {
+    // Skip the bank's "תנועות זמניות בהמתנה" sheet — pending/unapproved
+    // transactions that must not enter the report.
+    if (/בהמתנה|זמני|ממתין/.test(sheetName)) continue;
     const sheet = wb.Sheets[sheetName];
     const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
       header: 1,
