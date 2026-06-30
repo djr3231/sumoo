@@ -43,6 +43,16 @@ export interface ReviewCredit {
   description: string;
 }
 
+// An expense/refund pair that cancels out — kept out of the totals and shown
+// in the "לא ייכלל בחישוב" section.
+export interface ExcludedItem {
+  month: number;
+  amount: number; // signed
+  description: string;
+  source: "direct" | "checking";
+  reason: "refund-pair";
+}
+
 // Total cash withdrawn per report month — a control figure (justified later by
 // cash receipts), not itself a report row.
 export interface CashWithdrawal {
@@ -64,6 +74,7 @@ export interface ReconcileResult {
   income: IncomeItem[];
   transfers: TransferItem[];
   reviewCredits: ReviewCredit[];
+  excluded: ExcludedItem[];
   cashWithdrawals: CashWithdrawal[];
   salaryCrossChecks: SalaryCrossCheck[];
   checksum: { directDetailSum: number; directAggregateSum: number };
@@ -132,6 +143,21 @@ function transferName(d: string): string {
 // collapse runs of the same letter, so "עיריית"/"עירית" and "מופ\"ת"/"מופת" match.
 function normEmployer(s: string): string {
   return s.replace(/[^א-ת]/g, "").replace(/(.)\1+/g, "$1");
+}
+
+// Two descriptions are "similar" if one normalized form contains the other, or
+// they share a token of length >= 3 — used for expense↔refund pairing.
+function descSimilar(a: string, b: string): boolean {
+  const norm = (s: string) => s.replace(/[^א-תa-zA-Z]/g, "");
+  const na = norm(a);
+  const nb = norm(b);
+  if (na.length >= 3 && nb.length >= 3 && (na.includes(nb) || nb.includes(na))) {
+    return true;
+  }
+  const tokens = (s: string) =>
+    s.split(/[\s/]+/).map(norm).filter((t) => t.length >= 3);
+  const sb = new Set(tokens(b));
+  return tokens(a).some((t) => sb.has(t));
 }
 
 // ----------------------------------------------------------------------------
@@ -230,6 +256,60 @@ export function reconcile(input: {
     });
   }
 
+  // --- Auto-cancel expense ↔ refund pairs (same amount + similar name) ---
+  const excluded: ExcludedItem[] = [];
+  const usedExpense = new Set<number>();
+  const usedReview = new Set<number>();
+
+  // (a) a negative expense (direct refund) paired with a positive expense
+  for (let i = 0; i < expenseItems.length; i++) {
+    const refund = expenseItems[i];
+    if (usedExpense.has(i) || refund.amount >= 0) continue;
+    for (let j = 0; j < expenseItems.length; j++) {
+      const charge = expenseItems[j];
+      if (j === i || usedExpense.has(j) || charge.amount <= 0) continue;
+      if (
+        approxEqual(charge.amount, -refund.amount) &&
+        descSimilar(charge.description, refund.description)
+      ) {
+        usedExpense.add(i);
+        usedExpense.add(j);
+        excluded.push({ ...charge, reason: "refund-pair" });
+        excluded.push({ ...refund, reason: "refund-pair" });
+        break;
+      }
+    }
+  }
+
+  // (b) a review credit (checking refund) paired with a positive expense
+  for (let i = 0; i < reviewCredits.length; i++) {
+    const credit = reviewCredits[i];
+    if (usedReview.has(i)) continue;
+    for (let j = 0; j < expenseItems.length; j++) {
+      const charge = expenseItems[j];
+      if (usedExpense.has(j) || charge.amount <= 0) continue;
+      if (
+        approxEqual(charge.amount, credit.amount) &&
+        descSimilar(charge.description, credit.description)
+      ) {
+        usedExpense.add(j);
+        usedReview.add(i);
+        excluded.push({ ...charge, reason: "refund-pair" });
+        excluded.push({
+          month: credit.month,
+          amount: credit.amount,
+          description: credit.description,
+          source: "checking",
+          reason: "refund-pair",
+        });
+        break;
+      }
+    }
+  }
+
+  const keptExpenses = expenseItems.filter((_, i) => !usedExpense.has(i));
+  const keptReview = reviewCredits.filter((_, i) => !usedReview.has(i));
+
   // --- Cash withdrawals per report month ---
   const cashWithdrawals: CashWithdrawal[] = months.map((m) => ({
     month: m,
@@ -262,10 +342,11 @@ export function reconcile(input: {
   });
 
   return {
-    expenseItems,
+    expenseItems: keptExpenses,
     income,
     transfers,
-    reviewCredits,
+    reviewCredits: keptReview,
+    excluded,
     cashWithdrawals,
     salaryCrossChecks,
     checksum: { directDetailSum, directAggregateSum },

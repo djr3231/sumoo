@@ -11,6 +11,7 @@ import {
 import {
   reconcile,
   type CashWithdrawal,
+  type ExcludedItem,
   type ExpenseItem,
   type IncomeItem,
   type ReviewCredit,
@@ -36,6 +37,7 @@ export interface ProcessResult {
   income: IncomeItem[];
   transfers: TransferItem[];
   reviewCredits: ReviewCredit[];
+  excluded: ExcludedItem[];
   cashWithdrawals: CashWithdrawal[];
   salaryCrossChecks: SalaryCrossCheck[];
   salarySlips: SalarySlip[];
@@ -163,6 +165,7 @@ export async function processPeriodDocuments(args: {
     income: recon.income,
     transfers: recon.transfers,
     reviewCredits: recon.reviewCredits,
+    excluded: recon.excluded,
     cashWithdrawals: recon.cashWithdrawals,
     salaryCrossChecks: recon.salaryCrossChecks,
     salarySlips,
