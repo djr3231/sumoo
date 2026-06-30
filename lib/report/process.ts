@@ -1,5 +1,5 @@
 import { findDriveFileInFolder, uploadFileToDrive } from "@/lib/google";
-import { parseXLSX } from "@/lib/parsers";
+import { parseCardXLSX, parseXLSX, type CardCharge } from "@/lib/parsers";
 import {
   classifyExpenses,
   parseDirectStatement,
@@ -38,6 +38,7 @@ export interface ProcessResult {
   transfers: TransferItem[];
   reviewCredits: ReviewCredit[];
   excluded: ExcludedItem[];
+  pending: ExpenseItem[];
   cashWithdrawals: CashWithdrawal[];
   salaryCrossChecks: SalaryCrossCheck[];
   salarySlips: SalarySlip[];
@@ -68,15 +69,16 @@ async function pdfToTxns(f: SourceFile, hint: string): Promise<BankTxn[]> {
   }));
 }
 
-// Direct charges use the convention: positive = money spent, negative = refund.
-function directToTxns(charges: DirectCharge[]): BankTxn[] {
+// The PDF card extractor has no settlement-date column, so use the transaction
+// date as a proxy for the settlement cut-off (XLSX carries the real one).
+function directPdfToCardCharges(charges: DirectCharge[]): CardCharge[] {
   return charges.map((c) => ({
-    source: "דיירקט",
-    date: c.date,
+    transactionDate: c.date,
+    settlementDate: c.date,
+    merchant: c.merchant,
     amount:
       c.amount == null ? null : c.isCredit ? -Math.abs(c.amount) : Math.abs(c.amount),
-    description: c.merchant,
-    status: null,
+    currency: null,
   }));
 }
 
@@ -122,17 +124,17 @@ export async function processPeriodDocuments(args: {
     checkingTxns.push(...txns);
   }
 
-  // דיירקט (card) — merchant-level charges; XLS or PDF; one file per month.
-  // PDF goes through the dedicated extractor (skips summary/total lines).
-  const directCharges: BankTxn[] = [];
+  // דיירקט (card) — XLS uses the dedicated card parser (settlement date + ₪
+  // "סכום חיוב"); PDF falls back to the Gemini extractor.
+  const directCharges: CardCharge[] = [];
   for (const f of args.direct) {
     await store(f, "direct");
-    const txns = isSpreadsheet(f)
-      ? parseXLSX(f.buffer, "דיירקט")
-      : directToTxns(
+    const charges = isSpreadsheet(f)
+      ? parseCardXLSX(f.buffer)
+      : directPdfToCardCharges(
           (await parseDirectStatement({ pdfBase64: f.buffer.toString("base64") })).charges,
         );
-    directCharges.push(...txns);
+    directCharges.push(...charges);
   }
 
   // Salary slips — N PDFs.
@@ -166,6 +168,7 @@ export async function processPeriodDocuments(args: {
     transfers: recon.transfers,
     reviewCredits: recon.reviewCredits,
     excluded: recon.excluded,
+    pending: recon.pending,
     cashWithdrawals: recon.cashWithdrawals,
     salaryCrossChecks: recon.salaryCrossChecks,
     salarySlips,

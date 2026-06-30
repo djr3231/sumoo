@@ -5,6 +5,7 @@ import {
   type ReportPeriod,
 } from "@/lib/types";
 import type { SalarySlip } from "@/lib/ai";
+import type { CardCharge } from "@/lib/parsers";
 
 // ----------------------------------------------------------------------------
 // Output shapes
@@ -75,6 +76,7 @@ export interface ReconcileResult {
   transfers: TransferItem[];
   reviewCredits: ReviewCredit[];
   excluded: ExcludedItem[];
+  pending: ExpenseItem[];
   cashWithdrawals: CashWithdrawal[];
   salaryCrossChecks: SalaryCrossCheck[];
   checksum: { directDetailSum: number; directAggregateSum: number };
@@ -123,13 +125,9 @@ const isCashWithdrawal = (d: string) => /משיכה.*בנקט/.test(d);
 const isSalaryCredit = (d: string) => /משכורת/.test(d);
 const isChildAllowance = (d: string) => /קצבת\s*ילדים/.test(d);
 const isTransfer = (d: string) => /^\s*העברה/.test(d);
-// Foreign-currency settlement lines: the bank settles a $/€ card charge as a
-// "קרן" (principal ₪) line plus an "עמלות" (fee ₪) line.
+// Foreign-currency card settlement lines (קיזוז מטח). Like ישראכרט-דיירקט they
+// are a bank-side settlement, not an expense — the card detail carries the ₪.
 const isForexSettlement = (d: string) => /קיזוז\s*מטח/.test(d);
-const isForexFee = (d: string) => isForexSettlement(d) && /עמלות|עמלה/.test(d);
-// "קיזוז מטח או שח/קרן/USD/20/ILS/58.92/2.94" -> ["USD", "20", "58.92"]
-const FOREX_PRINCIPAL_RE = /קרן\/([A-Za-z]{3})\/([\d.]+)\/ILS\/([\d.]+)/;
-const hasLatin = (s: string) => /[A-Za-z]/.test(s);
 
 function transferName(d: string): string {
   const m = /העברה[\s/:.\-]+(.+)/.exec(d);
@@ -164,90 +162,33 @@ function descSimilar(a: string, b: string): boolean {
 export function reconcile(input: {
   period: ReportPeriod;
   checkingTxns: BankTxn[];
-  directCharges: BankTxn[];
+  directCharges: CardCharge[];
   salarySlips: SalarySlip[];
 }): ReconcileResult {
   const months = [input.period.month1, input.period.month2];
   const inPeriod = (m: number | null): m is number =>
     m !== null && months.includes(m);
 
-  // The bank's latest activity date (YYYY-MM-DD compares lexicographically).
-  // Direct charges dated after this haven't settled in this bank file yet, so
-  // they belong to the next period and are excluded.
-  const bankLastDate = input.checkingTxns.reduce<string | null>(
-    (max, t) => (t.date && (max === null || t.date > max) ? t.date : max),
-    null,
-  );
-
   const expenseItems: ExpenseItem[] = [];
+  const pending: ExpenseItem[] = [];
   const income: IncomeItem[] = [];
   const transfers: TransferItem[] = [];
   const reviewCredits: ReviewCredit[] = [];
   const cashByMonth = new Map<number, number>();
   let directAggregateSum = 0;
+  // Latest bank card-settlement date (ישראכרט-דיירקט / קיזוז). A card charge that
+  // settles after this hasn't posted to the bank yet → pending, excluded.
+  let lastSettlementDate: string | null = null;
 
   const bankSalaries: { month: number; amount: number; desc: string }[] = [];
 
-  // --- Foreign-currency card charges ---
-  // Merge each "קרן" (principal) + "עמלות" (fee) bank pair into one ₪ amount,
-  // attach the card merchant name (matched by the foreign amount), and treat it
-  // as a single card (direct) charge. The raw bank lines and the raw foreign
-  // card row are consumed so nothing shows twice.
-  const skipChecking = new Set<number>();
-  const skipDirect = new Set<number>();
-  const foreignExpenses: ExpenseItem[] = [];
-  let forexIls = 0;
-
-  const forexFees: Array<{ ils: number; date: string | null; used: boolean }> = [];
-  input.checkingTxns.forEach((t, i) => {
-    if (isForexFee((t.description ?? "").trim())) {
-      skipChecking.add(i);
-      forexFees.push({ ils: Math.abs(t.amount ?? 0), date: t.date, used: false });
-    }
-  });
-
-  input.checkingTxns.forEach((t, i) => {
-    const m = FOREX_PRINCIPAL_RE.exec((t.description ?? "").trim());
-    if (!m) return;
-    skipChecking.add(i);
-    const foreign = Number(m[2]);
-    const fee = forexFees.find((f) => !f.used && f.date === t.date);
-    if (fee) fee.used = true;
-    const ils = Math.abs(t.amount ?? 0) + (fee?.ils ?? 0);
-    forexIls += ils;
-
-    // Match the card charge by foreign amount; prefer a Latin/English merchant
-    // so we don't grab a domestic ₪ charge of the same number.
-    let merchant = `מטבע חוץ ${m[1].toUpperCase()} ${m[2]}`;
-    let cardMonth: number | null = null;
-    for (let j = 0; j < input.directCharges.length; j++) {
-      if (skipDirect.has(j)) continue;
-      const c = input.directCharges[j];
-      const cd = (c.description ?? "").trim();
-      if (approxEqual(Math.abs(c.amount ?? 0), foreign, 0.5) && (cd === "" || hasLatin(cd))) {
-        skipDirect.add(j);
-        if (cd) merchant = cd;
-        cardMonth = monthOf(c.date);
-        break;
-      }
-    }
-
-    const month = cardMonth ?? monthOf(t.date);
-    if (inPeriod(month)) {
-      foreignExpenses.push({ month, amount: ils, description: merchant, source: "direct" });
-    }
-  });
-
   // --- Checking account (עו"ש) ---
-  for (let i = 0; i < input.checkingTxns.length; i++) {
-    if (skipChecking.has(i)) continue;
-    const t = input.checkingTxns[i];
+  for (const t of input.checkingTxns) {
     const desc = (t.description ?? "").trim();
     const amt = t.amount ?? 0;
 
-    // Salaries are attributed by income month (deposit-day rule), which can
-    // differ from the deposit month — handle before the period filter so a
-    // salary deposited late in the prior month still lands in this period.
+    // Salaries are attributed by income month (deposit-day rule), before the
+    // period filter, so a late prior-month deposit still lands in this period.
     if (amt > 0 && isSalaryCredit(desc)) {
       const incMonth = salaryIncomeMonth(t.date);
       if (incMonth !== null && months.includes(incMonth)) {
@@ -262,10 +203,14 @@ export function reconcile(input: {
       continue;
     }
 
-    // Direct-card settlement aggregates: never an expense; sum ALL of them
-    // (regardless of period) as the card checksum vs the card detail.
-    if (amt < 0 && isDirectAggregate(desc)) {
+    // Card settlements — domestic (ישראכרט-דיירקט) and foreign (קיזוז מטח): never
+    // an expense (the card detail carries the per-merchant ₪). Sum them as the
+    // checksum aggregate and track the latest settlement date.
+    if (amt < 0 && (isDirectAggregate(desc) || isForexSettlement(desc))) {
       directAggregateSum += Math.abs(amt);
+      if (t.date && (lastSettlementDate === null || t.date > lastSettlementDate)) {
+        lastSettlementDate = t.date;
+      }
       continue;
     }
 
@@ -295,34 +240,30 @@ export function reconcile(input: {
     }
   }
 
-  // --- Direct card (דיירקט) merchant-level charges ---
-  // Convention: positive = money spent, negative = refund/credit. The net sum
-  // should tie out against the bank's ישראכרט-דיירקט settlements (checksum).
+  // --- Direct card charges ---
+  // Use the card's ₪ "סכום חיוב". Attribute to a report month by the transaction
+  // date; include only charges that have already settled in the bank
+  // (חיוב בחשבון הבנק <= lastSettlementDate). The rest are pending (excluded).
   let directDetailSum = 0;
-  for (let j = 0; j < input.directCharges.length; j++) {
-    if (skipDirect.has(j)) continue; // consumed by foreign matching
-    const c = input.directCharges[j];
-    const month = monthOf(c.date);
+  for (const c of input.directCharges) {
+    const month = monthOf(c.transactionDate);
     if (!inPeriod(month)) continue;
-    // Cap at the bank's last settled date: later charges settle next period.
-    if (bankLastDate && c.date && c.date > bankLastDate) continue;
-    const spent = c.amount ?? 0;
-    directDetailSum += spent;
-    expenseItems.push({
+    const item: ExpenseItem = {
       month,
-      amount: spent,
-      description: (c.description ?? "").trim(),
+      amount: c.amount ?? 0,
+      description: (c.merchant ?? "").trim(),
       source: "direct",
-    });
+    };
+    const settled =
+      lastSettlementDate === null ||
+      (c.settlementDate !== null && c.settlementDate <= lastSettlementDate);
+    if (settled) {
+      directDetailSum += item.amount;
+      expenseItems.push(item);
+    } else {
+      pending.push(item);
+    }
   }
-
-  // Merged foreign card charges count as card detail; the bank settled them via
-  // קיזוז, so add the same total to the aggregate side (they tie out).
-  for (const f of foreignExpenses) {
-    directDetailSum += f.amount;
-    expenseItems.push(f);
-  }
-  directAggregateSum += forexIls;
 
   // --- Auto-cancel expense ↔ refund pairs (same amount + similar name) ---
   const excluded: ExcludedItem[] = [];
@@ -443,6 +384,7 @@ export function reconcile(input: {
     transfers: keptTransfers,
     reviewCredits: keptReview,
     excluded,
+    pending,
     cashWithdrawals,
     salaryCrossChecks,
     checksum: { directDetailSum, directAggregateSum },

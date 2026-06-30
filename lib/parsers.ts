@@ -184,3 +184,93 @@ export function parseXLSX(buffer: ArrayBuffer | Buffer, sourceLabel: string): Ba
   }
   return all;
 }
+
+// ============================================================================
+// Direct/Isracard card statement (XLSX) — richer than a bank statement: each
+// charge carries its bank settlement date and currency.
+// ============================================================================
+
+export interface CardCharge {
+  transactionDate: string | null; // תאריך עסקה
+  settlementDate: string | null; // חיוב בחשבון הבנק (when it posted to the bank)
+  merchant: string | null; // שם בית עסק
+  amount: number | null; // סכום חיוב (₪); positive = spent, negative = refund
+  currency: string | null; // מטבע (₪ / USD / EUR …)
+}
+
+const CARD_SETTLEMENT_KEYS = ["חיוב בחשבון הבנק"];
+const CARD_ILS_KEYS = ["סכום חיוב"];
+const CARD_TXN_DATE_KEYS = ["תאריך עסקה", "תאריך רכישה"];
+const CARD_MERCHANT_KEYS = ["שם בית עסק", "שם בית העסק", "שם העסק"];
+
+function colIndexByKeys(headers: string[], keys: string[]): number {
+  for (const k of keys) {
+    const nk = normalizeKey(k);
+    const exact = headers.findIndex((h) => normalizeKey(h) === nk);
+    if (exact >= 0) return exact;
+    const inc = headers.findIndex((h) => normalizeKey(h).includes(nk));
+    if (inc >= 0) return inc;
+  }
+  return -1;
+}
+
+// The card's real charges table has both a settlement-date column AND a
+// "סכום חיוב" column — which distinguishes it from the "עסקאות שטרם נקלטו"
+// (not-yet-captured) section that has neither.
+function findCardHeaderRow(matrix: unknown[][]): number {
+  const limit = Math.min(matrix.length, 80);
+  for (let i = 0; i < limit; i++) {
+    const cells = (matrix[i] ?? []).map((c) => normalizeKey(String(c ?? "")));
+    const hasSettle = cells.some((c) => c.includes("חיוב") && c.includes("בנק"));
+    const hasIls = cells.some((c) => c.includes("סכוםחיוב"));
+    if (hasSettle && hasIls) return i;
+  }
+  return -1;
+}
+
+export function parseCardXLSX(buffer: ArrayBuffer | Buffer): CardCharge[] {
+  const data: Buffer = Buffer.isBuffer(buffer) ? buffer : Buffer.from(new Uint8Array(buffer));
+  const wb = XLSX.read(data, { type: "buffer", cellDates: true });
+  const out: CardCharge[] = [];
+  for (const sheetName of wb.SheetNames) {
+    if (/בהמתנה|זמני|ממתין/.test(sheetName)) continue;
+    const sheet = wb.Sheets[sheetName];
+    const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+      header: 1,
+      defval: "",
+      raw: true,
+    });
+    const headerRow = findCardHeaderRow(matrix);
+    if (headerRow === -1) continue;
+
+    const headers = (matrix[headerRow] ?? []).map((c) => String(c ?? ""));
+    const settleCol = colIndexByKeys(headers, CARD_SETTLEMENT_KEYS);
+    const ilsCol = colIndexByKeys(headers, CARD_ILS_KEYS);
+    const txnDateCol = colIndexByKeys(headers, CARD_TXN_DATE_KEYS);
+    const merchantCol = colIndexByKeys(headers, CARD_MERCHANT_KEYS);
+    // currency: prefer the מטבע column that sits right after "סכום חיוב".
+    let currencyCol = headers.findIndex(
+      (h, idx) => normalizeKey(h) === "מטבע" && idx > ilsCol,
+    );
+    if (currencyCol === -1) {
+      currencyCol = headers.findIndex((h) => normalizeKey(h) === "מטבע");
+    }
+    if (ilsCol === -1 || merchantCol === -1) continue;
+
+    for (let i = headerRow + 1; i < matrix.length; i++) {
+      const row = matrix[i] ?? [];
+      const merchant = cleanText(String(row[merchantCol] ?? ""));
+      const amount = parseAmount(String(row[ilsCol] ?? ""));
+      if (!merchant || amount === null) continue;
+      if (SUMMARY_RE.test(merchant)) continue; // skip totals / section dividers
+      out.push({
+        transactionDate: txnDateCol >= 0 ? toISODate(row[txnDateCol]) : null,
+        settlementDate: settleCol >= 0 ? toISODate(row[settleCol]) : null,
+        merchant,
+        amount,
+        currency: currencyCol >= 0 ? cleanText(String(row[currencyCol] ?? "")) : null,
+      });
+    }
+  }
+  return out;
+}

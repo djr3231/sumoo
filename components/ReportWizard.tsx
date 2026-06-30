@@ -707,6 +707,29 @@ export function ReportWizard() {
                     </Section>
                   ) : null}
 
+                  {result.pending.length > 0 ? (
+                    <Section title="ממתין לאישור (טרם נקלט בבנק)">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>חודש</TableHead>
+                            <TableHead>תיאור</TableHead>
+                            <TableHead>סכום</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {result.pending.map((x, i) => (
+                            <TableRow key={i}>
+                              <TableCell>{x.month}</TableCell>
+                              <TableCell>{x.description}</TableCell>
+                              <TableCell className="tabular-nums">{formatILS(x.amount)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </Section>
+                  ) : null}
+
                   {result.transfers.length > 0 ? (
                     <Section title="העברות — להחלטה">
                       <Table>
