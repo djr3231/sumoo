@@ -13,11 +13,15 @@ import type { CardCharge } from "@/lib/parsers";
 
 // An expense line, NOT yet mapped to a government category — Step 5 (classify)
 // assigns the GOV_EXPENSE_CATEGORY and sums.
+// Where an expense line came from: the card detail, the bank statement, or a
+// cash receipt (added in the receipts step against a cash withdrawal).
+export type ExpenseSource = "direct" | "checking" | "cash";
+
 export interface ExpenseItem {
   month: number; // report month (one of the period's two months)
   amount: number; // ₪ expense (always positive; refunds are credits, not negatives)
   description: string;
-  source: "direct" | "checking";
+  source: ExpenseSource;
   date?: string; // purchase date (card transaction / bank txn) — for receipt matching
   receipt?: string; // attached receipt label (filename), set in the receipts step
 }
@@ -55,7 +59,7 @@ export interface ExcludedItem {
   month: number;
   amount: number; // signed
   description: string;
-  source: "direct" | "checking";
+  source: ExpenseSource;
   reason: "refund-pair";
 }
 

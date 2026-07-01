@@ -25,6 +25,7 @@ import {
 import {
   GOV_EXPENSE_CATEGORIES,
   GOV_EXPENSE_CATEGORY,
+  PAYMENT_METHOD,
   type GovExpenseCategory,
   type Receipt,
 } from "@/lib/types";
@@ -46,6 +47,18 @@ const STEPS = [
 function fmtDate(d?: string | null): string {
   return d ? d.split("-").reverse().join("/") : "—";
 }
+
+// Month number from an ISO date (null-safe).
+function monthOfISO(d?: string | null): number | null {
+  const m = d ? Number(d.slice(5, 7)) : NaN;
+  return Number.isFinite(m) && m >= 1 && m <= 12 ? m : null;
+}
+
+const SOURCE_LABEL: Record<"direct" | "checking" | "cash", string> = {
+  direct: "כרטיס",
+  checking: "בנק",
+  cash: "מזומן",
+};
 
 // Two-digit month label, e.g. 3 -> "03".
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -163,6 +176,8 @@ export function ReportWizard() {
   const [matchRan, setMatchRan] = useState(false);
   const [unmatchedReceipts, setUnmatchedReceipts] = useState<Receipt[]>([]);
   const [receiptLinks, setReceiptLinks] = useState<Record<string, string>>({});
+  const [addingCashId, setAddingCashId] = useState<string | null>(null);
+  const [cashGapAck, setCashGapAck] = useState(false);
   // Per-review-credit routing: where the user sends each זיכוי לבדיקה. Unset =
   // still under review (counted in neither total). Never affects the card gap.
   const [creditRoute, setCreditRoute] = useState<
@@ -170,7 +185,7 @@ export function ReportWizard() {
   >({});
   const [expenseFilter, setExpenseFilter] = useState("");
   const [expenseSourceFilter, setExpenseSourceFilter] = useState<
-    "all" | "direct" | "checking"
+    "all" | "direct" | "checking" | "cash"
   >("all");
   const [expenseSort, setExpenseSort] = useState<{
     key: "month" | "amount" | "description" | "source" | "category" | "date";
@@ -235,6 +250,10 @@ export function ReportWizard() {
       setTransferInclude(r.transfers.map(() => false));
       setCreditRoute({});
       setCardGapAck(false);
+      setCashGapAck(false);
+      setMatchRan(false);
+      setUnmatchedReceipts([]);
+      setReceiptLinks({});
     } catch (e) {
       setProcessError((e as Error).message);
     } finally {
@@ -278,6 +297,51 @@ export function ReportWizard() {
     } finally {
       setReceiptsLoading(false);
     }
+  }
+
+  // Turn a cash receipt into a real expense line (auto-classified, best-effort)
+  // that also reduces the month's cash-withdrawal residual in the מזומן step.
+  async function addCashExpense(r: Receipt) {
+    const month = monthOfISO(r.date);
+    if (r.amount === null || month === null) return;
+    const amount = Math.abs(r.amount);
+    const description = r.storeName ?? r.fileName;
+    setAddingCashId(r.id);
+    let category: GovExpenseCategory = GOV_EXPENSE_CATEGORY.Miscellaneous;
+    try {
+      const res = await fetch("/api/report/classify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: [{ description, amount }] }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok && typeof data.categories?.[0] === "string") {
+        category = data.categories[0] as GovExpenseCategory;
+      }
+    } catch {
+      // classification is best-effort — the line stays editable under שונות
+    }
+    setExpenses((prev) => [
+      ...prev,
+      {
+        month,
+        amount,
+        description,
+        category,
+        source: "cash",
+        date: r.date ?? undefined,
+        receipt: r.fileName,
+      },
+    ]);
+    setExpenseIncluded((prev) => [...prev, true]);
+    if (r.driveFileId) {
+      setReceiptLinks((prev) => ({
+        ...prev,
+        [r.fileName]: `https://drive.google.com/file/d/${r.driveFileId}/view`,
+      }));
+    }
+    setUnmatchedReceipts((prev) => prev.filter((x) => x.id !== r.id));
+    setAddingCashId(null);
   }
 
   function deleteExpense(i: number) {
@@ -349,6 +413,38 @@ export function ReportWizard() {
 
   // Receipts step (3): all expenses, sorted the same way (no classify filter).
   const receiptView = expenses.map((e, i) => ({ e, i })).sort(compareExpense);
+
+  // Receipts that matched no charge: cash ones dated in-period become expense
+  // candidates; the rest are surfaced for manual review (never auto-added).
+  const cashCandidates = unmatchedReceipts.filter((r) => {
+    const m = monthOfISO(r.date);
+    return (
+      r.paymentMethod === PAYMENT_METHOD.Cash &&
+      r.amount !== null &&
+      m !== null &&
+      periodMonths.includes(m)
+    );
+  });
+  const otherUnmatched = unmatchedReceipts.filter(
+    (r) => !cashCandidates.includes(r),
+  );
+
+  // Cash coverage per month (the מזומן step): withdrawn − Σ included cash lines.
+  const cashRows = (result?.cashWithdrawals ?? []).map((c) => {
+    const covered = expenses.reduce(
+      (a, e, i) =>
+        a +
+        (e.source === "cash" && expenseIncluded[i] && e.month === c.month
+          ? e.amount
+          : 0),
+      0,
+    );
+    return { month: c.month, withdrawn: c.amount, covered, residual: c.amount - covered };
+  });
+  const cashGapBlocking =
+    result != null &&
+    cashRows.some((r) => Math.abs(r.residual) > CARD_GAP_TOLERANCE) &&
+    !cashGapAck;
 
   function toggleSort(key: typeof expenseSort.key) {
     setExpenseSort((s) =>
@@ -627,7 +723,9 @@ export function ReportWizard() {
                       <Select
                         value={expenseSourceFilter}
                         onValueChange={(v) =>
-                          setExpenseSourceFilter(v as "all" | "direct" | "checking")
+                          setExpenseSourceFilter(
+                            v as "all" | "direct" | "checking" | "cash",
+                          )
                         }
                       >
                         <SelectTrigger className="w-32">
@@ -637,6 +735,7 @@ export function ReportWizard() {
                           <SelectItem value="all">הכל</SelectItem>
                           <SelectItem value="direct">כרטיס</SelectItem>
                           <SelectItem value="checking">בנק</SelectItem>
+                          <SelectItem value="cash">מזומן</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -706,7 +805,7 @@ export function ReportWizard() {
                               />
                             </TableCell>
                             <TableCell className="whitespace-nowrap text-muted-foreground">
-                              {e.source === "direct" ? "כרטיס" : "בנק"}
+                              {SOURCE_LABEL[e.source]}
                             </TableCell>
                             <TableCell>
                               <Select
@@ -1039,6 +1138,139 @@ export function ReportWizard() {
                     </TableBody>
                   </Table>
                 ) : null}
+
+                {matchRan && cashCandidates.length > 0 ? (
+                  <Section title="קבלות מזומן">
+                    <p className="mb-2 text-sm text-muted-foreground">
+                      קבלות שלא תואמות אף חיוב — הוספה תיצור שורת הוצאה ותקטין את
+                      יתרת המזומן של החודש.
+                    </p>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>תאריך</TableHead>
+                          <TableHead>בית עסק</TableHead>
+                          <TableHead>סכום</TableHead>
+                          <TableHead></TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {cashCandidates.map((r) => (
+                          <TableRow key={r.id}>
+                            <TableCell className="whitespace-nowrap tabular-nums">
+                              {fmtDate(r.date)}
+                            </TableCell>
+                            <TableCell>{r.storeName ?? r.fileName}</TableCell>
+                            <TableCell className="tabular-nums">
+                              {formatILS(Math.abs(r.amount ?? 0))}
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                size="sm"
+                                onClick={() => addCashExpense(r)}
+                                disabled={addingCashId !== null}
+                              >
+                                {addingCashId === r.id ? "מוסיף…" : "הוסף כהוצאה"}
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </Section>
+                ) : null}
+
+                {matchRan && otherUnmatched.length > 0 ? (
+                  <Section title="קבלות ללא התאמה">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>תאריך</TableHead>
+                          <TableHead>בית עסק</TableHead>
+                          <TableHead>סכום</TableHead>
+                          <TableHead>אמצעי תשלום</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {otherUnmatched.map((r) => (
+                          <TableRow key={r.id}>
+                            <TableCell className="whitespace-nowrap tabular-nums">
+                              {fmtDate(r.date)}
+                            </TableCell>
+                            <TableCell>{r.storeName ?? r.fileName}</TableCell>
+                            <TableCell className="tabular-nums">
+                              {formatILS(Math.abs(r.amount ?? 0))}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {r.paymentMethod}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </Section>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                עבד/י מסמכים תחילה בשלב פירוק וסיווג.
+              </p>
+            )
+          ) : step === 4 ? (
+            result ? (
+              <div className="space-y-4">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>חודש</TableHead>
+                      <TableHead>נמשך</TableHead>
+                      <TableHead>כוסה בקבלות</TableHead>
+                      <TableHead>יתרה לא מוסברת</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {cashRows.map((r) => (
+                      <TableRow key={r.month}>
+                        <TableCell>{r.month}</TableCell>
+                        <TableCell className="tabular-nums">
+                          {formatILS(r.withdrawn)}
+                        </TableCell>
+                        <TableCell className="tabular-nums">
+                          {formatILS(r.covered)}
+                        </TableCell>
+                        <TableCell
+                          className={cn(
+                            "tabular-nums",
+                            r.residual < -CARD_GAP_TOLERANCE ? "text-destructive" : "",
+                          )}
+                        >
+                          {formatILS(r.residual)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {cashRows.some((r) => r.residual < -CARD_GAP_TOLERANCE) ? (
+                  <p className="text-sm text-destructive">
+                    סכום קבלות המזומן עולה על סכום המשיכות — בדוק/י את הקבלות.
+                  </p>
+                ) : null}
+                {cashRows.some((r) => Math.abs(r.residual) > CARD_GAP_TOLERANCE) ? (
+                  <div className="space-y-2 border border-destructive p-3 text-sm text-destructive">
+                    <p>קיימת יתרת מזומן שאינה מכוסה בקבלות.</p>
+                    <label className="flex items-center gap-2">
+                      <Checkbox
+                        checked={cashGapAck}
+                        onCheckedChange={(v) => setCashGapAck(v === true)}
+                      />
+                      <span>אני מודע/ת לפער ומאשר/ת להמשיך</span>
+                    </label>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    כל המשיכות מכוסות בקבלות ✓
+                  </p>
+                )}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
@@ -1066,7 +1298,7 @@ export function ReportWizard() {
         {step > 0 && step < STEPS.length - 1 ? (
           <Button
             variant="outline"
-            disabled={step === 2 && cardGapBlocking}
+            disabled={(step === 2 && cardGapBlocking) || (step === 4 && cashGapBlocking)}
             onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}
           >
             המשך
