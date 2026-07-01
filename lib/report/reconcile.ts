@@ -18,6 +18,8 @@ export interface ExpenseItem {
   amount: number; // ₪ expense (always positive; refunds are credits, not negatives)
   description: string;
   source: "direct" | "checking";
+  date?: string; // purchase date (card transaction / bank txn) — for receipt matching
+  receipt?: string; // attached receipt label (filename), set in the receipts step
 }
 
 // Income is determinable by source, so it is categorized here.
@@ -283,7 +285,13 @@ export function reconcile(input: {
         cashByMonth.set(month, (cashByMonth.get(month) ?? 0) + abs);
         continue;
       }
-      expenseItems.push({ month, amount: abs, description: desc, source: "checking" });
+      expenseItems.push({
+        month,
+        amount: abs,
+        description: desc,
+        source: "checking",
+        date: t.date ?? undefined,
+      });
     } else if (amt > 0) {
       if (isChildAllowance(desc)) {
         income.push({
@@ -348,7 +356,13 @@ export function reconcile(input: {
     if (amount < 0) {
       reviewCredits.push({ month, amount: -amount, description, source: "direct" });
     } else {
-      expenseItems.push({ month, amount, description, source: "direct" });
+      expenseItems.push({
+        month,
+        amount,
+        description,
+        source: "direct",
+        date: c.transactionDate ?? c.settlementDate ?? undefined,
+      });
     }
   }
 
