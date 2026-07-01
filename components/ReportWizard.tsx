@@ -42,6 +42,11 @@ const STEPS = [
   "הפקת דוח",
 ] as const;
 
+// ISO YYYY-MM-DD → DD/MM/YYYY for display (— when absent).
+function fmtDate(d?: string | null): string {
+  return d ? d.split("-").reverse().join("/") : "—";
+}
+
 // Two-digit month label, e.g. 3 -> "03".
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
@@ -648,6 +653,7 @@ export function ReportWizard() {
                           >
                             חודש{sortArrow("month")}
                           </TableHead>
+                          <TableHead>תאריך</TableHead>
                           <TableHead
                             className="cursor-pointer"
                             onClick={() => toggleSort("amount")}
@@ -704,6 +710,9 @@ export function ReportWizard() {
                                   ))}
                                 </SelectContent>
                               </Select>
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
+                              {fmtDate(e.date)}
                             </TableCell>
                             <TableCell>
                               <Input
@@ -958,6 +967,7 @@ export function ReportWizard() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>חודש</TableHead>
+                        <TableHead>תאריך</TableHead>
                         <TableHead>תיאור</TableHead>
                         <TableHead>סכום</TableHead>
                         <TableHead>קבלה</TableHead>
@@ -967,6 +977,9 @@ export function ReportWizard() {
                       {expenses.map((e, i) => (
                         <TableRow key={i}>
                           <TableCell>{e.month}</TableCell>
+                          <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
+                            {fmtDate(e.date)}
+                          </TableCell>
                           <TableCell>{e.description}</TableCell>
                           <TableCell className="tabular-nums">{formatILS(e.amount)}</TableCell>
                           <TableCell>
