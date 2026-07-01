@@ -245,14 +245,16 @@ export function reconcile(input: {
     }
 
     // Card settlements — domestic (ישראכרט-דיירקט) and foreign (קיזוז מטח): never
-    // an expense (the card detail carries the per-merchant ₪). Sum them as the
-    // checksum aggregate and track the latest settlement date.
-    if (amt < 0 && (isDirectAggregate(desc) || isForexSettlement(desc))) {
-      directAggregateSum += Math.abs(amt);
+    // an income/expense of their own (the card detail carries the per-merchant ₪).
+    // Debits (חובה, negative) add to the checksum aggregate; a card-origin credit
+    // (זכות, positive — a refund the bank posts back) nets AGAINST it, so the
+    // aggregate matches what the card detail nets to. Track the latest date.
+    if (isDirectAggregate(desc) || isForexSettlement(desc)) {
+      directAggregateSum += amt < 0 ? Math.abs(amt) : -Math.abs(amt);
       if (t.date && (lastSettlementDate === null || t.date > lastSettlementDate)) {
         lastSettlementDate = t.date;
       }
-      if (isForexSettlement(desc)) {
+      if (amt < 0 && isForexSettlement(desc)) {
         const km = FOREX_PRINCIPAL_RE.exec(desc);
         if (km) {
           forexPrincipals.push({
