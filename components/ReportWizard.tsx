@@ -321,6 +321,19 @@ export function ReportWizard() {
   const cardGapBlocking =
     result != null && Math.abs(cardGap) > CARD_GAP_TOLERANCE && !cardGapAck;
 
+  // Shared expense comparator (used by the classify table and the receipts table).
+  const compareExpense = (
+    a: { e: CategorizedExpense },
+    b: { e: CategorizedExpense },
+  ) => {
+    const k = expenseSort.key;
+    const cmp =
+      k === "amount" || k === "month"
+        ? a.e[k] - b.e[k]
+        : String(a.e[k] ?? "").localeCompare(String(b.e[k] ?? ""), "he");
+    return expenseSort.dir === "asc" ? cmp : -cmp;
+  };
+
   // Filtered + sorted view of expenses, keyed to the original index so the
   // include/edit/delete handlers still target the right row.
   const expenseView = expenses
@@ -332,14 +345,10 @@ export function ReportWizard() {
           e.description.includes(expenseFilter) ||
           e.category.includes(expenseFilter)),
     )
-    .sort((a, b) => {
-      const k = expenseSort.key;
-      const cmp =
-        k === "amount" || k === "month"
-          ? a.e[k] - b.e[k]
-          : String(a.e[k] ?? "").localeCompare(String(b.e[k] ?? ""), "he");
-      return expenseSort.dir === "asc" ? cmp : -cmp;
-    });
+    .sort(compareExpense);
+
+  // Receipts step (3): all expenses, sorted the same way (no classify filter).
+  const receiptView = expenses.map((e, i) => ({ e, i })).sort(compareExpense);
 
   function toggleSort(key: typeof expenseSort.key) {
     setExpenseSort((s) =>
@@ -971,15 +980,35 @@ export function ReportWizard() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>חודש</TableHead>
-                        <TableHead>תאריך</TableHead>
-                        <TableHead>תיאור</TableHead>
-                        <TableHead>סכום</TableHead>
+                        <TableHead
+                          className="cursor-pointer"
+                          onClick={() => toggleSort("month")}
+                        >
+                          חודש{sortArrow("month")}
+                        </TableHead>
+                        <TableHead
+                          className="cursor-pointer"
+                          onClick={() => toggleSort("date")}
+                        >
+                          תאריך{sortArrow("date")}
+                        </TableHead>
+                        <TableHead
+                          className="cursor-pointer"
+                          onClick={() => toggleSort("description")}
+                        >
+                          תיאור{sortArrow("description")}
+                        </TableHead>
+                        <TableHead
+                          className="cursor-pointer"
+                          onClick={() => toggleSort("amount")}
+                        >
+                          סכום{sortArrow("amount")}
+                        </TableHead>
                         <TableHead>קבלה</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {expenses.map((e, i) => (
+                      {receiptView.map(({ e, i }) => (
                         <TableRow key={i}>
                           <TableCell>{e.month}</TableCell>
                           <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
