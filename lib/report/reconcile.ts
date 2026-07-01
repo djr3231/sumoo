@@ -15,7 +15,7 @@ import type { CardCharge } from "@/lib/parsers";
 // assigns the GOV_EXPENSE_CATEGORY and sums.
 export interface ExpenseItem {
   month: number; // report month (one of the period's two months)
-  amount: number; // ₪ expense (negative for a direct refund/credit)
+  amount: number; // ₪ expense (always positive; refunds are credits, not negatives)
   description: string;
   source: "direct" | "checking";
 }
@@ -42,6 +42,9 @@ export interface ReviewCredit {
   month: number;
   amount: number;
   description: string;
+  // "direct" = a card refund (part of the card detail — subtracted in the card
+  // gap); "checking" = a bank credit (transfer/other) awaiting the user's routing.
+  source: "direct" | "checking";
 }
 
 // An expense/refund pair that cancels out — kept out of the totals and shown
@@ -292,7 +295,7 @@ export function reconcile(input: {
       } else if (isTransfer(desc)) {
         transfers.push({ month, amount: amt, name: transferName(desc), description: desc });
       } else {
-        reviewCredits.push({ month, amount: amt, description: desc });
+        reviewCredits.push({ month, amount: amt, description: desc, source: "checking" });
       }
     }
   }
@@ -330,50 +333,33 @@ export function reconcile(input: {
       }
     }
 
-    const item: ExpenseItem = {
-      month,
-      amount,
-      description: (c.merchant ?? "").trim(),
-      source: "direct",
-    };
+    const description = (c.merchant ?? "").trim();
     const settled =
       c.settlementDate === null ||
       (lastSettlementDate !== null && c.settlementDate <= lastSettlementDate);
-    if (settled) {
-      directDetailSum += amount;
-      expenseItems.push(item);
+    if (!settled) {
+      pending.push({ month, amount, description, source: "direct" });
+      continue;
+    }
+    // Keep the amount (incl. refunds) in the card-detail checksum, but never emit
+    // a negative expense: a card credit (refund) is surfaced as a review credit
+    // tagged "direct" so it can cancel a matching charge or be routed by the user.
+    directDetailSum += amount;
+    if (amount < 0) {
+      reviewCredits.push({ month, amount: -amount, description, source: "direct" });
     } else {
-      pending.push(item);
+      expenseItems.push({ month, amount, description, source: "direct" });
     }
   }
 
-  // --- Auto-cancel expense ↔ refund pairs (same amount + similar name) ---
+  // --- Auto-cancel expense ↔ credit pairs (same amount + similar name) ---
+  // A credit that exactly offsets a charge is a voided expense → drop both sides.
   const excluded: ExcludedItem[] = [];
   const usedExpense = new Set<number>();
   const usedReview = new Set<number>();
   const usedTransfer = new Set<number>();
 
-  // (a) a negative expense (direct refund) paired with a positive expense
-  for (let i = 0; i < expenseItems.length; i++) {
-    const refund = expenseItems[i];
-    if (usedExpense.has(i) || refund.amount >= 0) continue;
-    for (let j = 0; j < expenseItems.length; j++) {
-      const charge = expenseItems[j];
-      if (j === i || usedExpense.has(j) || charge.amount <= 0) continue;
-      if (
-        approxEqual(charge.amount, -refund.amount) &&
-        descSimilar(charge.description, refund.description)
-      ) {
-        usedExpense.add(i);
-        usedExpense.add(j);
-        excluded.push({ ...charge, reason: "refund-pair" });
-        excluded.push({ ...refund, reason: "refund-pair" });
-        break;
-      }
-    }
-  }
-
-  // (b) a review credit (checking refund) paired with a positive expense
+  // (b) a review credit (card refund or bank credit) paired with a positive expense
   for (let i = 0; i < reviewCredits.length; i++) {
     const credit = reviewCredits[i];
     if (usedReview.has(i)) continue;
@@ -391,7 +377,7 @@ export function reconcile(input: {
           month: credit.month,
           amount: credit.amount,
           description: credit.description,
-          source: "checking",
+          source: credit.source,
           reason: "refund-pair",
         });
         break;

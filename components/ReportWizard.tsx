@@ -250,11 +250,18 @@ export function ReportWizard() {
 
   // Card reconciliation: live card-detail total (editable direct lines) vs the
   // bank ישראכרט-דיירקט settlements. Updates as the user adds/edits/deletes.
+  // Card refunds are surfaced as "direct" review credits (not negative expenses),
+  // so subtract them here to keep the detail total = the net card charges.
   const CARD_GAP_TOLERANCE = 1;
-  const liveCardDetailSum = expenses.reduce(
-    (a, e, i) => a + (e.source === "direct" && expenseIncluded[i] ? e.amount : 0),
-    0,
-  );
+  const liveCardDetailSum =
+    expenses.reduce(
+      (a, e, i) => a + (e.source === "direct" && expenseIncluded[i] ? e.amount : 0),
+      0,
+    ) -
+    (result?.reviewCredits ?? []).reduce(
+      (a, c) => a + (c.source === "direct" ? c.amount : 0),
+      0,
+    );
   const cardGap = result
     ? liveCardDetailSum - result.checksum.directAggregateSum
     : 0;
