@@ -92,8 +92,8 @@ export const GOV_INCOME_CATEGORY = {
 export type GovIncomeCategory = (typeof GOV_INCOME_CATEGORY)[keyof typeof GOV_INCOME_CATEGORY];
 export const GOV_INCOME_CATEGORIES: GovIncomeCategory[] = Object.values(GOV_INCOME_CATEGORY);
 
-// 22 named expense rows (template §3.2; the template's 23rd row is a blank
-// spare and is not a category). The Food label carries a dynamic "מס' נפשות __"
+// 23 named expense rows (the clean gov template lists these; a trailing blank
+// spare row is not a category). The Food label carries a dynamic "מס' נפשות __"
 // (household size) suffix on the actual report — stored here as the clean stem
 // and filled with the count at generate-time.
 export const GOV_EXPENSE_CATEGORY = {
@@ -109,6 +109,7 @@ export const GOV_EXPENSE_CATEGORY = {
   Electricity: "חשמל",
   Clothing: "הלבשה",
   CarMaintenance: "אחזקת רכב",
+  Education: "חינוך ותרבות",
   Travel: "נסיעות",
   TrusteePayment: "תשלום חודשי לממונה",
   ExceptionalMedical: "הוצאות רפואיות חריגות",

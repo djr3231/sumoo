@@ -601,6 +601,7 @@ Mapping hints (merchant → category):
 - house committee (ועד בית) → "וועד בית"
 - receiver / trustee / payment to trustee (כונס, ממונה) → "תשלום חודשי לממונה"
 - household goods / cleaning supplies / home maintenance → "כלי בית ותחזוקה"
+- school / tuition / courses / books / cinema (סינמה סיטי, יס פלאנט) / museums / attractions / חוגים → "חינוך ותרבות"
 - if nothing clearly fits → "שונות".
 
 For each item return its i and its category. Do not invent categories outside the list.`;
