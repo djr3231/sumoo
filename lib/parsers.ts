@@ -3,10 +3,25 @@ import * as XLSX from "xlsx";
 import type { BankTxn } from "./types";
 
 const HEBREW_DATE_KEYS = ["תאריך", "תאריך עסקה", "תאריך חיוב", "תאריך ערך"];
-const HEBREW_AMOUNT_KEYS = ["סכום", "חיוב", "סכום בש\"ח", "סכום החיוב", "סך הכל", "סכום בשקלים"];
+const HEBREW_AMOUNT_KEYS = [
+  "סכום",
+  "חיוב",
+  'סכום בש"ח',
+  "סכום החיוב",
+  "סך הכל",
+  "סכום בשקלים",
+];
 const HEBREW_DEBIT_KEYS = ["חובה"];
 const HEBREW_CREDIT_KEYS = ["זכות"];
-const HEBREW_DESC_KEYS = ["תיאור", "תיאור פעולה", "תיאור הפעולה", "פירוט", "שם בית עסק", "שם העסק", "פרטי תנועה"];
+const HEBREW_DESC_KEYS = [
+  "תיאור",
+  "תיאור פעולה",
+  "תיאור הפעולה",
+  "פירוט",
+  "שם בית עסק",
+  "שם העסק",
+  "פרטי תנועה",
+];
 
 // Tokens that identify a transactions header row (used to skip metadata rows
 // and non-transaction sheets in bank exports).
@@ -19,10 +34,12 @@ const SUMMARY_RE = /סה["'׳]?כ|סיכום/;
 // Normalize a header/key for matching: drop whitespace, parenthetical units
 // like "(₪)", and currency/quote symbols, so "חובה(₪)" matches "חובה".
 function normalizeKey(s: string): string {
-  return s
+  const norKey = s
     .replace(/\s+/g, "")
     .replace(/\([^)]*\)/g, "")
     .replace(/[₪"׳'’]/g, "");
+
+  return norKey;
 }
 
 // Strip bidi control characters that bank exports embed in text cells.
@@ -32,7 +49,10 @@ function cleanText(s: string | null): string | null {
   return out || null;
 }
 
-function findKey(row: Record<string, unknown>, key: string): string | undefined {
+function findKey(
+  row: Record<string, unknown>,
+  key: string,
+): string | undefined {
   const nk = normalizeKey(key);
   const keys = Object.keys(row);
   return (
@@ -49,7 +69,12 @@ function pick(row: Record<string, unknown>, keys: string[]): string | null {
 function pickRaw(row: Record<string, unknown>, keys: string[]): unknown {
   for (const k of keys) {
     const found = findKey(row, k);
-    if (found && row[found] !== "" && row[found] !== null && row[found] !== undefined) {
+    if (
+      found &&
+      row[found] !== "" &&
+      row[found] !== null &&
+      row[found] !== undefined
+    ) {
       return row[found];
     }
   }
@@ -97,13 +122,18 @@ function toISODate(v: unknown): string | null {
 
 function parseAmount(s: string | null): number | null {
   if (s === null) return null;
-  const cleaned = String(s).replace(/[₪,\s]/g, "").replace(/[()]/g, "-");
+  const cleaned = String(s)
+    .replace(/[₪,\s]/g, "")
+    .replace(/[()]/g, "-");
   if (!cleaned) return null;
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
 }
 
-function rowsToTxns(rows: Record<string, unknown>[], sourceLabel: string): BankTxn[] {
+function rowsToTxns(
+  rows: Record<string, unknown>[],
+  sourceLabel: string,
+): BankTxn[] {
   const out: BankTxn[] = [];
   for (const row of rows) {
     const date = toISODate(pickRaw(row, HEBREW_DATE_KEYS));
@@ -153,8 +183,13 @@ function findHeaderRow(matrix: unknown[][]): number {
   return -1;
 }
 
-export function parseXLSX(buffer: ArrayBuffer | Buffer, sourceLabel: string): BankTxn[] {
-  const data: Buffer = Buffer.isBuffer(buffer) ? buffer : Buffer.from(new Uint8Array(buffer));
+export function parseXLSX(
+  buffer: ArrayBuffer | Buffer,
+  sourceLabel: string,
+): BankTxn[] {
+  const data: Buffer = Buffer.isBuffer(buffer)
+    ? buffer
+    : Buffer.from(new Uint8Array(buffer));
   const wb = XLSX.read(data, { type: "buffer", cellDates: true });
   const all: BankTxn[] = [];
   for (const sheetName of wb.SheetNames) {
@@ -196,12 +231,18 @@ export interface CardCharge {
   merchant: string | null; // שם בית עסק
   amount: number | null; // סכום חיוב (₪); positive = spent, negative = refund
   currency: string | null; // מטבע (₪ / USD / EUR …)
+  voucher: string | null; // מס' שובר — unique per charge; used to de-dup across sheets
 }
 
 const CARD_SETTLEMENT_KEYS = ["חיוב בחשבון הבנק"];
 const CARD_ILS_KEYS = ["סכום חיוב"];
+const CARD_CURRENCY_KEYS = ["מטבע חיוב"];
 const CARD_TXN_DATE_KEYS = ["תאריך עסקה", "תאריך רכישה"];
 const CARD_MERCHANT_KEYS = ["שם בית עסק", "שם בית העסק", "שם העסק"];
+const CARD_VOUCHER_KEYS = ["מס' שובר", "מספר שובר", "שובר"];
+
+// Section titles for charges the bank hasn't posted yet — must never be counted.
+const CARD_PENDING_SECTION_RE = /שטרם\s*נקלט|בהמתנה|זמני|ממתין/;
 
 function colIndexByKeys(headers: string[], keys: string[]): number {
   for (const k of keys) {
@@ -214,61 +255,96 @@ function colIndexByKeys(headers: string[], keys: string[]): number {
   return -1;
 }
 
-// The card's real charges table has both a settlement-date column AND a
-// "סכום חיוב" column — which distinguishes it from the "עסקאות שטרם נקלטו"
-// (not-yet-captured) section that has neither.
-function findCardHeaderRow(matrix: unknown[][]): number {
-  const limit = Math.min(matrix.length, 80);
-  for (let i = 0; i < limit; i++) {
-    const cells = (matrix[i] ?? []).map((c) => normalizeKey(String(c ?? "")));
-    const hasSettle = cells.some((c) => c.includes("חיוב") && c.includes("בנק"));
-    const hasIls = cells.some((c) => c.includes("סכוםחיוב"));
-    if (hasSettle && hasIls) return i;
-  }
-  return -1;
+// A card charge table's header row carries a "סכום חיוב" column plus a merchant
+// and a purchase-date column. The settlement-date column ("חיוב בחשבון הבנק") is
+// present only in some tables (e.g. "עסקאות בחיוב מחוץ למועד") — not in the regular
+// "עסקאות למועד חיוב" table — so it is NOT required to recognise a header.
+function isCardHeaderRow(cells: string[]): boolean {
+  const norm = cells.map((c) => normalizeKey(c));
+  const hasIls = norm.some((c) => c.includes("סכוםחיוב"));
+  const hasMerchant = norm.some(
+    (c) => c.includes("שםביתעסק") || c.includes("שםהעסק"),
+  );
+  const hasDate = norm.some(
+    (c) => c.includes("תאריךעסקה") || c.includes("תאריךרכישה"),
+  );
+  return hasIls && hasMerchant && hasDate;
 }
 
+interface CardCols {
+  settle: number;
+  ils: number;
+  txn: number;
+  merchant: number;
+  currency: number;
+  voucher: number;
+}
+
+// A card XLSX groups charges into several titled tables ("עסקאות למועד חיוב",
+// "עסקאות בחיוב מחוץ למועד", "עסקאות שטרם נקלטו"), each with its own header row and
+// column layout. Walk every sheet: track the latest section title, and when a
+// header row appears, parse the rows beneath it with THAT table's columns — unless
+// the section is one the bank hasn't posted yet.
 export function parseCardXLSX(buffer: ArrayBuffer | Buffer): CardCharge[] {
-  const data: Buffer = Buffer.isBuffer(buffer) ? buffer : Buffer.from(new Uint8Array(buffer));
+  const data: Buffer = Buffer.isBuffer(buffer)
+    ? buffer
+    : Buffer.from(new Uint8Array(buffer));
   const wb = XLSX.read(data, { type: "buffer", cellDates: true });
   const out: CardCharge[] = [];
   for (const sheetName of wb.SheetNames) {
-    if (/בהמתנה|זמני|ממתין/.test(sheetName)) continue;
+    if (CARD_PENDING_SECTION_RE.test(sheetName)) continue;
     const sheet = wb.Sheets[sheetName];
     const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
       header: 1,
       defval: "",
       raw: true,
     });
-    const headerRow = findCardHeaderRow(matrix);
-    if (headerRow === -1) continue;
 
-    const headers = (matrix[headerRow] ?? []).map((c) => String(c ?? ""));
-    const settleCol = colIndexByKeys(headers, CARD_SETTLEMENT_KEYS);
-    const ilsCol = colIndexByKeys(headers, CARD_ILS_KEYS);
-    const txnDateCol = colIndexByKeys(headers, CARD_TXN_DATE_KEYS);
-    const merchantCol = colIndexByKeys(headers, CARD_MERCHANT_KEYS);
-    // currency: prefer the מטבע column that sits right after "סכום חיוב".
-    let currencyCol = headers.findIndex(
-      (h, idx) => normalizeKey(h) === "מטבע" && idx > ilsCol,
-    );
-    if (currencyCol === -1) {
-      currencyCol = headers.findIndex((h) => normalizeKey(h) === "מטבע");
-    }
-    if (ilsCol === -1 || merchantCol === -1) continue;
+    let cols: CardCols | null = null;
+    let skipSection = false;
+    let currentTitle = "";
 
-    for (let i = headerRow + 1; i < matrix.length; i++) {
+    for (let i = 0; i < matrix.length; i++) {
       const row = matrix[i] ?? [];
-      const merchant = cleanText(String(row[merchantCol] ?? ""));
-      const amount = parseAmount(String(row[ilsCol] ?? ""));
+      const cells = row.map((c) => String(c ?? ""));
+
+      if (isCardHeaderRow(cells)) {
+        cols = {
+          settle: colIndexByKeys(cells, CARD_SETTLEMENT_KEYS),
+          ils: colIndexByKeys(cells, CARD_ILS_KEYS),
+          txn: colIndexByKeys(cells, CARD_TXN_DATE_KEYS),
+          merchant: colIndexByKeys(cells, CARD_MERCHANT_KEYS),
+          currency: colIndexByKeys(cells, CARD_CURRENCY_KEYS),
+          voucher: colIndexByKeys(cells, CARD_VOUCHER_KEYS),
+        };
+        skipSection = CARD_PENDING_SECTION_RE.test(currentTitle);
+        continue;
+      }
+
+      // A section title (e.g. "עסקאות למועד חיוב") ends the previous table; the
+      // next header row decides whether the new section is parsed or skipped.
+      if (cells.join("").includes("עסקאות")) {
+        currentTitle = cells.join(" ").trim();
+        cols = null;
+        continue;
+      }
+
+      if (!cols || skipSection || cols.ils === -1 || cols.merchant === -1) {
+        continue;
+      }
+
+      const merchant = cleanText(String(row[cols.merchant] ?? ""));
+      const amount = parseAmount(String(row[cols.ils] ?? ""));
       if (!merchant || amount === null) continue;
       if (SUMMARY_RE.test(merchant)) continue; // skip totals / section dividers
       out.push({
-        transactionDate: txnDateCol >= 0 ? toISODate(row[txnDateCol]) : null,
-        settlementDate: settleCol >= 0 ? toISODate(row[settleCol]) : null,
+        transactionDate: cols.txn >= 0 ? toISODate(row[cols.txn]) : null,
+        settlementDate: cols.settle >= 0 ? toISODate(row[cols.settle]) : null,
         merchant,
         amount,
-        currency: currencyCol >= 0 ? cleanText(String(row[currencyCol] ?? "")) : null,
+        currency:
+          cols.currency >= 0 ? cleanText(String(row[cols.currency] ?? "")) : null,
+        voucher: cols.voucher >= 0 ? cleanText(String(row[cols.voucher] ?? "")) : null,
       });
     }
   }

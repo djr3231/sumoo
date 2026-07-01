@@ -79,6 +79,7 @@ function directPdfToCardCharges(charges: DirectCharge[]): CardCharge[] {
     amount:
       c.amount == null ? null : c.isCredit ? -Math.abs(c.amount) : Math.abs(c.amount),
     currency: null,
+    voucher: null,
   }));
 }
 
