@@ -150,6 +150,11 @@ export function ReportWizard() {
   const [expenseIncluded, setExpenseIncluded] = useState<boolean[]>([]);
   const [incomeIncluded, setIncomeIncluded] = useState<boolean[]>([]);
   const [cardGapAck, setCardGapAck] = useState(false);
+  // Per-review-credit routing: where the user sends each זיכוי לבדיקה. Unset =
+  // still under review (counted in neither total). Never affects the card gap.
+  const [creditRoute, setCreditRoute] = useState<
+    Record<number, "income" | "expense" | "exclude">
+  >({});
   const [expenseFilter, setExpenseFilter] = useState("");
   const [expenseSourceFilter, setExpenseSourceFilter] = useState<
     "all" | "direct" | "checking"
@@ -215,6 +220,7 @@ export function ReportWizard() {
       setExpenseIncluded(r.expenses.map(() => true));
       setIncomeIncluded(r.income.map(() => true));
       setTransferInclude(r.transfers.map(() => false));
+      setCreditRoute({});
       setCardGapAck(false);
     } catch (e) {
       setProcessError((e as Error).message);
@@ -450,12 +456,25 @@ export function ReportWizard() {
                             ) +
                             result.transfers
                               .filter((t, i) => transferInclude[i] && t.month === m)
-                              .reduce((a, t) => a + t.amount, 0);
-                          const expenseTotal = expenses.reduce(
-                            (a, e, i) =>
-                              a + (expenseIncluded[i] && e.month === m ? e.amount : 0),
-                            0,
-                          );
+                              .reduce((a, t) => a + t.amount, 0) +
+                            result.reviewCredits.reduce(
+                              (a, c, i) =>
+                                a + (creditRoute[i] === "income" && c.month === m ? c.amount : 0),
+                              0,
+                            );
+                          // Credits routed to "expense" are a minus (a refund), so
+                          // they REDUCE the expense total — never add to it.
+                          const expenseTotal =
+                            expenses.reduce(
+                              (a, e, i) =>
+                                a + (expenseIncluded[i] && e.month === m ? e.amount : 0),
+                              0,
+                            ) -
+                            result.reviewCredits.reduce(
+                              (a, c, i) =>
+                                a + (creditRoute[i] === "expense" && c.month === m ? c.amount : 0),
+                              0,
+                            );
                           return (
                             <TableRow key={m}>
                               <TableCell>{m}</TableCell>
@@ -827,6 +846,7 @@ export function ReportWizard() {
                             <TableHead>חודש</TableHead>
                             <TableHead>סכום</TableHead>
                             <TableHead>תיאור</TableHead>
+                            <TableHead>ניתוב</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -835,6 +855,33 @@ export function ReportWizard() {
                               <TableCell>{c.month}</TableCell>
                               <TableCell className="tabular-nums">{formatILS(c.amount)}</TableCell>
                               <TableCell>{c.description}</TableCell>
+                              <TableCell>
+                                <div className="flex gap-1">
+                                  {(
+                                    [
+                                      ["income", "הכנסה"],
+                                      ["expense", "הוצאה"],
+                                      ["exclude", "לא לכלול"],
+                                    ] as const
+                                  ).map(([route, label]) => (
+                                    <Button
+                                      key={route}
+                                      size="sm"
+                                      variant={creditRoute[i] === route ? "default" : "outline"}
+                                      onClick={() =>
+                                        setCreditRoute((prev) => {
+                                          const next = { ...prev };
+                                          if (next[i] === route) delete next[i];
+                                          else next[i] = route;
+                                          return next;
+                                        })
+                                      }
+                                    >
+                                      {label}
+                                    </Button>
+                                  ))}
+                                </div>
+                              </TableCell>
                             </TableRow>
                           ))}
                         </TableBody>
