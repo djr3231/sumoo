@@ -173,7 +173,7 @@ export function ReportWizard() {
     "all" | "direct" | "checking"
   >("all");
   const [expenseSort, setExpenseSort] = useState<{
-    key: "month" | "amount" | "description" | "source" | "category";
+    key: "month" | "amount" | "description" | "source" | "category" | "date";
     dir: "asc" | "desc";
   }>({ key: "month", dir: "asc" });
 
@@ -337,7 +337,7 @@ export function ReportWizard() {
       const cmp =
         k === "amount" || k === "month"
           ? a.e[k] - b.e[k]
-          : String(a.e[k]).localeCompare(String(b.e[k]), "he");
+          : String(a.e[k] ?? "").localeCompare(String(b.e[k] ?? ""), "he");
       return expenseSort.dir === "asc" ? cmp : -cmp;
     });
 
@@ -653,7 +653,12 @@ export function ReportWizard() {
                           >
                             חודש{sortArrow("month")}
                           </TableHead>
-                          <TableHead>תאריך</TableHead>
+                          <TableHead
+                            className="cursor-pointer"
+                            onClick={() => toggleSort("date")}
+                          >
+                            תאריך{sortArrow("date")}
+                          </TableHead>
                           <TableHead
                             className="cursor-pointer"
                             onClick={() => toggleSort("amount")}
