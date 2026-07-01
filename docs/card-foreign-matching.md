@@ -42,7 +42,7 @@ The Isracard card export has reliable per‑charge columns, matched by name:
 `חיוב…בנק` and a `סכום חיוב` header), which skips the `עסקאות שטרם נקלטו`
 (not‑yet‑captured) section.
 
-### ⚠ The currency column is the weak link
+### ⚠ CONFIRMED BUG — the currency column never matches
 Every column above is matched loosely (`colIndexByKeys` uses `includes`) **except
 `מטבע`, which is matched exactly**:
 
@@ -56,11 +56,13 @@ if (currencyCol === -1) {
 }
 ```
 
-If the real header isn't *literally* `מטבע` (e.g. `מטבע עסקה`, `מטבע חיוב`,
-`סוג מטבע`, or a merged/blank cell), `currencyCol` stays `-1`, so **`currency`
-comes back `null` on every row.** When that happens the foreign match in §4 never
-runs — which is exactly why foreign rows still display the `$` amount (`CLAUDE 20`,
-`ANTHROPIC 6`, `HETZNER 1.71`). **This is the prime suspect for the current bug.**
+The real header in the file is **`מטבע חיוב`** (user-confirmed, 2026-07-01), not
+`מטבע`. The exact match `normalizeKey(h) === "מטבע"` therefore fails, `currencyCol`
+stays `-1`, and **`currency` comes back `null` on every row.** With `currency`
+null, `isForeignCurrency` is false, so the foreign match in §4 never runs — which
+is exactly why foreign rows still display the `$` amount (`CLAUDE 20`,
+`ANTHROPIC 6`, `HETZNER 1.71`). **Fix:** match this column loosely like the others
+(via `colIndexByKeys(["מטבע חיוב", "מטבע"])`, `includes`-based) instead of exact.
 
 ---
 
