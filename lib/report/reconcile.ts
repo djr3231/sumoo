@@ -283,13 +283,16 @@ export function reconcile(input: {
   }
 
   // --- Direct card charges ---
-  // Use the card's ₪ "סכום חיוב" (for a foreign-currency row the card only has
-  // the foreign amount, so swap in the ₪ from the matching קיזוז). Attribute to
-  // a report month by the transaction date; include only charges that have
-  // already settled (חיוב בחשבון הבנק <= lastSettlementDate); the rest pending.
+  // The bank is the source of truth: attribute each charge to a report month by
+  // its BANK posting date (חיוב בחשבון הבנק), falling back to the transaction date
+  // only when the card table has no settlement column (the "עסקאות למועד חיוב"
+  // table, billed on this cycle). Use the card's ₪ "סכום חיוב" (for a foreign-
+  // currency row swap in the ₪ from the matching קיזוז). A charge that posts after
+  // the bank statement's last date hasn't cleared yet → pending.
   let directDetailSum = 0;
   for (const c of input.directCharges) {
-    const month = monthOf(c.transactionDate);
+    const bankDate = c.settlementDate ?? c.transactionDate;
+    const month = monthOf(bankDate);
     if (!inPeriod(month)) continue;
 
     let amount = c.amount ?? 0;
@@ -310,8 +313,8 @@ export function reconcile(input: {
       source: "direct",
     };
     const settled =
-      lastSettlementDate === null ||
-      (c.settlementDate !== null && c.settlementDate <= lastSettlementDate);
+      c.settlementDate === null ||
+      (lastSettlementDate !== null && c.settlementDate <= lastSettlementDate);
     if (settled) {
       directDetailSum += amount;
       expenseItems.push(item);
