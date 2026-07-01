@@ -126,8 +126,16 @@ const isSalaryCredit = (d: string) => /משכורת/.test(d);
 const isChildAllowance = (d: string) => /קצבת\s*ילדים/.test(d);
 const isTransfer = (d: string) => /^\s*העברה/.test(d);
 // Foreign-currency card settlement lines (קיזוז מטח). Like ישראכרט-דיירקט they
-// are a bank-side settlement, not an expense — the card detail carries the ₪.
+// are a bank-side settlement. A $/€ charge settles as a "קרן" (principal ₪)
+// line plus an optional "עמלות" (fee ₪) line; the card row only has the foreign
+// amount, so its ₪ comes from here.
 const isForexSettlement = (d: string) => /קיזוז\s*מטח/.test(d);
+const isForexFee = (d: string) => /עמלות|עמלה/.test(d);
+// "קיזוז מטח או שח/קרן/USD/20/ILS/58.92/2.94" -> ["USD", "20", "58.92"]
+const FOREX_PRINCIPAL_RE = /קרן\/([A-Za-z]{3})\/([\d.]+)\/ILS\/([\d.]+)/;
+// The card's מטבע cell marks a row as foreign-currency (not ₪/ILS).
+const isForeignCurrency = (c: string | null) =>
+  c != null && c.trim() !== "" && !/₪|ils|שח|שקל|nis/i.test(c);
 
 function transferName(d: string): string {
   const m = /העברה[\s/:.\-]+(.+)/.exec(d);
@@ -180,6 +188,17 @@ export function reconcile(input: {
   // settles after this hasn't posted to the bank yet → pending, excluded.
   let lastSettlementDate: string | null = null;
 
+  // Foreign settlements parsed from קיזוז lines, used to give foreign card
+  // charges their ₪ amount.
+  const forexPrincipals: Array<{
+    currency: string;
+    foreignAmount: number;
+    ils: number;
+    date: string | null;
+    matched: boolean;
+  }> = [];
+  const forexFees: Array<{ ils: number; date: string | null; used: boolean }> = [];
+
   const bankSalaries: { month: number; amount: number; desc: string }[] = [];
 
   // --- Checking account (עו"ש) ---
@@ -211,6 +230,20 @@ export function reconcile(input: {
       if (t.date && (lastSettlementDate === null || t.date > lastSettlementDate)) {
         lastSettlementDate = t.date;
       }
+      if (isForexSettlement(desc)) {
+        const km = FOREX_PRINCIPAL_RE.exec(desc);
+        if (km) {
+          forexPrincipals.push({
+            currency: km[1].toUpperCase(),
+            foreignAmount: Number(km[2]),
+            ils: Math.abs(amt),
+            date: t.date,
+            matched: false,
+          });
+        } else if (isForexFee(desc)) {
+          forexFees.push({ ils: Math.abs(amt), date: t.date, used: false });
+        }
+      }
       continue;
     }
 
@@ -240,17 +273,39 @@ export function reconcile(input: {
     }
   }
 
+  // Attach each forex fee to its principal (same settlement date).
+  for (const p of forexPrincipals) {
+    const fee = forexFees.find((f) => !f.used && f.date === p.date);
+    if (fee) {
+      fee.used = true;
+      p.ils += fee.ils;
+    }
+  }
+
   // --- Direct card charges ---
-  // Use the card's ₪ "סכום חיוב". Attribute to a report month by the transaction
-  // date; include only charges that have already settled in the bank
-  // (חיוב בחשבון הבנק <= lastSettlementDate). The rest are pending (excluded).
+  // Use the card's ₪ "סכום חיוב" (for a foreign-currency row the card only has
+  // the foreign amount, so swap in the ₪ from the matching קיזוז). Attribute to
+  // a report month by the transaction date; include only charges that have
+  // already settled (חיוב בחשבון הבנק <= lastSettlementDate); the rest pending.
   let directDetailSum = 0;
   for (const c of input.directCharges) {
     const month = monthOf(c.transactionDate);
     if (!inPeriod(month)) continue;
+
+    let amount = c.amount ?? 0;
+    if (isForeignCurrency(c.currency)) {
+      const p = forexPrincipals.find(
+        (pp) => !pp.matched && approxEqual(pp.foreignAmount, Math.abs(amount), 0.5),
+      );
+      if (p) {
+        p.matched = true;
+        amount = amount < 0 ? -p.ils : p.ils;
+      }
+    }
+
     const item: ExpenseItem = {
       month,
-      amount: c.amount ?? 0,
+      amount,
       description: (c.merchant ?? "").trim(),
       source: "direct",
     };
@@ -258,7 +313,7 @@ export function reconcile(input: {
       lastSettlementDate === null ||
       (c.settlementDate !== null && c.settlementDate <= lastSettlementDate);
     if (settled) {
-      directDetailSum += item.amount;
+      directDetailSum += amount;
       expenseItems.push(item);
     } else {
       pending.push(item);
