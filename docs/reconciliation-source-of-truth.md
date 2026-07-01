@@ -1,9 +1,20 @@
 # Reconciliation — the source-of-truth model (knowledge for the fix)
 
-> Status: **knowledge base, not yet a plan.** This captures the user's confirmed
-> mental model so we can design the fix from a stable, shared understanding. The
-> current code contradicts parts of this (see §7). Nothing here is implemented
-> yet — we plan the fix together after the user finishes reviewing the code.
+> Status: **IMPLEMENTED (2026-07-01).** The model below is now the code. Summary of
+> what shipped, replacing the old §7 "current code is inverted":
+> - Parser reads every card table incl. `עסקאות למועד חיוב` (no settlement column →
+>   `settlementDate = null`), skips `שטרם נקלטו`, captures `מס' שובר`; charges
+>   de-duped by voucher.
+> - Month + period inclusion use the BANK posting date (`settlementDate ??
+>   transactionDate`), not the card transaction date.
+> - No negative expense lines: a card refund → a review credit tagged `direct`
+>   (kept in the card-detail checksum); a full-amount match cancels both.
+> - Card-origin bank credits (positive `ישראכרט-דיירקט`/`קיזוז` in the `זכות`
+>   column) are netted into the settlement aggregate so the checksum ties.
+> - `זיכויים לבדיקה` has routing buttons (income / expense=minus / exclude) that
+>   move a credit between the summary totals without ever touching the card gap.
+>
+> The original model write-up is kept below for the rationale.
 
 ---
 
