@@ -26,7 +26,9 @@ import {
   GOV_EXPENSE_CATEGORIES,
   GOV_EXPENSE_CATEGORY,
   type GovExpenseCategory,
+  type Receipt,
 } from "@/lib/types";
+import { matchReceiptsToLines } from "@/lib/match";
 import type { ReportFolders } from "@/lib/report/period";
 import type { CategorizedExpense, ProcessResult } from "@/lib/report/process";
 
@@ -150,6 +152,12 @@ export function ReportWizard() {
   const [expenseIncluded, setExpenseIncluded] = useState<boolean[]>([]);
   const [incomeIncluded, setIncomeIncluded] = useState<boolean[]>([]);
   const [cardGapAck, setCardGapAck] = useState(false);
+  // Receipt matching (step 3): pulled from the "Receipts – sumoo" sheet on demand.
+  const [receiptsLoading, setReceiptsLoading] = useState(false);
+  const [receiptsError, setReceiptsError] = useState<string | null>(null);
+  const [matchRan, setMatchRan] = useState(false);
+  const [unmatchedReceipts, setUnmatchedReceipts] = useState<Receipt[]>([]);
+  const [receiptLinks, setReceiptLinks] = useState<Record<string, string>>({});
   // Per-review-credit routing: where the user sends each זיכוי לבדיקה. Unset =
   // still under review (counted in neither total). Never affects the card gap.
   const [creditRoute, setCreditRoute] = useState<
@@ -231,6 +239,40 @@ export function ReportWizard() {
 
   function patchExpense(i: number, patch: Partial<CategorizedExpense>) {
     setExpenses((prev) => prev.map((e, idx) => (idx === i ? { ...e, ...patch } : e)));
+  }
+
+  // Fetch the OCR'd receipts and attach each to its matching charge (by amount +
+  // date + name). Leftover receipts (matched no charge) are the cash / unmatched
+  // candidates handled in the cash step.
+  async function runReceiptMatch() {
+    setReceiptsLoading(true);
+    setReceiptsError(null);
+    try {
+      const res = await fetch("/api/report/receipts");
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "שגיאה בטעינת הקבלות");
+      const receipts = data.receipts as Receipt[];
+      const { byLine, unmatchedReceipts: leftover } = matchReceiptsToLines(
+        expenses.map((e) => ({ date: e.date, amount: e.amount, description: e.description })),
+        receipts,
+      );
+      const links: Record<string, string> = {};
+      byLine.forEach((r) => {
+        if (r?.driveFileId) {
+          links[r.fileName] = `https://drive.google.com/file/d/${r.driveFileId}/view`;
+        }
+      });
+      setReceiptLinks(links);
+      setExpenses((prev) =>
+        prev.map((e, i) => (byLine[i] ? { ...e, receipt: byLine[i]!.fileName } : e)),
+      );
+      setUnmatchedReceipts(leftover);
+      setMatchRan(true);
+    } catch (e) {
+      setReceiptsError((e as Error).message);
+    } finally {
+      setReceiptsLoading(false);
+    }
   }
 
   function deleteExpense(i: number) {
@@ -891,6 +933,71 @@ export function ReportWizard() {
                 </div>
               ) : null}
             </div>
+          ) : step === 3 ? (
+            result ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <Button onClick={runReceiptMatch} disabled={receiptsLoading}>
+                    {receiptsLoading ? "מתאים…" : "התאם קבלות"}
+                  </Button>
+                  {matchRan ? (
+                    <span className="text-sm text-muted-foreground">
+                      {expenses.filter((e) => e.receipt).length} מתוך {expenses.length} חיובים
+                      עם קבלה
+                      {unmatchedReceipts.length > 0
+                        ? ` · ${unmatchedReceipts.length} קבלות ללא התאמה`
+                        : ""}
+                    </span>
+                  ) : null}
+                </div>
+                {receiptsError ? (
+                  <p className="text-sm text-destructive">{receiptsError}</p>
+                ) : null}
+                {matchRan ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>חודש</TableHead>
+                        <TableHead>תיאור</TableHead>
+                        <TableHead>סכום</TableHead>
+                        <TableHead>קבלה</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {expenses.map((e, i) => (
+                        <TableRow key={i}>
+                          <TableCell>{e.month}</TableCell>
+                          <TableCell>{e.description}</TableCell>
+                          <TableCell className="tabular-nums">{formatILS(e.amount)}</TableCell>
+                          <TableCell>
+                            {e.receipt ? (
+                              receiptLinks[e.receipt] ? (
+                                <a
+                                  href={receiptLinks[e.receipt]}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="underline"
+                                >
+                                  {e.receipt}
+                                </a>
+                              ) : (
+                                e.receipt
+                              )
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                עבד/י מסמכים תחילה בשלב פירוק וסיווג.
+              </p>
+            )
           ) : (
             <div className="space-y-2 text-sm text-muted-foreground">
               {created ? <p>תיקיית הדו&quot;ח: {created.folderName}</p> : null}
