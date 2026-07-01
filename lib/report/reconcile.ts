@@ -163,6 +163,28 @@ function descSimilar(a: string, b: string): boolean {
   return tokens(a).some((t) => sb.has(t));
 }
 
+// The user uploads several overlapping statements (a charge can appear as a
+// not-yet-final "עסקאות למועד חיוב" line in one sheet and finalized with a bank
+// settlement date in another). De-dup by the unique voucher (מס' שובר), keeping
+// the instance that carries a settlement date. Charges without a voucher can't be
+// de-duped, so they are all kept.
+function dedupCardCharges(charges: CardCharge[]): CardCharge[] {
+  const byVoucher = new Map<string, CardCharge>();
+  const noVoucher: CardCharge[] = [];
+  for (const c of charges) {
+    const v = c.voucher?.trim();
+    if (!v) {
+      noVoucher.push(c);
+      continue;
+    }
+    const existing = byVoucher.get(v);
+    if (!existing || (existing.settlementDate === null && c.settlementDate !== null)) {
+      byVoucher.set(v, c);
+    }
+  }
+  return [...byVoucher.values(), ...noVoucher];
+}
+
 // ----------------------------------------------------------------------------
 // Reconcile
 // ----------------------------------------------------------------------------
@@ -290,7 +312,7 @@ export function reconcile(input: {
   // currency row swap in the ₪ from the matching קיזוז). A charge that posts after
   // the bank statement's last date hasn't cleared yet → pending.
   let directDetailSum = 0;
-  for (const c of input.directCharges) {
+  for (const c of dedupCardCharges(input.directCharges)) {
     const bankDate = c.settlementDate ?? c.transactionDate;
     const month = monthOf(bankDate);
     if (!inPeriod(month)) continue;
