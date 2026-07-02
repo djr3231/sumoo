@@ -88,6 +88,21 @@ async function postOnce(url: string, body: unknown) {
   return j;
 }
 
+// Mobile connections drop mid-batch; a network-level fetch rejection
+// ("Failed to fetch" — no HTTP status) gets one retry after 2s. HTTP
+// errors are NOT retried here: 503/429 have the halt/pause mechanism,
+// and retrying 500s would double the Gemini cost.
+async function postWithNetRetry(url: string, body: unknown) {
+  try {
+    return await postOnce(url, body);
+  } catch (e) {
+    const err = e as Error & { status?: number };
+    if (err.status !== undefined) throw e;
+    await new Promise((r) => setTimeout(r, 2000));
+    return postOnce(url, body);
+  }
+}
+
 export function UploadZone() {
   const [files, setFiles] = useState<File[]>([]);
   const [results, setResults] = useState<Receipt[]>([]);
@@ -136,7 +151,7 @@ export function UploadZone() {
 
   async function processOne(file: File): Promise<Receipt[]> {
     const { base64, mediaType } = await resizeToBase64(file);
-    const json = await postOnce("/api/ocr", {
+    const json = await postWithNetRetry("/api/ocr", {
       kind: "upload",
       fileName: file.name,
       mediaType,
@@ -159,7 +174,12 @@ export function UploadZone() {
     const queue = [...toProcess];
     const newResults: Receipt[] = [...results];
     const newErrors: { name: string; error: string }[] = [...errors];
-    const state = { consecutiveOverloads: 0, halted: false, doneCount: baseDone };
+    const state = {
+      consecutiveOverloads: 0,
+      halted: false,
+      doneCount: baseDone,
+      succeeded: new Set<File>(),
+    };
 
     const workers = Array.from(
       { length: Math.min(CONCURRENCY, queue.length) },
@@ -178,6 +198,7 @@ export function UploadZone() {
                 body: JSON.stringify({ receipts: rs }),
               });
             }
+            state.succeeded.add(f);
           } catch (e) {
             const err = e as Error & { status?: number };
             newErrors.push({ name: f.name, error: err.message });
@@ -200,6 +221,11 @@ export function UploadZone() {
     );
 
     await Promise.all(workers);
+
+    // Successfully scanned files leave the queue; failed and unprocessed
+    // (halted) files remain, so the next "התחל סריקה" retries only them —
+    // no re-photographing, no duplicate scans of already-saved receipts.
+    setFiles((prev) => prev.filter((f) => !state.succeeded.has(f)));
 
     if (state.halted) {
       setPendingFiles(queue);
@@ -285,12 +311,15 @@ export function UploadZone() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-          {!running && results.length > 0 && (
-            <a href="/receipts" className="text-sm underline">
-              עבור לטבלת הקבלות לזיהוי כפילויות וייצוא
-            </a>
-          )}
         </div>
+      )}
+
+      {/* Rendered outside the files gate so it survives a fully successful
+          batch, when the queue empties itself. */}
+      {!running && results.length > 0 && (
+        <a href="/receipts" className="text-sm underline">
+          עבור לטבלת הקבלות לזיהוי כפילויות וייצוא
+        </a>
       )}
 
       {progress.total > 0 && (
