@@ -89,17 +89,23 @@ async function postOnce(url: string, body: unknown) {
 }
 
 // Mobile connections drop mid-batch; a network-level fetch rejection
-// ("Failed to fetch" — no HTTP status) gets one retry after 2s. HTTP
-// errors are NOT retried here: 503/429 have the halt/pause mechanism,
-// and retrying 500s would double the Gemini cost.
+// ("Failed to fetch" — no HTTP status) is retried with escalating
+// delays, which also covers the page waking up from a brief suspension.
+// HTTP errors are NOT retried here: 503/429 have the halt/pause
+// mechanism, and retrying 500s would double the Gemini cost.
+const NET_RETRY_DELAYS_MS = [2000, 5000, 10000];
+
 async function postWithNetRetry(url: string, body: unknown) {
-  try {
-    return await postOnce(url, body);
-  } catch (e) {
-    const err = e as Error & { status?: number };
-    if (err.status !== undefined) throw e;
-    await new Promise((r) => setTimeout(r, 2000));
-    return postOnce(url, body);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await postOnce(url, body);
+    } catch (e) {
+      const err = e as Error & { status?: number };
+      if (err.status !== undefined || attempt >= NET_RETRY_DELAYS_MS.length) {
+        throw e;
+      }
+      await new Promise((r) => setTimeout(r, NET_RETRY_DELAYS_MS[attempt]));
+    }
   }
 }
 
