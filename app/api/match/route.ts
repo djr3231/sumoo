@@ -6,7 +6,7 @@ import {
   requireAccessToken,
 } from "@/lib/google";
 import { matchTxnsToReceipts } from "@/lib/match";
-import type { BankTxn } from "@/lib/types";
+import { PAYMENT_METHOD, type BankTxn } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -21,7 +21,14 @@ export async function POST(req: Request) {
     const spreadsheetId = await ensureSpreadsheet(token);
     const receipts = await getAllReceipts(token, spreadsheetId);
 
-    const result = matchTxnsToReceipts(body.txns, receipts);
+    // Foreign-card receipts can't correspond to the user's own bank/card
+    // charges; with the greedy ±0.5% matcher they could steal a match from
+    // a real receipt, so they are excluded from matching entirely.
+    const candidates = receipts.filter(
+      (r) => r.paymentMethod !== PAYMENT_METHOD.ForeignCard,
+    );
+
+    const result = matchTxnsToReceipts(body.txns, candidates);
 
     if (body.saveToSheet) {
       const all: BankTxn[] = [

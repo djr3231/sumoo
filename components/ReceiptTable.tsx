@@ -148,6 +148,7 @@ function PaymentMethodIcon({ method }: { method: PaymentMethod }) {
   const props = { className: "size-4 text-muted-foreground", "aria-label": method };
   switch (method) {
     case PAYMENT_METHOD.Credit: return <CreditCard {...props} />;
+    case PAYMENT_METHOD.ForeignCard: return <CreditCard {...props} />;
     case PAYMENT_METHOD.Cash: return <Banknote {...props} />;
     case PAYMENT_METHOD.StandingOrder: return <Repeat {...props} />;
     case PAYMENT_METHOD.Mixed: return <Wallet {...props} />;
@@ -262,16 +263,28 @@ export function ReceiptTable() {
     }
   }
 
+  // Foreign-card receipts (a card not in the user's list) are documentation
+  // only: excluded from the main table, filter facets, and exports; listed
+  // in a separate collapsed section below the table.
+  const mainRows = useMemo(
+    () => rows.filter((r) => r.paymentMethod !== PAYMENT_METHOD.ForeignCard),
+    [rows],
+  );
+  const foreignRows = useMemo(
+    () => rows.filter((r) => r.paymentMethod === PAYMENT_METHOD.ForeignCard),
+    [rows],
+  );
+
   const uniqueValues = useMemo(() => {
     const map: Partial<Record<SortKey, string[]>> = {};
     for (const col of COLUMNS) {
       if (!col.filterable) continue;
       const set = new Set<string>();
-      for (const r of rows) set.add(col.getValue(r));
+      for (const r of mainRows) set.add(col.getValue(r));
       map[col.key] = Array.from(set).sort((a, b) => a.localeCompare(b, "he"));
     }
     return map;
-  }, [rows]);
+  }, [mainRows]);
 
   // Cross-facet-aware: for each facet, count values among rows that pass
   // every OTHER filterable facet's filter (the facet itself is excluded
@@ -282,7 +295,7 @@ export function ReceiptTable() {
     for (const col of COLUMNS) {
       if (!col.filterable) continue;
       const counts: Record<string, number> = {};
-      for (const r of rows) {
+      for (const r of mainRows) {
         let passes = true;
         for (const other of COLUMNS) {
           if (!other.filterable || other.key === col.key) continue;
@@ -299,7 +312,7 @@ export function ReceiptTable() {
       out[col.key] = counts;
     }
     return out;
-  }, [rows, colFilters]);
+  }, [mainRows, colFilters]);
 
   const activeFilterCount = useMemo(
     () => Object.values(colFilters).reduce((n, s) => n + (s?.size ?? 0), 0),
@@ -321,7 +334,7 @@ export function ReceiptTable() {
   }
 
   const filtered = useMemo(() => {
-    return rows.filter((r) => {
+    return mainRows.filter((r) => {
       if (search) {
         const t = search.toLowerCase();
         const hay = [r.fileName, r.storeName, r.notes, r.date, String(r.amount)]
@@ -337,7 +350,7 @@ export function ReceiptTable() {
       }
       return true;
     });
-  }, [rows, search, colFilters]);
+  }, [mainRows, search, colFilters]);
 
   const sorted = useMemo(() => {
     if (!sort.key) return filtered;
@@ -667,7 +680,7 @@ export function ReceiptTable() {
       </div>
 
       <div className="text-xs text-muted-foreground flex items-center gap-3">
-        <span>{sorted.length} מתוך {rows.length} שורות</span>
+        <span>{sorted.length} מתוך {mainRows.length} שורות</span>
         {(sort.key || activeFilterCount > 0) && (
           <button
             onClick={() => { setSort({ key: null, dir: "asc" }); setColFilters({}); }}
@@ -901,6 +914,65 @@ export function ReceiptTable() {
             ))}
           </div>
         </>
+      )}
+
+      {/* Foreign-card receipts — documentation only, outside table + exports */}
+      {!loading && foreignRows.length > 0 && (
+        <Accordion type="single" collapsible>
+          <AccordionItem value="foreign-cards">
+            <AccordionTrigger>
+              <span className="flex items-center gap-2">
+                <CreditCard className="size-4 text-muted-foreground" />
+                {PAYMENT_METHOD.ForeignCard} — לתיעוד בלבד ({foreignRows.length})
+              </span>
+            </AccordionTrigger>
+            <AccordionContent>
+              <div className="space-y-3">
+                {foreignRows.map((r) => (
+                  <Card
+                    key={r.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setEditingId(r.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setEditingId(r.id);
+                      }
+                    }}
+                    size="sm"
+                    className="cursor-pointer"
+                  >
+                    <CardContent className="space-y-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="text-base font-semibold truncate">
+                          {r.storeName ?? DEFAULT_STORE_NAME}
+                        </div>
+                        <div className="text-base font-semibold tabular-nums shrink-0">
+                          {r.amount === null ? "—" : formatILS(r.amount)}
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between text-sm text-muted-foreground gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span>{formatDate(r.date) || "—"}</span>
+                          <span>·</span>
+                          <span className="truncate">{r.category}</span>
+                          {r.cardLast4 && (
+                            <>
+                              <span>·</span>
+                              <span className="tabular-nums">{r.cardLast4}</span>
+                            </>
+                          )}
+                        </div>
+                        <PaymentMethodIcon method={r.paymentMethod} />
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
       )}
 
       {/* Edit drawer (mobile primary; also accessible on desktop) */}
