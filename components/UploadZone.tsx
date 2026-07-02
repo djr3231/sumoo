@@ -21,6 +21,8 @@ import { DriveFolderPicker, type FolderSelection } from "./DriveFolderPicker";
 
 const FOLDER_STORAGE_KEY = "sumoo:upload:folder";
 
+type ScanContext = { knownStores?: string[]; userCards?: string[] };
+
 const CONCURRENCY = 2;
 const MAX_DIM = 1568;
 const MAX_CONSECUTIVE_OVERLOADS = 3;
@@ -156,7 +158,7 @@ export function UploadZone() {
     multiple: true,
   });
 
-  async function processOne(file: File): Promise<Receipt[]> {
+  async function processOne(file: File, ctx: ScanContext): Promise<Receipt[]> {
     const { base64, mediaType } = await resizeToBase64(file);
     const json = await postWithNetRetry("/api/ocr", {
       kind: "upload",
@@ -164,6 +166,8 @@ export function UploadZone() {
       mediaType,
       base64,
       ...(folder.kind === "drive" ? { folderId: folder.id } : {}),
+      ...(ctx.knownStores ? { knownStores: ctx.knownStores } : {}),
+      ...(ctx.userCards ? { userCards: ctx.userCards } : {}),
     });
     if (!json.ok) throw new Error(json.error || "OCR failed");
     return (json.receipts as Receipt[]) || [];
@@ -194,6 +198,17 @@ export function UploadZone() {
       // unsupported or denied — scanning proceeds without it
     }
 
+    // Fetch the batch-invariant context once, so each file's /api/ocr call
+    // skips its own stores + settings Sheets reads (the 60-reads/min quota).
+    // On failure, ctx stays empty and the server reads per file, as before.
+    let ctx: ScanContext = {};
+    try {
+      const r = await fetch("/api/scan-context");
+      if (r.ok) ctx = await r.json();
+    } catch {
+      // ignore — fall back to per-file server reads
+    }
+
     const totalForProgress = base.total > 0 ? base.total : toProcess.length;
     const baseDone = base.baseDone;
     setProgress({ done: baseDone, total: totalForProgress });
@@ -215,7 +230,7 @@ export function UploadZone() {
           const f = queue.shift();
           if (!f) break;
           try {
-            const rs = await processOne(f);
+            const rs = await processOne(f, ctx);
             newResults.push(...rs);
             state.consecutiveOverloads = 0;
             if (rs.length > 0) {
