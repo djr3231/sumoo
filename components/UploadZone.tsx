@@ -88,6 +88,21 @@ async function postOnce(url: string, body: unknown) {
   return j;
 }
 
+// Mobile connections drop mid-batch; a network-level fetch rejection
+// ("Failed to fetch" — no HTTP status) gets one retry after 2s. HTTP
+// errors are NOT retried here: 503/429 have the halt/pause mechanism,
+// and retrying 500s would double the Gemini cost.
+async function postWithNetRetry(url: string, body: unknown) {
+  try {
+    return await postOnce(url, body);
+  } catch (e) {
+    const err = e as Error & { status?: number };
+    if (err.status !== undefined) throw e;
+    await new Promise((r) => setTimeout(r, 2000));
+    return postOnce(url, body);
+  }
+}
+
 export function UploadZone() {
   const [files, setFiles] = useState<File[]>([]);
   const [results, setResults] = useState<Receipt[]>([]);
@@ -136,7 +151,7 @@ export function UploadZone() {
 
   async function processOne(file: File): Promise<Receipt[]> {
     const { base64, mediaType } = await resizeToBase64(file);
-    const json = await postOnce("/api/ocr", {
+    const json = await postWithNetRetry("/api/ocr", {
       kind: "upload",
       fileName: file.name,
       mediaType,
