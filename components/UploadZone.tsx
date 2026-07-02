@@ -162,18 +162,29 @@ export function UploadZone() {
     return (json.receipts as Receipt[]) || [];
   }
 
-  async function runBatch(toProcess: File[]) {
+  // Base values arrive as explicit parameters: React state set inside the
+  // caller (e.g. startProcessing's resets) is not visible to this closure
+  // in the same tick — reading progress/results/errors here produced the
+  // stale 50/49 counter and error entries surviving a successful retry.
+  interface BatchBase {
+    baseDone: number;
+    total: number;
+    baseResults: Receipt[];
+    baseErrors: { name: string; error: string }[];
+  }
+
+  async function runBatch(toProcess: File[], base: BatchBase) {
     if (toProcess.length === 0) return;
     setRunning(true);
     setPaused(false);
 
-    const totalForProgress = progress.total > 0 ? progress.total : toProcess.length;
-    const baseDone = progress.done;
+    const totalForProgress = base.total > 0 ? base.total : toProcess.length;
+    const baseDone = base.baseDone;
     setProgress({ done: baseDone, total: totalForProgress });
 
     const queue = [...toProcess];
-    const newResults: Receipt[] = [...results];
-    const newErrors: { name: string; error: string }[] = [...errors];
+    const newResults: Receipt[] = [...base.baseResults];
+    const newErrors: { name: string; error: string }[] = [...base.baseErrors];
     const state = {
       consecutiveOverloads: 0,
       halted: false,
@@ -239,13 +250,24 @@ export function UploadZone() {
   async function startProcessing() {
     setResults([]);
     setErrors([]);
-    setProgress({ done: 0, total: files.length });
     setPendingFiles([]);
-    await runBatch(files);
+    await runBatch(files, {
+      baseDone: 0,
+      total: files.length,
+      baseResults: [],
+      baseErrors: [],
+    });
   }
 
   async function resume() {
-    await runBatch(pendingFiles);
+    // Click handler — state values here are current, so continuing the
+    // paused batch's counter and lists is correct.
+    await runBatch(pendingFiles, {
+      baseDone: progress.done,
+      total: progress.total,
+      baseResults: results,
+      baseErrors: errors,
+    });
   }
 
   const pct = progress.total > 0
