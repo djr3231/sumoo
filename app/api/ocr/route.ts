@@ -70,7 +70,9 @@ function classifyMethod(
     case EXTRACTED_METHOD.CreditCard: {
       if (userCards.length === 0) return PAYMENT_METHOD.Credit;
       if (cardLast4 && userCards.includes(cardLast4)) return PAYMENT_METHOD.Credit;
-      return PAYMENT_METHOD.Cash;
+      // Foreign last-4 (or unreadable last-4 while a card list exists):
+      // not provable as the user's own card — documentation only.
+      return PAYMENT_METHOD.ForeignCard;
     }
   }
 }
