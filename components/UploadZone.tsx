@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { Button } from "./ui/button";
 import { Progress } from "./ui/progress";
@@ -112,6 +112,7 @@ export function UploadZone() {
   const [paused, setPaused] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [folder, setFolder] = useState<FolderSelection>({ kind: "default" });
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
   useEffect(() => {
     try {
@@ -177,6 +178,15 @@ export function UploadZone() {
     if (toProcess.length === 0) return;
     setRunning(true);
     setPaused(false);
+
+    // A large batch runs for many minutes; on mobile, the screen locking
+    // suspends the page and aborts in-flight fetches ("Failed to fetch").
+    // Hold a screen wake lock for the duration when the browser supports it.
+    try {
+      wakeLockRef.current = (await navigator.wakeLock?.request("screen")) ?? null;
+    } catch {
+      // unsupported or denied — scanning proceeds without it
+    }
 
     const totalForProgress = base.total > 0 ? base.total : toProcess.length;
     const baseDone = base.baseDone;
@@ -244,6 +254,9 @@ export function UploadZone() {
     } else {
       setPendingFiles([]);
     }
+
+    wakeLockRef.current?.release().catch(() => {});
+    wakeLockRef.current = null;
     setRunning(false);
   }
 
