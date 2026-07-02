@@ -4,6 +4,16 @@ import { useDropzone } from "react-dropzone";
 import { Button } from "./ui/button";
 import { Progress } from "./ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "./ui/Alert";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "./ui/dialog";
 import { Label } from "./ui/label";
 import { Loader2, Upload } from "lucide-react";
 import { DEFAULT_STORE_NAME, type Receipt } from "@/lib/types";
@@ -250,9 +260,31 @@ export function UploadZone() {
               ? `מעבד ${progress.done}/${progress.total}...`
               : `התחל סריקה (${files.length} קבצים)`}
           </Button>
-          <Button variant="outline" onClick={() => setFiles([])} disabled={running}>
-            נקה
-          </Button>
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="outline" disabled={running}>
+                נקה
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>לנקות את כל הקבצים?</DialogTitle>
+                <DialogDescription>
+                  קבצים שטרם נסרקו יימחקו לצמיתות. קבצים שכבר נסרקו — המקור שלהם נשמר בדרייב.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button variant="destructive" onClick={() => setFiles([])}>
+                    נקה הכל
+                  </Button>
+                </DialogClose>
+                <DialogClose asChild>
+                  <Button variant="outline">ביטול</Button>
+                </DialogClose>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           {!running && results.length > 0 && (
             <a href="/receipts" className="text-sm underline">
               עבור לטבלת הקבלות לזיהוי כפילויות וייצוא
