@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { Button } from "./ui/button";
 import { Progress } from "./ui/progress";
@@ -20,6 +20,8 @@ import { DEFAULT_STORE_NAME, type Receipt } from "@/lib/types";
 import { DriveFolderPicker, type FolderSelection } from "./DriveFolderPicker";
 
 const FOLDER_STORAGE_KEY = "sumoo:upload:folder";
+
+type ScanContext = { knownStores?: string[]; userCards?: string[] };
 
 const CONCURRENCY = 2;
 const MAX_DIM = 1568;
@@ -89,17 +91,23 @@ async function postOnce(url: string, body: unknown) {
 }
 
 // Mobile connections drop mid-batch; a network-level fetch rejection
-// ("Failed to fetch" — no HTTP status) gets one retry after 2s. HTTP
-// errors are NOT retried here: 503/429 have the halt/pause mechanism,
-// and retrying 500s would double the Gemini cost.
+// ("Failed to fetch" — no HTTP status) is retried with escalating
+// delays, which also covers the page waking up from a brief suspension.
+// HTTP errors are NOT retried here: 503/429 have the halt/pause
+// mechanism, and retrying 500s would double the Gemini cost.
+const NET_RETRY_DELAYS_MS = [2000, 5000, 10000];
+
 async function postWithNetRetry(url: string, body: unknown) {
-  try {
-    return await postOnce(url, body);
-  } catch (e) {
-    const err = e as Error & { status?: number };
-    if (err.status !== undefined) throw e;
-    await new Promise((r) => setTimeout(r, 2000));
-    return postOnce(url, body);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await postOnce(url, body);
+    } catch (e) {
+      const err = e as Error & { status?: number };
+      if (err.status !== undefined || attempt >= NET_RETRY_DELAYS_MS.length) {
+        throw e;
+      }
+      await new Promise((r) => setTimeout(r, NET_RETRY_DELAYS_MS[attempt]));
+    }
   }
 }
 
@@ -112,6 +120,7 @@ export function UploadZone() {
   const [paused, setPaused] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [folder, setFolder] = useState<FolderSelection>({ kind: "default" });
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
   useEffect(() => {
     try {
@@ -149,7 +158,7 @@ export function UploadZone() {
     multiple: true,
   });
 
-  async function processOne(file: File): Promise<Receipt[]> {
+  async function processOne(file: File, ctx: ScanContext): Promise<Receipt[]> {
     const { base64, mediaType } = await resizeToBase64(file);
     const json = await postWithNetRetry("/api/ocr", {
       kind: "upload",
@@ -157,23 +166,56 @@ export function UploadZone() {
       mediaType,
       base64,
       ...(folder.kind === "drive" ? { folderId: folder.id } : {}),
+      ...(ctx.knownStores ? { knownStores: ctx.knownStores } : {}),
+      ...(ctx.userCards ? { userCards: ctx.userCards } : {}),
     });
     if (!json.ok) throw new Error(json.error || "OCR failed");
     return (json.receipts as Receipt[]) || [];
   }
 
-  async function runBatch(toProcess: File[]) {
+  // Base values arrive as explicit parameters: React state set inside the
+  // caller (e.g. startProcessing's resets) is not visible to this closure
+  // in the same tick — reading progress/results/errors here produced the
+  // stale 50/49 counter and error entries surviving a successful retry.
+  interface BatchBase {
+    baseDone: number;
+    total: number;
+    baseResults: Receipt[];
+    baseErrors: { name: string; error: string }[];
+  }
+
+  async function runBatch(toProcess: File[], base: BatchBase) {
     if (toProcess.length === 0) return;
     setRunning(true);
     setPaused(false);
 
-    const totalForProgress = progress.total > 0 ? progress.total : toProcess.length;
-    const baseDone = progress.done;
+    // A large batch runs for many minutes; on mobile, the screen locking
+    // suspends the page and aborts in-flight fetches ("Failed to fetch").
+    // Hold a screen wake lock for the duration when the browser supports it.
+    try {
+      wakeLockRef.current = (await navigator.wakeLock?.request("screen")) ?? null;
+    } catch {
+      // unsupported or denied — scanning proceeds without it
+    }
+
+    // Fetch the batch-invariant context once, so each file's /api/ocr call
+    // skips its own stores + settings Sheets reads (the 60-reads/min quota).
+    // On failure, ctx stays empty and the server reads per file, as before.
+    let ctx: ScanContext = {};
+    try {
+      const r = await fetch("/api/scan-context");
+      if (r.ok) ctx = await r.json();
+    } catch {
+      // ignore — fall back to per-file server reads
+    }
+
+    const totalForProgress = base.total > 0 ? base.total : toProcess.length;
+    const baseDone = base.baseDone;
     setProgress({ done: baseDone, total: totalForProgress });
 
     const queue = [...toProcess];
-    const newResults: Receipt[] = [...results];
-    const newErrors: { name: string; error: string }[] = [...errors];
+    const newResults: Receipt[] = [...base.baseResults];
+    const newErrors: { name: string; error: string }[] = [...base.baseErrors];
     const state = {
       consecutiveOverloads: 0,
       halted: false,
@@ -188,7 +230,7 @@ export function UploadZone() {
           const f = queue.shift();
           if (!f) break;
           try {
-            const rs = await processOne(f);
+            const rs = await processOne(f, ctx);
             newResults.push(...rs);
             state.consecutiveOverloads = 0;
             if (rs.length > 0) {
@@ -233,19 +275,33 @@ export function UploadZone() {
     } else {
       setPendingFiles([]);
     }
+
+    wakeLockRef.current?.release().catch(() => {});
+    wakeLockRef.current = null;
     setRunning(false);
   }
 
   async function startProcessing() {
     setResults([]);
     setErrors([]);
-    setProgress({ done: 0, total: files.length });
     setPendingFiles([]);
-    await runBatch(files);
+    await runBatch(files, {
+      baseDone: 0,
+      total: files.length,
+      baseResults: [],
+      baseErrors: [],
+    });
   }
 
   async function resume() {
-    await runBatch(pendingFiles);
+    // Click handler — state values here are current, so continuing the
+    // paused batch's counter and lists is correct.
+    await runBatch(pendingFiles, {
+      baseDone: progress.done,
+      total: progress.total,
+      baseResults: results,
+      baseErrors: errors,
+    });
   }
 
   const pct = progress.total > 0
