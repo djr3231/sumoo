@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "mcp__context7__resolve-library-id",
-      "mcp__context7__query-docs"
+      "mcp__context7__query-docs",
+      "mcp__claude_ai_Google_Drive__download_file_content"
     ]
   },
   "enableAllProjectMcpServers": true,
