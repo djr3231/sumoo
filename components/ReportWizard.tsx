@@ -29,7 +29,7 @@ import {
   type GovExpenseCategory,
   type Receipt,
 } from "@/lib/types";
-import { matchReceiptsToLines } from "@/lib/match";
+import { matchReceiptsToLines, diagnoseUnmatched, type UnmatchedDiagnostic } from "@/lib/match";
 import type { ReportFolders } from "@/lib/report/period";
 import type { CategorizedExpense, ProcessResult } from "@/lib/report/process";
 
@@ -176,6 +176,10 @@ export function ReportWizard() {
   const [matchRan, setMatchRan] = useState(false);
   const [unmatchedReceipts, setUnmatchedReceipts] = useState<Receipt[]>([]);
   const [receiptLinks, setReceiptLinks] = useState<Record<string, string>>({});
+  // All receipts fetched from the sheet (needed to return a detached receipt to
+  // the unmatched list), and the per-receipt "why no match" diagnostics.
+  const [allReceipts, setAllReceipts] = useState<Receipt[]>([]);
+  const [unmatchedDiag, setUnmatchedDiag] = useState<Record<string, UnmatchedDiagnostic>>({});
   const [addingCashId, setAddingCashId] = useState<string | null>(null);
   const [cashGapAck, setCashGapAck] = useState(false);
   // Per-review-credit routing: where the user sends each זיכוי לבדיקה. Unset =
@@ -254,6 +258,8 @@ export function ReportWizard() {
       setMatchRan(false);
       setUnmatchedReceipts([]);
       setReceiptLinks({});
+      setAllReceipts([]);
+      setUnmatchedDiag({});
     } catch (e) {
       setProcessError((e as Error).message);
     } finally {
@@ -286,10 +292,25 @@ export function ReportWizard() {
           links[r.fileName] = `https://drive.google.com/file/d/${r.driveFileId}/view`;
         }
       });
+      // Diagnose leftovers against the lines WITH their fresh receipt assignments,
+      // so "nearest line already taken" is reported truthfully.
+      const linesForDiag = expenses.map((e, i) => ({
+        date: e.date,
+        amount: e.amount,
+        description: e.description,
+        receipt: byLine[i]?.fileName ?? e.receipt,
+      }));
+      const diagList = diagnoseUnmatched(linesForDiag, leftover);
+      const diagMap: Record<string, UnmatchedDiagnostic> = {};
+      diagList.forEach((d) => {
+        diagMap[d.receiptId] = d;
+      });
       setReceiptLinks(links);
       setExpenses((prev) =>
         prev.map((e, i) => (byLine[i] ? { ...e, receipt: byLine[i]!.fileName } : e)),
       );
+      setAllReceipts(receipts);
+      setUnmatchedDiag(diagMap);
       setUnmatchedReceipts(leftover);
       setMatchRan(true);
     } catch (e) {
@@ -428,6 +449,15 @@ export function ReportWizard() {
   const otherUnmatched = unmatchedReceipts.filter(
     (r) => !cashCandidates.includes(r),
   );
+  // For display, non-cash unmatched receipts split into in-period (real "no
+  // match" cases worth diagnosing) and out-of-period (the "Receipts – sumoo"
+  // sheet holds every receipt ever scanned — these can never match; not failures).
+  const isInPeriod = (r: Receipt) => {
+    const m = monthOfISO(r.date);
+    return m !== null && periodMonths.includes(m);
+  };
+  const unmatchedInPeriod = otherUnmatched.filter(isInPeriod);
+  const unmatchedOutOfPeriod = otherUnmatched.filter((r) => !isInPeriod(r));
 
   // Cash coverage per month (the מזומן step): withdrawn − Σ included cash lines.
   const cashRows = (result?.cashWithdrawals ?? []).map((c) => {
@@ -1180,7 +1210,7 @@ export function ReportWizard() {
                   </Section>
                 ) : null}
 
-                {matchRan && otherUnmatched.length > 0 ? (
+                {matchRan && unmatchedInPeriod.length > 0 ? (
                   <Section title="קבלות ללא התאמה">
                     <Table>
                       <TableHeader>
@@ -1189,26 +1219,72 @@ export function ReportWizard() {
                           <TableHead>בית עסק</TableHead>
                           <TableHead>סכום</TableHead>
                           <TableHead>אמצעי תשלום</TableHead>
+                          <TableHead>החיוב הקרוב</TableHead>
+                          <TableHead>הפרש סכום</TableHead>
+                          <TableHead>הפרש ימים</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {otherUnmatched.map((r) => (
-                          <TableRow key={r.id}>
-                            <TableCell className="whitespace-nowrap tabular-nums">
-                              {fmtDate(r.date)}
-                            </TableCell>
-                            <TableCell>{r.storeName ?? r.fileName}</TableCell>
-                            <TableCell className="tabular-nums">
-                              {formatILS(Math.abs(r.amount ?? 0))}
-                            </TableCell>
-                            <TableCell className="text-muted-foreground">
-                              {r.paymentMethod}
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        {unmatchedInPeriod.map((r) => {
+                          const diag = unmatchedDiag[r.id];
+                          const near = diag?.nearest ?? null;
+                          const nearLine =
+                            near != null ? expenses[near.lineIndex] : undefined;
+                          const amountDiff =
+                            nearLine && r.amount !== null
+                              ? Math.abs(Math.abs(nearLine.amount) - Math.abs(r.amount))
+                              : null;
+                          return (
+                            <TableRow key={r.id}>
+                              <TableCell className="whitespace-nowrap tabular-nums">
+                                {fmtDate(r.date)}
+                              </TableCell>
+                              <TableCell>{r.storeName ?? r.fileName}</TableCell>
+                              <TableCell className="tabular-nums">
+                                {formatILS(Math.abs(r.amount ?? 0))}
+                              </TableCell>
+                              <TableCell className="text-muted-foreground">
+                                {r.paymentMethod}
+                              </TableCell>
+                              {diag?.reason === "missing-fields" ? (
+                                <TableCell
+                                  colSpan={3}
+                                  className="text-muted-foreground"
+                                >
+                                  חסר סכום/תאריך בקבלה
+                                </TableCell>
+                              ) : (
+                                <>
+                                  <TableCell>
+                                    {nearLine ? (
+                                      <>
+                                        {nearLine.description || "—"}
+                                        {near?.lineHasReceipt ? " (תפוס)" : ""}
+                                      </>
+                                    ) : (
+                                      "—"
+                                    )}
+                                  </TableCell>
+                                  <TableCell className="tabular-nums">
+                                    {amountDiff !== null ? formatILS(amountDiff) : "—"}
+                                  </TableCell>
+                                  <TableCell className="tabular-nums">
+                                    {near ? Math.round(near.daysDiff) : "—"}
+                                  </TableCell>
+                                </>
+                              )}
+                            </TableRow>
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </Section>
+                ) : null}
+
+                {matchRan && unmatchedOutOfPeriod.length > 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    {unmatchedOutOfPeriod.length} קבלות מחוץ לתקופה
+                  </p>
                 ) : null}
               </div>
             ) : (

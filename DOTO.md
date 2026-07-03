@@ -1,0 +1,1 @@
+- קבלות מזומן in הכנת דוח דו-חודשי[התאם קבלות] need to show the sum of all founded receipts, and the current expense summary hows left without matched receipts (updated bt the state changes).

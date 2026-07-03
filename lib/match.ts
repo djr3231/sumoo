@@ -95,6 +95,60 @@ export interface ReceiptLineMatch {
   unmatchedReceipts: Receipt[]; // receipts that matched no line (cash / unmatched)
 }
 
+export interface UnmatchedDiagnostic {
+  receiptId: string;
+  // "missing-fields": the receipt itself lacks an amount or date, so it can never
+  // gate-match. "no-candidate": it has both but no line passed the gates.
+  reason: "missing-fields" | "no-candidate";
+  nearest: {
+    lineIndex: number;
+    amountDiffPct: number; // |line−receipt| / max(|line|, 1)
+    daysDiff: number;
+    lineHasReceipt: boolean; // the closest line was already taken by another receipt
+  } | null;
+}
+
+// For receipts that matched no line, explain WHY: find the single closest line
+// (ignoring the gates) and report the amount/date gaps. This is a diagnostic —
+// it applies no tolerance, it just answers "what was nearest, and by how much".
+export function diagnoseUnmatched(
+  lines: Array<{
+    date?: string | null;
+    amount: number | null;
+    description: string | null;
+    receipt?: string | null;
+  }>,
+  unmatched: Receipt[],
+): UnmatchedDiagnostic[] {
+  return unmatched.map((r) => {
+    if (r.amount === null || !r.date) {
+      return { receiptId: r.id, reason: "missing-fields", nearest: null };
+    }
+    const rAbs = Math.abs(r.amount);
+    let best: { lineIndex: number; amountDiffPct: number; daysDiff: number; score: number } | null =
+      null;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.amount === null || !line.date) continue;
+      const amountDiffPct = Math.abs(Math.abs(line.amount) - rAbs) / Math.max(rAbs, 1);
+      const daysDiff = daysBetween(line.date, r.date);
+      const score = amountDiffPct + daysDiff * 0.05;
+      if (!best || score < best.score) best = { lineIndex: i, amountDiffPct, daysDiff, score };
+    }
+    if (!best) return { receiptId: r.id, reason: "no-candidate", nearest: null };
+    return {
+      receiptId: r.id,
+      reason: "no-candidate",
+      nearest: {
+        lineIndex: best.lineIndex,
+        amountDiffPct: best.amountDiffPct,
+        daysDiff: best.daysDiff,
+        lineHasReceipt: Boolean(lines[best.lineIndex].receipt),
+      },
+    };
+  });
+}
+
 // Attach receipts to expense LINES (amount ±tol, date ±days, fuzzy name). Each
 // receipt is used at most once. Returns the best receipt per line (or null) and
 // the receipts left over — the cash-purchase / unmatched-credit candidates.
