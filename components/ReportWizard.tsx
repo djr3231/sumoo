@@ -392,9 +392,26 @@ export function ReportWizard() {
     setAddingCashId(null);
   }
 
+  // Diagnose a single receipt being RETURNED to the unmatched list, against the
+  // lines as they'll look right after this handler's own reassignment (so
+  // "nearest line already taken" reflects the new state, not the stale one).
+  function diagReturned(receipt: Receipt, nextExpenses: CategorizedExpense[]) {
+    const linesForDiag = nextExpenses.map((e) => ({
+      date: e.date,
+      amount: e.amount,
+      description: e.description,
+      receipt: e.receipt,
+    }));
+    const diag = diagnoseUnmatched(linesForDiag, [receipt])[0];
+    setUnmatchedDiag((prev) => ({ ...prev, [receipt.id]: diag }));
+  }
+
   // Manually attach an unmatched receipt to an expense line. If the line already
   // holds a receipt, that one is returned to the unmatched list (a swap).
   function attachReceipt(r: Receipt, lineIndex: number) {
+    const nextExpenses = expenses.map((e, i) =>
+      i === lineIndex ? { ...e, receipt: r.fileName } : e,
+    );
     const prevFile = expenses[lineIndex]?.receipt;
     if (prevFile) {
       const displaced = allReceipts.find((x) => x.fileName === prevFile);
@@ -402,11 +419,10 @@ export function ReportWizard() {
         setUnmatchedReceipts((prev) =>
           prev.some((x) => x.id === displaced.id) ? prev : [...prev, displaced],
         );
+        diagReturned(displaced, nextExpenses);
       }
     }
-    setExpenses((prev) =>
-      prev.map((e, i) => (i === lineIndex ? { ...e, receipt: r.fileName } : e)),
-    );
+    setExpenses(nextExpenses);
     if (r.driveFileId) {
       setReceiptLinks((prev) => ({
         ...prev,
@@ -422,14 +438,16 @@ export function ReportWizard() {
     const file = expenses[lineIndex]?.receipt;
     if (!file) return;
     const receipt = allReceipts.find((x) => x.fileName === file);
+    const nextExpenses = expenses.map((e, i) =>
+      i === lineIndex ? { ...e, receipt: undefined } : e,
+    );
     if (receipt) {
       setUnmatchedReceipts((prev) =>
         prev.some((x) => x.id === receipt.id) ? prev : [...prev, receipt],
       );
+      diagReturned(receipt, nextExpenses);
     }
-    setExpenses((prev) =>
-      prev.map((e, i) => (i === lineIndex ? { ...e, receipt: undefined } : e)),
-    );
+    setExpenses(nextExpenses);
   }
 
   function deleteExpense(i: number) {
