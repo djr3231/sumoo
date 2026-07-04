@@ -23,6 +23,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   GOV_EXPENSE_CATEGORIES,
   GOV_EXPENSE_CATEGORY,
   PAYMENT_METHOD,
@@ -59,6 +65,20 @@ const SOURCE_LABEL: Record<"direct" | "checking" | "cash", string> = {
   checking: "בנק",
   cash: "מזומן",
 };
+
+// Closeness of an expense line to a receipt (₪ gap, day gap, combined score).
+// Null when either side lacks an amount or date. Same weights as the matcher.
+function lineDistanceToReceipt(
+  line: { date?: string | null; amount: number },
+  r: Receipt,
+): { amountDiff: number; daysDiff: number; score: number } | null {
+  if (r.amount === null || !r.date || !line.date) return null;
+  const amountDiff = Math.abs(Math.abs(line.amount) - Math.abs(r.amount));
+  const days = Math.abs(new Date(line.date).getTime() - new Date(r.date).getTime());
+  const daysDiff = Number.isNaN(days) ? Infinity : days / 86_400_000;
+  const amountDiffPct = amountDiff / Math.max(Math.abs(r.amount), 1);
+  return { amountDiff, daysDiff, score: amountDiffPct + daysDiff * 0.05 };
+}
 
 // Two-digit month label, e.g. 3 -> "03".
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -182,6 +202,8 @@ export function ReportWizard() {
   const [unmatchedDiag, setUnmatchedDiag] = useState<Record<string, UnmatchedDiagnostic>>({});
   const [addingCashId, setAddingCashId] = useState<string | null>(null);
   const [cashGapAck, setCashGapAck] = useState(false);
+  // The unmatched receipt whose "attach to a line" picker is open (null = closed).
+  const [pickerReceipt, setPickerReceipt] = useState<Receipt | null>(null);
   // Per-review-credit routing: where the user sends each זיכוי לבדיקה. Unset =
   // still under review (counted in neither total). Never affects the card gap.
   const [creditRoute, setCreditRoute] = useState<
@@ -363,6 +385,46 @@ export function ReportWizard() {
     }
     setUnmatchedReceipts((prev) => prev.filter((x) => x.id !== r.id));
     setAddingCashId(null);
+  }
+
+  // Manually attach an unmatched receipt to an expense line. If the line already
+  // holds a receipt, that one is returned to the unmatched list (a swap).
+  function attachReceipt(r: Receipt, lineIndex: number) {
+    const prevFile = expenses[lineIndex]?.receipt;
+    if (prevFile) {
+      const displaced = allReceipts.find((x) => x.fileName === prevFile);
+      if (displaced && displaced.id !== r.id) {
+        setUnmatchedReceipts((prev) =>
+          prev.some((x) => x.id === displaced.id) ? prev : [...prev, displaced],
+        );
+      }
+    }
+    setExpenses((prev) =>
+      prev.map((e, i) => (i === lineIndex ? { ...e, receipt: r.fileName } : e)),
+    );
+    if (r.driveFileId) {
+      setReceiptLinks((prev) => ({
+        ...prev,
+        [r.fileName]: `https://drive.google.com/file/d/${r.driveFileId}/view`,
+      }));
+    }
+    setUnmatchedReceipts((prev) => prev.filter((x) => x.id !== r.id));
+    setPickerReceipt(null);
+  }
+
+  // Detach the receipt on a line, returning it to the unmatched list.
+  function detachReceipt(lineIndex: number) {
+    const file = expenses[lineIndex]?.receipt;
+    if (!file) return;
+    const receipt = allReceipts.find((x) => x.fileName === file);
+    if (receipt) {
+      setUnmatchedReceipts((prev) =>
+        prev.some((x) => x.id === receipt.id) ? prev : [...prev, receipt],
+      );
+    }
+    setExpenses((prev) =>
+      prev.map((e, i) => (i === lineIndex ? { ...e, receipt: undefined } : e)),
+    );
   }
 
   function deleteExpense(i: number) {
@@ -1147,18 +1209,27 @@ export function ReportWizard() {
                           <TableCell className="tabular-nums">{formatILS(e.amount)}</TableCell>
                           <TableCell>
                             {e.receipt ? (
-                              receiptLinks[e.receipt] ? (
-                                <a
-                                  href={receiptLinks[e.receipt]}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="underline"
+                              <span className="flex items-center gap-2">
+                                {receiptLinks[e.receipt] ? (
+                                  <a
+                                    href={receiptLinks[e.receipt]}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="underline"
+                                  >
+                                    {e.receipt}
+                                  </a>
+                                ) : (
+                                  e.receipt
+                                )}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => detachReceipt(i)}
                                 >
-                                  {e.receipt}
-                                </a>
-                              ) : (
-                                e.receipt
-                              )
+                                  בטל
+                                </Button>
+                              </span>
                             ) : (
                               <span className="text-muted-foreground">—</span>
                             )}
@@ -1195,13 +1266,22 @@ export function ReportWizard() {
                               {formatILS(Math.abs(r.amount ?? 0))}
                             </TableCell>
                             <TableCell>
-                              <Button
-                                size="sm"
-                                onClick={() => addCashExpense(r)}
-                                disabled={addingCashId !== null}
-                              >
-                                {addingCashId === r.id ? "מוסיף…" : "הוסף כהוצאה"}
-                              </Button>
+                              <span className="flex items-center gap-2">
+                                <Button
+                                  size="sm"
+                                  onClick={() => addCashExpense(r)}
+                                  disabled={addingCashId !== null}
+                                >
+                                  {addingCashId === r.id ? "מוסיף…" : "הוסף כהוצאה"}
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setPickerReceipt(r)}
+                                >
+                                  התאם ידנית
+                                </Button>
+                              </span>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -1222,6 +1302,7 @@ export function ReportWizard() {
                           <TableHead>החיוב הקרוב</TableHead>
                           <TableHead>הפרש סכום</TableHead>
                           <TableHead>הפרש ימים</TableHead>
+                          <TableHead></TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -1273,6 +1354,15 @@ export function ReportWizard() {
                                   </TableCell>
                                 </>
                               )}
+                              <TableCell>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setPickerReceipt(r)}
+                                >
+                                  התאם ידנית
+                                </Button>
+                              </TableCell>
                             </TableRow>
                           );
                         })}
@@ -1286,6 +1376,71 @@ export function ReportWizard() {
                     {unmatchedOutOfPeriod.length} קבלות מחוץ לתקופה
                   </p>
                 ) : null}
+
+                <Dialog
+                  open={pickerReceipt !== null}
+                  onOpenChange={(open) => !open && setPickerReceipt(null)}
+                >
+                  <DialogContent className="sm:max-w-2xl">
+                    <DialogHeader>
+                      <DialogTitle>בחר/י שורת הוצאה להתאמה</DialogTitle>
+                    </DialogHeader>
+                    {pickerReceipt ? (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>תאריך</TableHead>
+                            <TableHead>תיאור</TableHead>
+                            <TableHead>סכום</TableHead>
+                            <TableHead>הפרש סכום</TableHead>
+                            <TableHead>הפרש ימים</TableHead>
+                            <TableHead></TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {expenses
+                            .map((e, i) => ({ e, i }))
+                            .map(({ e, i }) => ({
+                              e,
+                              i,
+                              dist: lineDistanceToReceipt(e, pickerReceipt),
+                            }))
+                            .sort((a, b) => {
+                              if (!a.dist && !b.dist) return 0;
+                              if (!a.dist) return 1;
+                              if (!b.dist) return -1;
+                              return a.dist.score - b.dist.score;
+                            })
+                            .map(({ e, i, dist }) => (
+                              <TableRow key={i}>
+                                <TableCell className="whitespace-nowrap tabular-nums">
+                                  {fmtDate(e.date)}
+                                </TableCell>
+                                <TableCell>{e.description || "—"}</TableCell>
+                                <TableCell className="tabular-nums">
+                                  {formatILS(e.amount)}
+                                </TableCell>
+                                <TableCell className="tabular-nums">
+                                  {dist ? formatILS(dist.amountDiff) : "—"}
+                                </TableCell>
+                                <TableCell className="tabular-nums">
+                                  {dist ? Math.round(dist.daysDiff) : "—"}
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    size="sm"
+                                    onClick={() => attachReceipt(pickerReceipt, i)}
+                                  >
+                                    {e.receipt ? "בחר (תפוס)" : "בחר"}
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                        </TableBody>
+                      </Table>
+                    ) : null}
+                  </DialogContent>
+                </Dialog>
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
