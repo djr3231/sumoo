@@ -306,9 +306,14 @@ export function ReportWizard() {
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "שגיאה בטעינת הקבלות");
       const receipts = data.receipts as Receipt[];
+      // Foreign-card receipts can't serve as proof of purchase (documentation
+      // only) — keep them out of the matching pool, surfaced as a count below.
+      const evidence = receipts.filter(
+        (r) => r.paymentMethod !== PAYMENT_METHOD.ForeignCard,
+      );
       const { byLine, unmatchedReceipts: leftover } = matchReceiptsToLines(
         expenses.map((e) => ({ date: e.date, amount: e.amount, description: e.description })),
-        receipts,
+        evidence,
       );
       const links: Record<string, string> = {};
       byLine.forEach((r) => {
@@ -543,6 +548,11 @@ export function ReportWizard() {
   };
   const unmatchedInPeriod = otherUnmatched.filter(isInPeriod);
   const unmatchedOutOfPeriod = otherUnmatched.filter((r) => !isInPeriod(r));
+  // Foreign-card receipts in the period — excluded from matching (no proof
+  // value), counted here so they don't vanish silently.
+  const foreignInPeriod = allReceipts.filter(
+    (r) => r.paymentMethod === PAYMENT_METHOD.ForeignCard && isInPeriod(r),
+  );
 
   // Cash coverage per month (the מזומן step): withdrawn − Σ included cash lines.
   const cashRows = (result?.cashWithdrawals ?? []).map((c) => {
@@ -1411,6 +1421,13 @@ export function ReportWizard() {
                 {matchRan && unmatchedOutOfPeriod.length > 0 ? (
                   <p className="text-sm text-muted-foreground">
                     {unmatchedOutOfPeriod.length} קבלות מחוץ לתקופה
+                  </p>
+                ) : null}
+
+                {matchRan && foreignInPeriod.length > 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    {foreignInPeriod.length} קבלות ב{PAYMENT_METHOD.ForeignCard} — לתיעוד
+                    בלבד
                   </p>
                 ) : null}
 
