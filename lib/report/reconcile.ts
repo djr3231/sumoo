@@ -13,9 +13,10 @@ import type { CardCharge } from "@/lib/parsers";
 
 // An expense line, NOT yet mapped to a government category — Step 5 (classify)
 // assigns the GOV_EXPENSE_CATEGORY and sums.
-// Where an expense line came from: the card detail, the bank statement, or a
-// cash receipt (added in the receipts step against a cash withdrawal).
-export type ExpenseSource = "direct" | "checking" | "cash";
+// Where an expense line came from: the card detail, the bank statement, a
+// cash receipt (added in the receipts step against a cash withdrawal), or a
+// non-cash receipt the user manually added as its own line.
+export type ExpenseSource = "direct" | "checking" | "cash" | "manual";
 
 export interface ExpenseItem {
   month: number; // report month (one of the period's two months)

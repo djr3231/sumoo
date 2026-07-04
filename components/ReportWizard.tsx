@@ -38,6 +38,7 @@ import {
 import { matchReceiptsToLines, diagnoseUnmatched, type UnmatchedDiagnostic } from "@/lib/match";
 import type { ReportFolders } from "@/lib/report/period";
 import type { CategorizedExpense, ProcessResult } from "@/lib/report/process";
+import type { ExpenseSource } from "@/lib/report/reconcile";
 
 // Six wizard steps — labels verbatim from the spec (§4.2).
 const STEPS = [
@@ -60,10 +61,11 @@ function monthOfISO(d?: string | null): number | null {
   return Number.isFinite(m) && m >= 1 && m <= 12 ? m : null;
 }
 
-const SOURCE_LABEL: Record<"direct" | "checking" | "cash", string> = {
+const SOURCE_LABEL: Record<"direct" | "checking" | "cash" | "manual", string> = {
   direct: "כרטיס",
   checking: "בנק",
   cash: "מזומן",
+  manual: "ידני",
 };
 
 // Closeness of an expense line to a receipt (₪ gap, day gap, combined score).
@@ -211,7 +213,7 @@ export function ReportWizard() {
   >({});
   const [expenseFilter, setExpenseFilter] = useState("");
   const [expenseSourceFilter, setExpenseSourceFilter] = useState<
-    "all" | "direct" | "checking" | "cash"
+    "all" | "direct" | "checking" | "cash" | "manual"
   >("all");
   const [expenseSort, setExpenseSort] = useState<{
     key: "month" | "amount" | "description" | "source" | "category" | "date";
@@ -342,13 +344,16 @@ export function ReportWizard() {
     }
   }
 
-  // Turn a cash receipt into a real expense line (auto-classified, best-effort)
-  // that also reduces the month's cash-withdrawal residual in the מזומן step.
-  async function addCashExpense(r: Receipt) {
+  // Turn an unmatched receipt into a real expense line (auto-classified,
+  // best-effort). Cash receipts reduce the month's cash-withdrawal residual in
+  // the מזומן step; non-cash receipts land as a "manual" line the user should
+  // double-check isn't already covered by the bank/card detail.
+  async function addReceiptExpense(r: Receipt) {
     const month = monthOfISO(r.date);
     if (r.amount === null || month === null) return;
     const amount = Math.abs(r.amount);
     const description = r.storeName ?? r.fileName;
+    const source: ExpenseSource = r.paymentMethod === PAYMENT_METHOD.Cash ? "cash" : "manual";
     setAddingCashId(r.id);
     let category: GovExpenseCategory = GOV_EXPENSE_CATEGORY.Miscellaneous;
     try {
@@ -371,7 +376,7 @@ export function ReportWizard() {
         amount,
         description,
         category,
-        source: "cash",
+        source,
         date: r.date ?? undefined,
         receipt: r.fileName,
       },
@@ -816,7 +821,7 @@ export function ReportWizard() {
                         value={expenseSourceFilter}
                         onValueChange={(v) =>
                           setExpenseSourceFilter(
-                            v as "all" | "direct" | "checking" | "cash",
+                            v as "all" | "direct" | "checking" | "cash" | "manual",
                           )
                         }
                       >
@@ -828,6 +833,7 @@ export function ReportWizard() {
                           <SelectItem value="direct">כרטיס</SelectItem>
                           <SelectItem value="checking">בנק</SelectItem>
                           <SelectItem value="cash">מזומן</SelectItem>
+                          <SelectItem value="manual">ידני</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -1269,7 +1275,7 @@ export function ReportWizard() {
                               <span className="flex items-center gap-2">
                                 <Button
                                   size="sm"
-                                  onClick={() => addCashExpense(r)}
+                                  onClick={() => addReceiptExpense(r)}
                                   disabled={addingCashId !== null}
                                 >
                                   {addingCashId === r.id ? "מוסיף…" : "הוסף כהוצאה"}
@@ -1292,6 +1298,10 @@ export function ReportWizard() {
 
                 {matchRan && unmatchedInPeriod.length > 0 ? (
                   <Section title="קבלות ללא התאמה">
+                    <p className="mb-2 text-sm text-muted-foreground">
+                      הוספת קבלה שאינה מזומן יוצרת שורה ידנית — ודא/י שהחיוב אינו
+                      כבר בפירוט הבנק.
+                    </p>
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -1355,13 +1365,22 @@ export function ReportWizard() {
                                 </>
                               )}
                               <TableCell>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => setPickerReceipt(r)}
-                                >
-                                  התאם ידנית
-                                </Button>
+                                <span className="flex items-center gap-2">
+                                  <Button
+                                    size="sm"
+                                    onClick={() => addReceiptExpense(r)}
+                                    disabled={addingCashId !== null}
+                                  >
+                                    {addingCashId === r.id ? "מוסיף…" : "הוסף כהוצאה"}
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setPickerReceipt(r)}
+                                  >
+                                    התאם ידנית
+                                  </Button>
+                                </span>
                               </TableCell>
                             </TableRow>
                           );
