@@ -1423,6 +1423,7 @@ export function ReportWizard() {
                       <DialogTitle>בחר/י שורת הוצאה להתאמה</DialogTitle>
                     </DialogHeader>
                     {pickerReceipt ? (
+                      <div className="max-h-96 overflow-y-auto">
                       <Table>
                         <TableHeader>
                           <TableRow>
@@ -1475,6 +1476,7 @@ export function ReportWizard() {
                             ))}
                         </TableBody>
                       </Table>
+                      </div>
                     ) : null}
                   </DialogContent>
                 </Dialog>
