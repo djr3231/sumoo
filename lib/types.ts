@@ -35,8 +35,11 @@ export const EXTRACTED_METHOD = {
 export type ExtractedMethod = (typeof EXTRACTED_METHOD)[keyof typeof EXTRACTED_METHOD];
 
 // User-facing payment method labels (Hebrew, displayed in UI + sheet)
+// ForeignCard = a credit card whose last-4 is not in the user's myCardsLast4
+// list — kept for documentation but not usable as proof of purchase.
 export const PAYMENT_METHOD = {
   Credit: "אשראי",
+  ForeignCard: "אשראי (כרטיס אחר)",
   Cash: "מזומן",
   StandingOrder: "הוראת קבע",
   Mixed: "מעורב",

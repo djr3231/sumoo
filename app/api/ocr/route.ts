@@ -54,9 +54,13 @@ function asMediaType(
   return "image/jpeg";
 }
 
+// knownStores / userCards may be supplied by the client (fetched once per
+// batch via /api/scan-context) to avoid a per-file Sheets read. When absent
+// the route reads them itself, as before.
+type ScanContext = { knownStores?: string[]; userCards?: string[] };
 type Body =
-  | { kind: "upload"; fileName: string; mediaType: string; base64: string; folderId?: string }
-  | { kind: "drive"; driveFileId: string; fileName: string; mediaType: string };
+  | ({ kind: "upload"; fileName: string; mediaType: string; base64: string; folderId?: string } & ScanContext)
+  | ({ kind: "drive"; driveFileId: string; fileName: string; mediaType: string } & ScanContext);
 
 function classifyMethod(
   method: ExtractedMethod,
@@ -70,7 +74,9 @@ function classifyMethod(
     case EXTRACTED_METHOD.CreditCard: {
       if (userCards.length === 0) return PAYMENT_METHOD.Credit;
       if (cardLast4 && userCards.includes(cardLast4)) return PAYMENT_METHOD.Credit;
-      return PAYMENT_METHOD.Cash;
+      // Foreign last-4 (or unreadable last-4 while a card list exists):
+      // not provable as the user's own card — documentation only.
+      return PAYMENT_METHOD.ForeignCard;
     }
   }
 }
@@ -146,14 +152,18 @@ export async function POST(req: Request) {
 
     let token: string | null = null;
     let spreadsheetId: string | null = null;
-    let knownStores: string[] = [];
+    let knownStores: string[] = body.knownStores ?? [];
     try {
       token = await requireAccessToken();
       spreadsheetId = await ensureSpreadsheet(token);
-      const stores = await getAllStores(token, spreadsheetId);
-      knownStores = stores.map((s) => s.canonical);
+      // Only read the stores tab if the client didn't supply it — cuts one
+      // Sheets read per file during a batch.
+      if (body.knownStores === undefined) {
+        const stores = await getAllStores(token, spreadsheetId);
+        knownStores = stores.map((s) => s.canonical);
+      }
     } catch (e) {
-      console.warn("Could not load known stores", e);
+      console.warn("Could not load spreadsheet context", e);
     }
 
     const extracted = await extractReceipt({
@@ -181,10 +191,18 @@ export async function POST(req: Request) {
       }
     }
 
-    const settings = token && spreadsheetId
-      ? await getUserSettings(token, spreadsheetId).catch(() => ({ myCardsLast4: [] as string[] }))
-      : { myCardsLast4: [] as string[] };
-    const userCards = settings.myCardsLast4;
+    // Prefer client-supplied cards (fetched once per batch). Only read the
+    // settings tab when absent — and never silently fall back to [] on a
+    // quota error, which would misclassify foreign cards as the user's own.
+    const userCards =
+      body.userCards ??
+      (token && spreadsheetId
+        ? (
+            await getUserSettings(token, spreadsheetId).catch(
+              () => ({ myCardsLast4: [] as string[] }),
+            )
+          ).myCardsLast4
+        : []);
     const docType = DOC_TYPE_MAP[extracted.document_type] ?? DOCUMENT_TYPE.Unknown;
     const totalAmount = extracted.total_amount ?? null;
 

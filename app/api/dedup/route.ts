@@ -7,6 +7,7 @@ import {
   bulkUpdateReceipts,
   ensureSpreadsheet,
   getAllReceipts,
+  getAllStores,
   requireAccessToken,
   writeAllStores,
 } from "@/lib/google";
@@ -15,7 +16,20 @@ import { DEFAULT_STORE_NAME, DOCUMENT_TYPE } from "@/lib/types";
 import type { Receipt, Store } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 300;
+
+// Per-LLM-step budget. A slow/hung Gemini call must not eat the whole
+// function budget and end as an opaque 504 — race it and degrade to a
+// partial (but successful) run instead.
+const CANON_TIMEOUT_MS = 75_000;
+const FUZZY_TIMEOUT_MS = 90_000;
+
+async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    p,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
+}
 
 function roundAmount(n: number | null): number | null {
   if (n === null || n === undefined || Number.isNaN(n)) return null;
@@ -41,19 +55,52 @@ export async function POST() {
       return NextResponse.json({ ok: true, message: "אין קבלות לעיבוד" });
     }
 
-    // ---- Step 1: canonicalize store names across all receipts ----
-    const namesInput = receipts
-      .map((r) => r.storeName)
-      .filter((n): n is string => Boolean(n) && n !== DEFAULT_STORE_NAME);
+    // Rows already resolved by a previous run don't need re-processing.
+    const activeReceipts = receipts.filter(
+      (r) => r.documentType !== DOCUMENT_TYPE.Duplicate && !r.linkedTo,
+    );
 
-    const canonicalGroups = await canonicalizeStoreNames(namesInput);
+    // ---- Step 1: canonicalize store names across all receipts ----
+    // Names that are already a canonical in the stores tab were settled by
+    // a previous run — sending them to the LLM again made every re-run as
+    // slow as the first (part of the 504s). Only new/unknown names go out.
+    const knownStores = await getAllStores(token, spreadsheetId).catch(
+      () => [] as Store[],
+    );
+    const knownCanonicals = new Set(knownStores.map((s) => s.canonical));
+
+    const namesInput = Array.from(
+      new Set(
+        activeReceipts
+          .map((r) => r.storeName)
+          .filter((n): n is string => Boolean(n) && n !== DEFAULT_STORE_NAME),
+      ),
+    ).filter((n) => !knownCanonicals.has(n));
+
+    // On timeout: skip grouping this run (names stay unknown and are
+    // retried next run). Identity-fallback would be wrong here — it would
+    // enshrine every raw name as canonical and block future grouping.
+    const canonResult =
+      namesInput.length > 0
+        ? await withTimeout(canonicalizeStoreNames(namesInput), CANON_TIMEOUT_MS)
+        : [];
+    const canonSkipped = canonResult === null;
+    const canonicalGroups = canonResult ?? [];
 
     // ---- Places API: verify suspicious canonical names against Google ----
+    // Independent lookups — run them concurrently (they were sequential).
     let placesResolutions = 0;
     const placesChanges: Array<{ from: string; to: string }> = [];
-    for (const g of canonicalGroups) {
-      if (!looksUnresolved(g.canonical)) continue;
-      const resolved = await resolveStoreName(g.canonical);
+    const unresolvedGroups = canonicalGroups.filter((g) =>
+      looksUnresolved(g.canonical),
+    );
+    const placesResults = await Promise.all(
+      unresolvedGroups.map(async (g) => ({
+        g,
+        resolved: await resolveStoreName(g.canonical),
+      })),
+    );
+    for (const { g, resolved } of placesResults) {
       if (resolved && resolved !== g.canonical) {
         placesChanges.push({ from: g.canonical, to: resolved });
         g.canonical = resolved;
@@ -62,6 +109,10 @@ export async function POST() {
     }
 
     const variantToCanonical = new Map<string, string>();
+    // Known stores' variant mappings stay in force across runs.
+    for (const s of knownStores) {
+      for (const v of s.variants) variantToCanonical.set(v, s.canonical);
+    }
     for (const g of canonicalGroups) {
       for (const v of g.variants) variantToCanonical.set(v, g.canonical);
     }
@@ -79,11 +130,22 @@ export async function POST() {
       await bulkUpdateReceipts(token, spreadsheetId, storePatches);
     }
 
-    // Rebuild stores tab from canonical groups
-    const newStores: Store[] = canonicalGroups.map((g) => ({
-      canonical: g.canonical,
-      count: receipts.filter((r) => r.storeName === g.canonical).length,
-      variants: g.variants.filter((v) => v !== g.canonical),
+    // Rebuild stores tab: known stores merged with this run's new groups.
+    // (Rebuilding from canonicalGroups alone would clobber the tab now that
+    // already-known names are excluded from the LLM input.)
+    const mergedStores = new Map<string, Set<string>>();
+    for (const s of knownStores) {
+      mergedStores.set(s.canonical, new Set(s.variants));
+    }
+    for (const g of canonicalGroups) {
+      const variants = mergedStores.get(g.canonical) ?? new Set<string>();
+      for (const v of g.variants) if (v !== g.canonical) variants.add(v);
+      mergedStores.set(g.canonical, variants);
+    }
+    const newStores: Store[] = Array.from(mergedStores, ([canonical, variants]) => ({
+      canonical,
+      count: receipts.filter((r) => r.storeName === canonical).length,
+      variants: Array.from(variants),
     }));
     await writeAllStores(token, spreadsheetId, newStores);
 
@@ -151,15 +213,44 @@ export async function POST() {
     }
 
     // ---- Step 3: fuzzy duplicate / receipt-slip pair detection via LLM ----
-    const groups3 = await detectDuplicatesAndPairs(
-      receipts.map((r) => ({
-        id: r.id,
-        storeName: r.storeName,
-        amount: r.amount,
-        date: r.date,
-        documentType: r.documentType,
-      })),
-    );
+    // Sending every receipt made this call grow with the dataset until it
+    // blew the function budget. A duplicate/slip pair must have nearly the
+    // same amount (±0.5% per the prompt), so only rows with an amount
+    // neighbor within 1% are plausible candidates — typically a small
+    // fraction of the sheet.
+    const withAmount = activeReceipts
+      .filter((r) => isReceiptType(r.documentType))
+      .map((r) => ({ r, a: roundAmount(r.amount) }))
+      .filter((x): x is { r: Receipt; a: number } => x.a !== null)
+      .sort((x, y) => x.a - y.a);
+    const candidateIds = new Set<string>();
+    for (let i = 1; i < withAmount.length; i++) {
+      const prev = withAmount[i - 1];
+      const cur = withAmount[i];
+      if (cur.a - prev.a <= Math.max(0.01, cur.a * 0.01)) {
+        candidateIds.add(prev.r.id);
+        candidateIds.add(cur.r.id);
+      }
+    }
+    const fuzzyCandidates = activeReceipts.filter((r) => candidateIds.has(r.id));
+
+    const fuzzyResult =
+      fuzzyCandidates.length >= 2
+        ? await withTimeout(
+            detectDuplicatesAndPairs(
+              fuzzyCandidates.map((r) => ({
+                id: r.id,
+                storeName: r.storeName,
+                amount: r.amount,
+                date: r.date,
+                documentType: r.documentType,
+              })),
+            ),
+            FUZZY_TIMEOUT_MS,
+          )
+        : [];
+    const fuzzySkipped = fuzzyResult === null;
+    const groups3 = fuzzyResult ?? [];
 
     for (const g of groups3) {
       if (g.receipt_ids.length < 2) continue;
@@ -205,6 +296,12 @@ export async function POST() {
         placesChanges,
         duplicates: dupCount,
         creditSlips: slipCount,
+        fuzzyCandidates: fuzzyCandidates.length,
+        // Partial-run flags: an LLM step that exceeded its time budget was
+        // skipped; everything else still ran and was written. Re-running
+        // picks up where this run left off.
+        canonSkipped,
+        fuzzySkipped,
       },
     });
   } catch (err) {

@@ -1,15 +1,27 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { Button } from "./ui/button";
 import { Progress } from "./ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "./ui/Alert";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "./ui/dialog";
 import { Label } from "./ui/label";
 import { Loader2, Upload } from "lucide-react";
 import { DEFAULT_STORE_NAME, type Receipt } from "@/lib/types";
 import { DriveFolderPicker, type FolderSelection } from "./DriveFolderPicker";
 
 const FOLDER_STORAGE_KEY = "sumoo:upload:folder";
+
+type ScanContext = { knownStores?: string[]; userCards?: string[] };
 
 const CONCURRENCY = 2;
 const MAX_DIM = 1568;
@@ -78,6 +90,27 @@ async function postOnce(url: string, body: unknown) {
   return j;
 }
 
+// Mobile connections drop mid-batch; a network-level fetch rejection
+// ("Failed to fetch" — no HTTP status) is retried with escalating
+// delays, which also covers the page waking up from a brief suspension.
+// HTTP errors are NOT retried here: 503/429 have the halt/pause
+// mechanism, and retrying 500s would double the Gemini cost.
+const NET_RETRY_DELAYS_MS = [2000, 5000, 10000];
+
+async function postWithNetRetry(url: string, body: unknown) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await postOnce(url, body);
+    } catch (e) {
+      const err = e as Error & { status?: number };
+      if (err.status !== undefined || attempt >= NET_RETRY_DELAYS_MS.length) {
+        throw e;
+      }
+      await new Promise((r) => setTimeout(r, NET_RETRY_DELAYS_MS[attempt]));
+    }
+  }
+}
+
 export function UploadZone() {
   const [files, setFiles] = useState<File[]>([]);
   const [results, setResults] = useState<Receipt[]>([]);
@@ -87,6 +120,7 @@ export function UploadZone() {
   const [paused, setPaused] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [folder, setFolder] = useState<FolderSelection>({ kind: "default" });
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
   useEffect(() => {
     try {
@@ -124,32 +158,70 @@ export function UploadZone() {
     multiple: true,
   });
 
-  async function processOne(file: File): Promise<Receipt[]> {
+  async function processOne(file: File, ctx: ScanContext): Promise<Receipt[]> {
     const { base64, mediaType } = await resizeToBase64(file);
-    const json = await postOnce("/api/ocr", {
+    const json = await postWithNetRetry("/api/ocr", {
       kind: "upload",
       fileName: file.name,
       mediaType,
       base64,
       ...(folder.kind === "drive" ? { folderId: folder.id } : {}),
+      ...(ctx.knownStores ? { knownStores: ctx.knownStores } : {}),
+      ...(ctx.userCards ? { userCards: ctx.userCards } : {}),
     });
     if (!json.ok) throw new Error(json.error || "OCR failed");
     return (json.receipts as Receipt[]) || [];
   }
 
-  async function runBatch(toProcess: File[]) {
+  // Base values arrive as explicit parameters: React state set inside the
+  // caller (e.g. startProcessing's resets) is not visible to this closure
+  // in the same tick — reading progress/results/errors here produced the
+  // stale 50/49 counter and error entries surviving a successful retry.
+  interface BatchBase {
+    baseDone: number;
+    total: number;
+    baseResults: Receipt[];
+    baseErrors: { name: string; error: string }[];
+  }
+
+  async function runBatch(toProcess: File[], base: BatchBase) {
     if (toProcess.length === 0) return;
     setRunning(true);
     setPaused(false);
 
-    const totalForProgress = progress.total > 0 ? progress.total : toProcess.length;
-    const baseDone = progress.done;
+    // A large batch runs for many minutes; on mobile, the screen locking
+    // suspends the page and aborts in-flight fetches ("Failed to fetch").
+    // Hold a screen wake lock for the duration when the browser supports it.
+    try {
+      wakeLockRef.current = (await navigator.wakeLock?.request("screen")) ?? null;
+    } catch {
+      // unsupported or denied — scanning proceeds without it
+    }
+
+    // Fetch the batch-invariant context once, so each file's /api/ocr call
+    // skips its own stores + settings Sheets reads (the 60-reads/min quota).
+    // On failure, ctx stays empty and the server reads per file, as before.
+    let ctx: ScanContext = {};
+    try {
+      const r = await fetch("/api/scan-context");
+      if (r.ok) ctx = await r.json();
+    } catch {
+      // ignore — fall back to per-file server reads
+    }
+
+    const totalForProgress = base.total > 0 ? base.total : toProcess.length;
+    const baseDone = base.baseDone;
     setProgress({ done: baseDone, total: totalForProgress });
 
     const queue = [...toProcess];
-    const newResults: Receipt[] = [...results];
-    const newErrors: { name: string; error: string }[] = [...errors];
-    const state = { consecutiveOverloads: 0, halted: false, doneCount: baseDone };
+    const newResults: Receipt[] = [...base.baseResults];
+    const newErrors: { name: string; error: string }[] = [...base.baseErrors];
+    const state = {
+      consecutiveOverloads: 0,
+      halted: false,
+      doneCount: baseDone,
+      succeeded: new Set<File>(),
+    };
 
     const workers = Array.from(
       { length: Math.min(CONCURRENCY, queue.length) },
@@ -158,7 +230,7 @@ export function UploadZone() {
           const f = queue.shift();
           if (!f) break;
           try {
-            const rs = await processOne(f);
+            const rs = await processOne(f, ctx);
             newResults.push(...rs);
             state.consecutiveOverloads = 0;
             if (rs.length > 0) {
@@ -168,6 +240,7 @@ export function UploadZone() {
                 body: JSON.stringify({ receipts: rs }),
               });
             }
+            state.succeeded.add(f);
           } catch (e) {
             const err = e as Error & { status?: number };
             newErrors.push({ name: f.name, error: err.message });
@@ -191,25 +264,44 @@ export function UploadZone() {
 
     await Promise.all(workers);
 
+    // Successfully scanned files leave the queue; failed and unprocessed
+    // (halted) files remain, so the next "התחל סריקה" retries only them —
+    // no re-photographing, no duplicate scans of already-saved receipts.
+    setFiles((prev) => prev.filter((f) => !state.succeeded.has(f)));
+
     if (state.halted) {
       setPendingFiles(queue);
       setPaused(true);
     } else {
       setPendingFiles([]);
     }
+
+    wakeLockRef.current?.release().catch(() => {});
+    wakeLockRef.current = null;
     setRunning(false);
   }
 
   async function startProcessing() {
     setResults([]);
     setErrors([]);
-    setProgress({ done: 0, total: files.length });
     setPendingFiles([]);
-    await runBatch(files);
+    await runBatch(files, {
+      baseDone: 0,
+      total: files.length,
+      baseResults: [],
+      baseErrors: [],
+    });
   }
 
   async function resume() {
-    await runBatch(pendingFiles);
+    // Click handler — state values here are current, so continuing the
+    // paused batch's counter and lists is correct.
+    await runBatch(pendingFiles, {
+      baseDone: progress.done,
+      total: progress.total,
+      baseResults: results,
+      baseErrors: errors,
+    });
   }
 
   const pct = progress.total > 0
@@ -250,15 +342,40 @@ export function UploadZone() {
               ? `מעבד ${progress.done}/${progress.total}...`
               : `התחל סריקה (${files.length} קבצים)`}
           </Button>
-          <Button variant="outline" onClick={() => setFiles([])} disabled={running}>
-            נקה
-          </Button>
-          {!running && results.length > 0 && (
-            <a href="/receipts" className="text-sm underline">
-              עבור לטבלת הקבלות לזיהוי כפילויות וייצוא
-            </a>
-          )}
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="outline" disabled={running}>
+                נקה
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>לנקות את כל הקבצים?</DialogTitle>
+                <DialogDescription>
+                  קבצים שטרם נסרקו יימחקו לצמיתות. קבצים שכבר נסרקו — המקור שלהם נשמר בדרייב.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button variant="destructive" onClick={() => setFiles([])}>
+                    נקה הכל
+                  </Button>
+                </DialogClose>
+                <DialogClose asChild>
+                  <Button variant="outline">ביטול</Button>
+                </DialogClose>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
+      )}
+
+      {/* Rendered outside the files gate so it survives a fully successful
+          batch, when the queue empties itself. */}
+      {!running && results.length > 0 && (
+        <a href="/receipts" className="text-sm underline">
+          עבור לטבלת הקבלות לזיהוי כפילויות וייצוא
+        </a>
       )}
 
       {progress.total > 0 && (
