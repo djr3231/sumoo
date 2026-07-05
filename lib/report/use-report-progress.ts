@@ -25,6 +25,7 @@ export interface UseReportProgressArgs {
 export interface UseReportProgressResult {
   status: ReportProgressSaveStatus;
   saveNow: () => void;
+  cancel: () => void;
 }
 
 export function useReportProgress({
@@ -54,6 +55,12 @@ export function useReportProgress({
   // in-flight request's completion handler to fire exactly one more save
   // with the latest state, instead of queuing every intermediate request.
   const resaveNeededRef = useRef(false);
+  // Set by cancel() to suppress any save that was already armed (debounce
+  // timer already fired, or an in-flight POST about to resolve) so a stale
+  // pre-discard snapshot can never be written after cancel() runs. Cleared
+  // the next time a save is legitimately (re)armed — via the debounce effect
+  // or saveNow — so a fresh edit after discard can autosave again.
+  const abortedRef = useRef(false);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -76,9 +83,13 @@ export function useReportProgress({
       if (!res.ok || !data?.ok) {
         throw new Error(data?.error ?? "save failed");
       }
-      setStatus("saved");
+      // A cancel() may have landed while this POST was in flight — the
+      // response has already been written server-side, but we must not
+      // report a stale "saved" status nor let the caller think this write
+      // is authoritative.
+      if (!abortedRef.current) setStatus("saved");
     } catch {
-      setStatus("error");
+      if (!abortedRef.current) setStatus("error");
     }
   }, []);
 
@@ -88,6 +99,7 @@ export function useReportProgress({
   // by-then-latest state (never queuing more than one pending resave).
   const doSave = useCallback(async () => {
     if (!enabledRef.current) return;
+    if (abortedRef.current) return;
     const period = periodKeyRef.current;
     if (!period) return;
 
@@ -100,7 +112,12 @@ export function useReportProgress({
     try {
       resaveNeededRef.current = false;
       await postOnce(period);
-      while (resaveNeededRef.current && enabledRef.current && periodKeyRef.current) {
+      while (
+        resaveNeededRef.current &&
+        !abortedRef.current &&
+        enabledRef.current &&
+        periodKeyRef.current
+      ) {
         resaveNeededRef.current = false;
         await postOnce(periodKeyRef.current);
       }
@@ -109,9 +126,23 @@ export function useReportProgress({
     }
   }, [postOnce]);
 
+  // Cancels any pending/queued autosave so a stale snapshot can never land
+  // after this point: clears the armed debounce timer, drops a queued
+  // resave, and flips abortedRef so an already in-flight POST's completion
+  // handler (doSave's resave loop, and postOnce's status update) is a no-op.
+  // Callers that discard/replace the underlying data (e.g. "start over")
+  // must call this BEFORE performing the destructive action, so no timer
+  // that fired during that action's own await can race it.
+  const cancel = useCallback(() => {
+    clearTimer();
+    resaveNeededRef.current = false;
+    abortedRef.current = true;
+  }, [clearTimer]);
+
   const saveNow = useCallback(() => {
     clearTimer();
     if (!enabledRef.current) return;
+    abortedRef.current = false;
     void doSave();
   }, [clearTimer, doSave]);
 
@@ -119,8 +150,11 @@ export function useReportProgress({
   // 1.5s timer, coalescing rapid edits into a single save. `state` itself is
   // read fresh from stateRef inside doSave (kept in sync by the effect
   // above), so this effect only needs to know THAT something changed.
+  // Arming a fresh timer here means a legitimate new edit is in play, so any
+  // earlier cancel() no longer applies.
   useEffect(() => {
     if (!enabled) return;
+    abortedRef.current = false;
     clearTimer();
     timerRef.current = setTimeout(() => {
       timerRef.current = null;
@@ -132,5 +166,5 @@ export function useReportProgress({
   // Clear any pending timer on unmount.
   useEffect(() => clearTimer, [clearTimer]);
 
-  return { status, saveNow };
+  return { status, saveNow, cancel };
 }

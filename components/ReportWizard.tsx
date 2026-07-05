@@ -346,16 +346,20 @@ export function ReportWizard() {
     }
   }
 
-  // התחל מחדש: confirm, clear the saved tab server-side, then reset every
-  // piece of state the wizard tracks (processDocs's reset block plus
-  // everything resume can set) back to a fresh flow. `created`/`result` are
-  // nulled before anything else so the autosave hook's `enabled` flips false
-  // before any other setter could otherwise trigger a re-save of an
-  // almost-empty snapshot.
+  // התחל מחדש: cancel any pending/armed autosave FIRST — a debounce timer
+  // armed from a prior edit can fire while the DELETE below is in flight
+  // (network await), which would otherwise POST the stale pre-discard
+  // snapshot back with no ordering guarantee vs the DELETE. Then clear the
+  // saved tab server-side, then reset every piece of state the wizard
+  // tracks (processDocs's reset block plus everything resume can set) back
+  // to a fresh flow. `created`/`result` are nulled before anything else so
+  // the autosave hook's `enabled` flips false before any other setter could
+  // otherwise trigger a re-save of an almost-empty snapshot.
   const [restarting, setRestarting] = useState(false);
   async function discardProgress() {
     if (!created) return;
     if (!window.confirm("למחוק את ההתקדמות השמורה ולהתחיל תקופה מחדש?")) return;
+    cancelProgressSave();
     setRestarting(true);
     try {
       await fetch(
@@ -387,6 +391,9 @@ export function ReportWizard() {
     setDirectFiles([]);
     setSalaryFiles([]);
     setResumedStep(null);
+    setSelectedReceipt(null);
+    setPreviewOpen(false);
+    setAddingCashId(null);
     setStep(0);
   }
 
@@ -601,7 +608,11 @@ export function ReportWizard() {
     receiptLinks,
     attachments,
   };
-  const { status: progressStatus, saveNow: saveProgressNow } = useReportProgress({
+  const {
+    status: progressStatus,
+    saveNow: saveProgressNow,
+    cancel: cancelProgressSave,
+  } = useReportProgress({
     periodKey: created?.folderName,
     state: progressState,
     enabled: Boolean(created && result),
