@@ -28,6 +28,22 @@ export async function GET(req: Request) {
   }
 }
 
+export async function DELETE(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const period = searchParams.get("period");
+    if (!period || !PERIOD_RE.test(period)) {
+      return NextResponse.json({ error: "Invalid or missing period" }, { status: 400 });
+    }
+    const token = await requireAccessToken();
+    const spreadsheetId = await ensureSpreadsheet(token);
+    await googleSheetProgressStore(token, spreadsheetId).clear(period);
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as { period?: string; progress?: ReportProgress };

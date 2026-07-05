@@ -37,7 +37,12 @@ import { matchReceiptsToLines, receiptLineDistance } from "@/lib/match";
 import type { ReportFolders } from "@/lib/report/period";
 import type { CategorizedExpense, ProcessResult } from "@/lib/report/process";
 import type { ExpenseSource } from "@/lib/report/reconcile";
-import type { ReceiptAttachment, WizardProgressState } from "@/lib/report/progress";
+import {
+  hydrateProgress,
+  type ReceiptAttachment,
+  type ReportProgress,
+  type WizardProgressState,
+} from "@/lib/report/progress";
 import { useReportProgress } from "@/lib/report/use-report-progress";
 
 // Six wizard steps — labels verbatim from the spec (§4.2).
@@ -164,6 +169,11 @@ export function ReportWizard() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<CreatedPeriod | null>(null);
+  // Set on a successful resume-from-saved-progress (createPeriod's GET below),
+  // to the restored step index — drives the "resumed" banner. Stays set for
+  // the rest of the session (marks "this flow was resumed") until the user
+  // discards via התחל מחדש. Null on a fresh flow (no saved progress found).
+  const [resumedStep, setResumedStep] = useState<number | null>(null);
 
   // Step 2 (upload) — source docs held in state until step 3 processes them.
   const [checkingFiles, setCheckingFiles] = useState<File[]>([]);
@@ -242,7 +252,46 @@ export function ReportWizard() {
         throw new Error(data.error ?? "שגיאה ביצירת התיקייה");
       }
       setCreated({ folderName: data.folderName, folders: data.folders });
-      setStep(1);
+
+      // Resume-on-entry: look up saved progress for this period. Files (any
+      // uploaded so far in THIS browser session) are irrelevant to this
+      // lookup — a resumed flow always starts with empty file slots since
+      // File objects never survive a reload; the restored `result` is
+      // authoritative for steps 2-5 (see WizardProgressState doc comment).
+      let resumed = false;
+      try {
+        const progRes = await fetch(
+          `/api/report/progress?period=${encodeURIComponent(data.folderName)}`,
+        );
+        const progData = await progRes.json().catch(() => null);
+        const progress = (progData?.progress ?? null) as ReportProgress | null;
+        if (progRes.ok && progData?.ok && progress) {
+          const hydrated = hydrateProgress(progress);
+          setYear(hydrated.year);
+          setPair(hydrated.pair);
+          setCreated(hydrated.created);
+          setResult(hydrated.result);
+          setExpenses(hydrated.expenses);
+          setExpenseIncluded(hydrated.expenseIncluded);
+          setIncomeIncluded(hydrated.incomeIncluded);
+          setTransferInclude(hydrated.transferInclude);
+          setCreditRoute(hydrated.creditRoute);
+          setCardGapAck(hydrated.cardGapAck);
+          setCashGapAck(hydrated.cashGapAck);
+          setMatchRan(hydrated.matchRan);
+          setDismissedIds(hydrated.dismissedIds);
+          setReceiptLinks(hydrated.receiptLinks);
+          setAttachments(hydrated.attachments);
+          setResumedStep(hydrated.step);
+          setStep(hydrated.step);
+          resumed = true;
+        }
+      } catch {
+        // Resume lookup is best-effort — fall through to the fresh flow below.
+      }
+      if (!resumed) {
+        setStep(1);
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -295,6 +344,50 @@ export function ReportWizard() {
     } finally {
       setProcessing(false);
     }
+  }
+
+  // התחל מחדש: confirm, clear the saved tab server-side, then reset every
+  // piece of state the wizard tracks (processDocs's reset block plus
+  // everything resume can set) back to a fresh flow. `created`/`result` are
+  // nulled before anything else so the autosave hook's `enabled` flips false
+  // before any other setter could otherwise trigger a re-save of an
+  // almost-empty snapshot.
+  const [restarting, setRestarting] = useState(false);
+  async function discardProgress() {
+    if (!created) return;
+    if (!window.confirm("למחוק את ההתקדמות השמורה ולהתחיל תקופה מחדש?")) return;
+    setRestarting(true);
+    try {
+      await fetch(
+        `/api/report/progress?period=${encodeURIComponent(created.folderName)}`,
+        { method: "DELETE" },
+      );
+    } catch {
+      // Best-effort — proceed with the local reset regardless.
+    } finally {
+      setRestarting(false);
+    }
+    setCreated(null);
+    setResult(null);
+    setPair(null);
+    setExpenses([]);
+    setExpenseIncluded({});
+    setIncomeIncluded({});
+    setTransferInclude({});
+    setCreditRoute({});
+    setCardGapAck(false);
+    setCashGapAck(false);
+    setMatchRan(false);
+    setUnmatchedReceipts([]);
+    setReceiptLinks({});
+    setAllReceipts([]);
+    setDismissedIds(new Set());
+    setAttachments([]);
+    setCheckingFiles([]);
+    setDirectFiles([]);
+    setSalaryFiles([]);
+    setResumedStep(null);
+    setStep(0);
   }
 
   function patchExpense(lineId: string, patch: Partial<CategorizedExpense>) {
@@ -689,6 +782,22 @@ export function ReportWizard() {
           </li>
         ))}
       </ol>
+
+      {resumedStep !== null ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 border border-border bg-muted p-3 text-sm text-muted-foreground">
+          <span>
+            נמצאה התקדמות שמורה · ממשיך משלב {STEPS[resumedStep]}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={discardProgress}
+            disabled={restarting}
+          >
+            התחל מחדש
+          </Button>
+        </div>
+      ) : null}
 
       <Card>
         <CardHeader>

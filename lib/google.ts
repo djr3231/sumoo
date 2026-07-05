@@ -259,6 +259,25 @@ export async function writeJsonDoc(
   });
 }
 
+// Clear a JSON document written by `writeJsonDoc`: wipes column A of the
+// named tab so a subsequent `readJsonDoc` returns null. No-op if the tab
+// doesn't exist (never creates it — clearing a doc that was never saved is
+// a normal, non-error case).
+export async function clearJsonDoc(
+  accessToken: string,
+  spreadsheetId: string,
+  title: string,
+): Promise<void> {
+  const sheets = sheetsClient(accessToken);
+  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  const exists = (meta.data.sheets || []).some((s) => s.properties?.title === title);
+  if (!exists) return;
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId,
+    range: `${title}!A:A`,
+  });
+}
+
 async function ensureTabs(accessToken: string, spreadsheetId: string) {
   const sheets = sheetsClient(accessToken);
   const meta = await sheets.spreadsheets.get({ spreadsheetId });

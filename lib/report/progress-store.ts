@@ -4,12 +4,13 @@
 // future `dbProgressStore` can implement the same interface without any
 // wizard changes.
 
-import { ensureNamedTab, readJsonDoc, writeJsonDoc } from "@/lib/google";
+import { clearJsonDoc, ensureNamedTab, readJsonDoc, writeJsonDoc } from "@/lib/google";
 import type { ReportProgress } from "@/lib/report/progress";
 
 export interface ProgressStore {
   load(periodKey: string): Promise<ReportProgress | null>;
   save(periodKey: string, progress: ReportProgress): Promise<void>;
+  clear(periodKey: string): Promise<void>;
 }
 
 // Tab title for a given period key, e.g. periodKey "5-6_2026" -> "progress_5-6_2026".
@@ -61,6 +62,11 @@ export function googleSheetProgressStore(
       const title = progressTabTitle(periodKey);
       await ensureNamedTab(accessToken, spreadsheetId, title);
       await writeJsonDoc(accessToken, spreadsheetId, title, stableStringify(progress));
+    },
+
+    async clear(periodKey: string): Promise<void> {
+      const title = progressTabTitle(periodKey);
+      await clearJsonDoc(accessToken, spreadsheetId, title);
     },
   };
 }
