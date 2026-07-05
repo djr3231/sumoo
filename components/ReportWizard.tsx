@@ -192,6 +192,10 @@ export function ReportWizard() {
   // and whether its Drive preview iframe is shown.
   const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  // Receipts the user pulled out of the matching flow (next-period charge,
+  // credit confirmation, or a split receipt whose lines are all attached).
+  // Client-side only — the sheet is untouched; restore brings them all back.
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
   // Per-review-credit routing: where the user sends each זיכוי לבדיקה. Unset =
   // still under review (counted in neither total). Never affects the card gap.
   const [creditRoute, setCreditRoute] = useState<
@@ -269,6 +273,7 @@ export function ReportWizard() {
       setUnmatchedReceipts([]);
       setReceiptLinks({});
       setAllReceipts([]);
+      setDismissedIds(new Set());
     } catch (e) {
       setProcessError((e as Error).message);
     } finally {
@@ -371,7 +376,9 @@ export function ReportWizard() {
 
   // Manually attach an unmatched receipt to an expense line. If the line already
   // holds a receipt, that one is returned to the unmatched list (a swap).
-  function attachReceipt(r: Receipt, lineIndex: number) {
+  // keepAvailable (split receipt): the receipt stays in the unmatched list and
+  // the workbench stays open, so the next charge can be attached to it too.
+  function attachReceipt(r: Receipt, lineIndex: number, keepAvailable = false) {
     const nextExpenses = expenses.map((e, i) =>
       i === lineIndex ? { ...e, receipt: r.fileName } : e,
     );
@@ -391,8 +398,16 @@ export function ReportWizard() {
         [r.fileName]: `https://drive.google.com/file/d/${r.driveFileId}/view`,
       }));
     }
-    setUnmatchedReceipts((prev) => prev.filter((x) => x.id !== r.id));
-    setSelectedReceipt(null);
+    if (!keepAvailable) {
+      setUnmatchedReceipts((prev) => prev.filter((x) => x.id !== r.id));
+      setSelectedReceipt(null);
+    }
+  }
+
+  // Pull a receipt out of the matching flow without touching the sheet.
+  function dismissReceipt(r: Receipt) {
+    setDismissedIds((prev) => new Set(prev).add(r.id));
+    setSelectedReceipt((prev) => (prev?.id === r.id ? null : prev));
   }
 
   // Detach the receipt on a line, returning it to the unmatched list.
@@ -510,7 +525,12 @@ export function ReportWizard() {
     }, 0);
   const candidateCountLabel = (r: Receipt): string =>
     r.amount === null || !r.date ? "חסר סכום/תאריך בקבלה" : String(candidateCount(r));
-  const unmatchedInPeriod = otherUnmatched.filter(isInPeriod);
+  const unmatchedInPeriod = otherUnmatched.filter(
+    (r) => isInPeriod(r) && !dismissedIds.has(r.id),
+  );
+  const dismissedCount = otherUnmatched.filter(
+    (r) => isInPeriod(r) && dismissedIds.has(r.id),
+  ).length;
   const unmatchedOutOfPeriod = otherUnmatched.filter((r) => !isInPeriod(r));
   // Foreign-card receipts in the period — excluded from matching (no proof
   // value), counted here so they don't vanish silently.
@@ -1290,7 +1310,7 @@ export function ReportWizard() {
                                     <MatchWorkbench
                                       receipt={selectedReceipt}
                                       expenses={expenses}
-                                      onAttach={(i) => attachReceipt(selectedReceipt, i)}
+                                      onAttach={(i, keep) => attachReceipt(selectedReceipt, i, keep)}
                                       onClose={() => setSelectedReceipt(null)}
                                       previewOpen={previewOpen}
                                       onTogglePreview={() => setPreviewOpen((v) => !v)}
@@ -1332,7 +1352,7 @@ export function ReportWizard() {
                             <MatchWorkbench
                               receipt={selectedReceipt}
                               expenses={expenses}
-                              onAttach={(i) => attachReceipt(selectedReceipt, i)}
+                              onAttach={(i, keep) => attachReceipt(selectedReceipt, i, keep)}
                               onClose={() => setSelectedReceipt(null)}
                               previewOpen={previewOpen}
                               onTogglePreview={() => setPreviewOpen((v) => !v)}
@@ -1344,7 +1364,7 @@ export function ReportWizard() {
                   </Section>
                 ) : null}
 
-                {matchRan && unmatchedInPeriod.length > 0 ? (
+                {matchRan && (unmatchedInPeriod.length > 0 || dismissedCount > 0) ? (
                   <Section title="קבלות ללא התאמה">
                     <p className="mb-2 text-sm text-muted-foreground">
                       הוספת קבלה שאינה מזומן יוצרת שורה ידנית — ודא/י שהחיוב אינו
@@ -1411,6 +1431,13 @@ export function ReportWizard() {
                                         <TooltipContent>הצג קבלה</TooltipContent>
                                       </Tooltip>
                                     ) : null}
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => dismissReceipt(r)}
+                                    >
+                                      הסר מההתאמה
+                                    </Button>
                                   </span>
                                 </TableCell>
                               </TableRow>
@@ -1420,7 +1447,7 @@ export function ReportWizard() {
                                     <MatchWorkbench
                                       receipt={selectedReceipt}
                                       expenses={expenses}
-                                      onAttach={(i) => attachReceipt(selectedReceipt, i)}
+                                      onAttach={(i, keep) => attachReceipt(selectedReceipt, i, keep)}
                                       onClose={() => setSelectedReceipt(null)}
                                       previewOpen={previewOpen}
                                       onTogglePreview={() => setPreviewOpen((v) => !v)}
@@ -1473,12 +1500,15 @@ export function ReportWizard() {
                                 <Eye />
                               </Button>
                             ) : null}
+                            <Button variant="ghost" onClick={() => dismissReceipt(r)}>
+                              הסר מההתאמה
+                            </Button>
                           </div>
                           {isMobile && selectedReceipt?.id === r.id ? (
                             <MatchWorkbench
                               receipt={selectedReceipt}
                               expenses={expenses}
-                              onAttach={(i) => attachReceipt(selectedReceipt, i)}
+                              onAttach={(i, keep) => attachReceipt(selectedReceipt, i, keep)}
                               onClose={() => setSelectedReceipt(null)}
                               previewOpen={previewOpen}
                               onTogglePreview={() => setPreviewOpen((v) => !v)}
@@ -1487,6 +1517,18 @@ export function ReportWizard() {
                         </div>
                       ))}
                     </div>
+                    {dismissedCount > 0 ? (
+                      <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+                        {dismissedCount} קבלות הוסרו מההתאמה
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setDismissedIds(new Set())}
+                        >
+                          שחזר
+                        </Button>
+                      </p>
+                    ) : null}
                   </Section>
                 ) : null}
 

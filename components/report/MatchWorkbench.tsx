@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Eye } from "lucide-react";
 import { cn, formatILS } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -28,7 +29,9 @@ type SortKey = "date" | "description" | "amount" | "amountDiff" | "daysDiff";
 interface Props {
   receipt: Receipt;
   expenses: CategorizedExpense[];
-  onAttach: (lineIndex: number) => void;
+  // keepAvailable = split receipt: the caller keeps the receipt matchable
+  // (and this workbench open) so more lines can be attached to it.
+  onAttach: (lineIndex: number, keepAvailable?: boolean) => void;
   onClose: () => void;
   previewOpen: boolean;
   onTogglePreview: () => void;
@@ -44,6 +47,10 @@ export function MatchWorkbench({
   const [showAll, setShowAll] = useState(false);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" } | null>(null);
+  // Split receipt: one receipt justifies several charges (e.g. a bi-monthly
+  // municipality bill charged monthly). While checked, בחר attaches without
+  // consuming the receipt, so it can be attached again and again.
+  const [splitMode, setSplitMode] = useState(false);
 
   const query = search.trim().toLowerCase();
   const rows = expenses
@@ -118,6 +125,13 @@ export function MatchWorkbench({
               >
                 הצג הכל
               </Button>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={splitMode}
+                  onCheckedChange={(v) => setSplitMode(v === true)}
+                />
+                קבלה מפוצלת
+              </label>
             </div>
             {sorted.length === 0 ? (
               <p className="text-sm text-muted-foreground">אין מועמדים בסכום זהה</p>
@@ -159,7 +173,7 @@ export function MatchWorkbench({
                           {d ? Math.round(d.daysDiff) : "—"}
                         </TableCell>
                         <TableCell>
-                          <Button size="sm" onClick={() => onAttach(i)}>
+                          <Button size="sm" onClick={() => onAttach(i, splitMode)}>
                             {e.receipt ? "בחר (תפוס)" : "בחר"}
                           </Button>
                         </TableCell>
