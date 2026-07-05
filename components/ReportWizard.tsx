@@ -550,6 +550,15 @@ export function ReportWizard() {
     );
     return { month: c.month, withdrawn: c.amount, covered, residual: c.amount - covered };
   });
+  // Period totals for the live cash summary (updates as receipts are added).
+  const cashTotals = cashRows.reduce(
+    (a, r) => ({
+      withdrawn: a.withdrawn + r.withdrawn,
+      covered: a.covered + r.covered,
+      residual: a.residual + r.residual,
+    }),
+    { withdrawn: 0, covered: 0, residual: 0 },
+  );
   const cashGapBlocking =
     result != null &&
     cashRows.some((r) => Math.abs(r.residual) > CARD_GAP_TOLERANCE) &&
@@ -1069,14 +1078,18 @@ export function ReportWizard() {
                       <TableHeader>
                         <TableRow>
                           <TableHead>חודש</TableHead>
-                          <TableHead>סכום</TableHead>
+                          <TableHead>משיכה</TableHead>
+                          <TableHead>נצבר בקבלות</TableHead>
+                          <TableHead>יתרה</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {result.cashWithdrawals.map((c) => (
+                        {cashRows.map((c) => (
                           <TableRow key={c.month}>
                             <TableCell>{c.month}</TableCell>
-                            <TableCell className="tabular-nums">{formatILS(c.amount)}</TableCell>
+                            <TableCell className="tabular-nums">{formatILS(c.withdrawn)}</TableCell>
+                            <TableCell className="tabular-nums">{formatILS(c.covered)}</TableCell>
+                            <TableCell className="tabular-nums">{formatILS(c.residual)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -1263,6 +1276,11 @@ export function ReportWizard() {
                     <p className="mb-2 text-sm text-muted-foreground">
                       קבלות שלא תואמות אף חיוב — הוספה תיצור שורת הוצאה ותקטין את
                       יתרת המזומן של החודש.
+                    </p>
+                    <p className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-sm font-medium tabular-nums">
+                      <span>משיכות: {formatILS(cashTotals.withdrawn)}</span>
+                      <span>נצבר בקבלות: {formatILS(cashTotals.covered)}</span>
+                      <span>נותר: {formatILS(cashTotals.residual)}</span>
                     </p>
                     <div className="hidden md:block">
                       <Table>
