@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type ReactNode } from "react";
+import { Fragment, useRef, useState, type ReactNode } from "react";
 import { cn, formatILS } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1256,33 +1256,49 @@ export function ReportWizard() {
                         </TableHeader>
                         <TableBody>
                           {cashCandidates.map((r) => (
-                            <TableRow key={r.id}>
-                              <TableCell className="whitespace-nowrap tabular-nums">
-                                {fmtDate(r.date)}
-                              </TableCell>
-                              <TableCell>{r.storeName ?? r.fileName}</TableCell>
-                              <TableCell className="tabular-nums">
-                                {formatILS(Math.abs(r.amount ?? 0))}
-                              </TableCell>
-                              <TableCell>
-                                <span className="flex items-center gap-2">
-                                  <Button
-                                    size="sm"
-                                    onClick={() => addReceiptExpense(r)}
-                                    disabled={addingCashId !== null}
-                                  >
-                                    {addingCashId === r.id ? "מוסיף…" : "הוסף כהוצאה"}
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => { setSelectedReceipt(r); setPreviewOpen(false); }}
-                                  >
-                                    התאם ידנית
-                                  </Button>
-                                </span>
-                              </TableCell>
-                            </TableRow>
+                            <Fragment key={r.id}>
+                              <TableRow>
+                                <TableCell className="whitespace-nowrap tabular-nums">
+                                  {fmtDate(r.date)}
+                                </TableCell>
+                                <TableCell>{r.storeName ?? r.fileName}</TableCell>
+                                <TableCell className="tabular-nums">
+                                  {formatILS(Math.abs(r.amount ?? 0))}
+                                </TableCell>
+                                <TableCell>
+                                  <span className="flex items-center gap-2">
+                                    <Button
+                                      size="sm"
+                                      onClick={() => addReceiptExpense(r)}
+                                      disabled={addingCashId !== null}
+                                    >
+                                      {addingCashId === r.id ? "מוסיף…" : "הוסף כהוצאה"}
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => { setSelectedReceipt(r); setPreviewOpen(false); }}
+                                    >
+                                      התאם ידנית
+                                    </Button>
+                                  </span>
+                                </TableCell>
+                              </TableRow>
+                              {!isMobile && selectedReceipt?.id === r.id ? (
+                                <TableRow key={`${r.id}-workbench`} className="hover:bg-transparent">
+                                  <TableCell colSpan={4} className="p-0">
+                                    <MatchWorkbench
+                                      receipt={selectedReceipt}
+                                      expenses={expenses}
+                                      onAttach={(i) => attachReceipt(selectedReceipt, i)}
+                                      onClose={() => setSelectedReceipt(null)}
+                                      previewOpen={previewOpen}
+                                      onTogglePreview={() => setPreviewOpen((v) => !v)}
+                                    />
+                                  </TableCell>
+                                </TableRow>
+                              ) : null}
+                            </Fragment>
                           ))}
                         </TableBody>
                       </Table>
@@ -1312,6 +1328,16 @@ export function ReportWizard() {
                               התאם ידנית
                             </Button>
                           </div>
+                          {isMobile && selectedReceipt?.id === r.id ? (
+                            <MatchWorkbench
+                              receipt={selectedReceipt}
+                              expenses={expenses}
+                              onAttach={(i) => attachReceipt(selectedReceipt, i)}
+                              onClose={() => setSelectedReceipt(null)}
+                              previewOpen={previewOpen}
+                              onTogglePreview={() => setPreviewOpen((v) => !v)}
+                            />
+                          ) : null}
                         </div>
                       ))}
                     </div>
@@ -1339,7 +1365,8 @@ export function ReportWizard() {
                           </TableHeader>
                           <TableBody>
                             {unmatchedInPeriod.map((r) => (
-                              <TableRow key={r.id}>
+                              <Fragment key={r.id}>
+                              <TableRow>
                                 <TableCell className="whitespace-nowrap tabular-nums">
                                   {fmtDate(r.date)}
                                 </TableCell>
@@ -1387,6 +1414,21 @@ export function ReportWizard() {
                                   </span>
                                 </TableCell>
                               </TableRow>
+                              {!isMobile && selectedReceipt?.id === r.id ? (
+                                <TableRow className="hover:bg-transparent">
+                                  <TableCell colSpan={6} className="p-0">
+                                    <MatchWorkbench
+                                      receipt={selectedReceipt}
+                                      expenses={expenses}
+                                      onAttach={(i) => attachReceipt(selectedReceipt, i)}
+                                      onClose={() => setSelectedReceipt(null)}
+                                      previewOpen={previewOpen}
+                                      onTogglePreview={() => setPreviewOpen((v) => !v)}
+                                    />
+                                  </TableCell>
+                                </TableRow>
+                              ) : null}
+                              </Fragment>
                             ))}
                           </TableBody>
                         </Table>
@@ -1459,30 +1501,6 @@ export function ReportWizard() {
                     {foreignInPeriod.length} קבלות ב{PAYMENT_METHOD.ForeignCard} — לתיעוד
                     בלבד
                   </p>
-                ) : null}
-
-                {!isMobile && selectedReceipt ? (
-                  <MatchWorkbench
-                    receipt={selectedReceipt}
-                    expenses={expenses}
-                    onAttach={(i) => attachReceipt(selectedReceipt, i)}
-                    onClose={() => setSelectedReceipt(null)}
-                    previewOpen={previewOpen}
-                    onTogglePreview={() => setPreviewOpen((v) => !v)}
-                  />
-                ) : null}
-
-                {isMobile &&
-                selectedReceipt &&
-                !unmatchedInPeriod.some((r) => r.id === selectedReceipt.id) ? (
-                  <MatchWorkbench
-                    receipt={selectedReceipt}
-                    expenses={expenses}
-                    onAttach={(i) => attachReceipt(selectedReceipt, i)}
-                    onClose={() => setSelectedReceipt(null)}
-                    previewOpen={previewOpen}
-                    onTogglePreview={() => setPreviewOpen((v) => !v)}
-                  />
                 ) : null}
               </div>
             ) : (
