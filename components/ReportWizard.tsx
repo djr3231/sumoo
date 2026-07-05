@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { cn, formatILS } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -37,6 +37,8 @@ import { matchReceiptsToLines, receiptLineDistance } from "@/lib/match";
 import type { ReportFolders } from "@/lib/report/period";
 import type { CategorizedExpense, ProcessResult } from "@/lib/report/process";
 import type { ExpenseSource } from "@/lib/report/reconcile";
+import type { ReceiptAttachment, WizardProgressState } from "@/lib/report/progress";
+import { useReportProgress } from "@/lib/report/use-report-progress";
 
 // Six wizard steps — labels verbatim from the spec (§4.2).
 const STEPS = [
@@ -185,11 +187,20 @@ export function ReportWizard() {
   const [receiptsLoading, setReceiptsLoading] = useState(false);
   const [receiptsError, setReceiptsError] = useState<string | null>(null);
   const [matchRan, setMatchRan] = useState(false);
+  // Bumped at the end of every runReceiptMatch (including re-runs where
+  // matchRan was already true) so the save-on-transition effect below fires
+  // even when a re-match doesn't change matchRan's boolean value.
+  const [matchGeneration, setMatchGeneration] = useState(0);
   const [unmatchedReceipts, setUnmatchedReceipts] = useState<Receipt[]>([]);
   const [receiptLinks, setReceiptLinks] = useState<Record<string, string>>({});
   // All receipts fetched from the sheet (needed to return a detached receipt to
   // the unmatched list).
   const [allReceipts, setAllReceipts] = useState<Receipt[]>([]);
+  // Receipt-id-keyed attachment records, kept as a faithful parallel mirror of
+  // the fileName-based `expense.receipt` field (which loses the receipt id).
+  // Persisted alongside the wizard progress (lib/report/progress.ts); not
+  // used for any in-wizard display logic.
+  const [attachments, setAttachments] = useState<ReceiptAttachment[]>([]);
   const [addingCashId, setAddingCashId] = useState<string | null>(null);
   const [cashGapAck, setCashGapAck] = useState(false);
   // The unmatched receipt open in the matching workbench (null = closed),
@@ -278,6 +289,7 @@ export function ReportWizard() {
       setReceiptLinks({});
       setAllReceipts([]);
       setDismissedIds(new Set());
+      setAttachments([]);
     } catch (e) {
       setProcessError((e as Error).message);
     } finally {
@@ -319,9 +331,16 @@ export function ReportWizard() {
       setExpenses((prev) =>
         prev.map((e, i) => (byLine[i] ? { ...e, receipt: byLine[i]!.fileName } : e)),
       );
+      setAttachments(
+        expenses.flatMap((e, i) => {
+          const r = byLine[i];
+          return r ? [{ lineId: e.lineId, receiptId: r.id, receiptFileName: r.fileName }] : [];
+        }),
+      );
       setAllReceipts(receipts);
       setUnmatchedReceipts(leftover);
       setMatchRan(true);
+      setMatchGeneration((g) => g + 1);
     } catch (e) {
       setReceiptsError((e as Error).message);
     } finally {
@@ -368,6 +387,10 @@ export function ReportWizard() {
         receipt: r.fileName,
       },
     ]);
+    setAttachments((prev) => [
+      ...prev,
+      { lineId, receiptId: r.id, receiptFileName: r.fileName },
+    ]);
     if (r.driveFileId) {
       setReceiptLinks((prev) => ({
         ...prev,
@@ -397,6 +420,10 @@ export function ReportWizard() {
       }
     }
     setExpenses(nextExpenses);
+    setAttachments((prev) => [
+      ...prev.filter((a) => a.lineId !== lineId),
+      { lineId, receiptId: r.id, receiptFileName: r.fileName },
+    ]);
     if (r.driveFileId) {
       setReceiptLinks((prev) => ({
         ...prev,
@@ -429,6 +456,7 @@ export function ReportWizard() {
       );
     }
     setExpenses(nextExpenses);
+    setAttachments((prev) => prev.filter((a) => a.lineId !== lineId));
   }
 
   function deleteExpense(lineId: string) {
@@ -439,6 +467,7 @@ export function ReportWizard() {
       delete next[lineId];
       return next;
     });
+    setAttachments((prev) => prev.filter((a) => a.lineId !== lineId));
   }
 
   function addExpense() {
@@ -456,6 +485,47 @@ export function ReportWizard() {
   }
 
   const periodMonths = pair ? [pair.m1, pair.m2] : [];
+
+  // Persisted wizard progress (lib/report/progress.ts). Enabled only once a
+  // period folder exists AND documents have been processed — nothing worth
+  // persisting before that (and saving earlier risks clobbering a previously
+  // saved snapshot with an empty one).
+  const progressState: WizardProgressState = {
+    step,
+    year,
+    pair,
+    created,
+    result,
+    expenses,
+    expenseIncluded,
+    incomeIncluded,
+    transferInclude,
+    creditRoute,
+    cardGapAck,
+    cashGapAck,
+    matchRan,
+    dismissedIds,
+    receiptLinks,
+    attachments,
+  };
+  const { status: progressStatus, saveNow: saveProgressNow } = useReportProgress({
+    periodKey: created?.folderName,
+    state: progressState,
+    enabled: Boolean(created && result),
+  });
+
+  // Save-on-transition: `step`/`result`/`matchRan` are committed state by the
+  // time this effect runs (React flushes state updates before effects fire),
+  // so reading them here — rather than calling saveNow() synchronously right
+  // after setStep()/setMatchRan() in the button/processDocs handlers —
+  // guarantees the persisted snapshot reflects the post-update state (e.g.
+  // the step actually displayed), not the pre-transition one. `result` is
+  // included so the end of processDocs (which flips `enabled` true) also
+  // triggers an immediate save rather than waiting for the debounce.
+  useEffect(() => {
+    saveProgressNow();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally only re-fires on step/result/matchRan/matchGeneration; saveProgressNow reads the latest state via its own ref.
+  }, [step, result, matchRan, matchGeneration]);
 
   // Absent key = included by default (expense/income lines start included).
   const isExpenseIncluded = (lineId: string) => expenseIncluded[lineId] ?? true;
@@ -1665,6 +1735,15 @@ export function ReportWizard() {
       </Card>
 
       {/* Footer navigation (period step uses its own button to advance). */}
+      {progressStatus !== "idle" ? (
+        <p className="text-end text-xs text-muted-foreground">
+          {progressStatus === "saving"
+            ? "שומר…"
+            : progressStatus === "saved"
+              ? "נשמר"
+              : "שמירה נכשלה — ננסה שוב"}
+        </p>
+      ) : null}
       <div className="flex justify-between">
         <Button
           variant="outline"
