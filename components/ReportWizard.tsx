@@ -25,6 +25,7 @@ import {
 import { MatchWorkbench } from "@/components/report/MatchWorkbench";
 import { Eye } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useIsMobile } from "@/lib/use-is-mobile";
 import {
   GOV_EXPENSE_CATEGORIES,
   GOV_EXPENSE_CATEGORY,
@@ -153,6 +154,7 @@ function FileSlot({
 
 export function ReportWizard() {
   const [step, setStep] = useState(0);
+  const isMobile = useIsMobile();
 
   // Step 1 (period) form state.
   const [year, setYear] = useState(CURRENT_YEAR);
@@ -1242,70 +1244,18 @@ export function ReportWizard() {
                       קבלות שלא תואמות אף חיוב — הוספה תיצור שורת הוצאה ותקטין את
                       יתרת המזומן של החודש.
                     </p>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>תאריך</TableHead>
-                          <TableHead>בית עסק</TableHead>
-                          <TableHead>סכום</TableHead>
-                          <TableHead></TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {cashCandidates.map((r) => (
-                          <TableRow key={r.id}>
-                            <TableCell className="whitespace-nowrap tabular-nums">
-                              {fmtDate(r.date)}
-                            </TableCell>
-                            <TableCell>{r.storeName ?? r.fileName}</TableCell>
-                            <TableCell className="tabular-nums">
-                              {formatILS(Math.abs(r.amount ?? 0))}
-                            </TableCell>
-                            <TableCell>
-                              <span className="flex items-center gap-2">
-                                <Button
-                                  size="sm"
-                                  onClick={() => addReceiptExpense(r)}
-                                  disabled={addingCashId !== null}
-                                >
-                                  {addingCashId === r.id ? "מוסיף…" : "הוסף כהוצאה"}
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => { setSelectedReceipt(r); setPreviewOpen(false); }}
-                                >
-                                  התאם ידנית
-                                </Button>
-                              </span>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </Section>
-                ) : null}
-
-                {matchRan && unmatchedInPeriod.length > 0 ? (
-                  <Section title="קבלות ללא התאמה">
-                    <TooltipProvider>
-                      <p className="mb-2 text-sm text-muted-foreground">
-                        הוספת קבלה שאינה מזומן יוצרת שורה ידנית — ודא/י שהחיוב אינו
-                        כבר בפירוט הבנק.
-                      </p>
+                    <div className="hidden md:block">
                       <Table>
                         <TableHeader>
                           <TableRow>
                             <TableHead>תאריך</TableHead>
                             <TableHead>בית עסק</TableHead>
                             <TableHead>סכום</TableHead>
-                            <TableHead>אמצעי תשלום</TableHead>
-                            <TableHead>מועמדים</TableHead>
                             <TableHead></TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {unmatchedInPeriod.map((r) => (
+                          {cashCandidates.map((r) => (
                             <TableRow key={r.id}>
                               <TableCell className="whitespace-nowrap tabular-nums">
                                 {fmtDate(r.date)}
@@ -1313,12 +1263,6 @@ export function ReportWizard() {
                               <TableCell>{r.storeName ?? r.fileName}</TableCell>
                               <TableCell className="tabular-nums">
                                 {formatILS(Math.abs(r.amount ?? 0))}
-                              </TableCell>
-                              <TableCell className="text-muted-foreground">
-                                {r.paymentMethod}
-                              </TableCell>
-                              <TableCell className="tabular-nums">
-                                {candidateCountLabel(r)}
                               </TableCell>
                               <TableCell>
                                 <span className="flex items-center gap-2">
@@ -1336,28 +1280,171 @@ export function ReportWizard() {
                                   >
                                     התאם ידנית
                                   </Button>
-                                  {r.driveFileId ? (
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <Button
-                                          variant="outline"
-                                          size="sm"
-                                          onClick={() => { setSelectedReceipt(r); setPreviewOpen(true); }}
-                                          aria-label="הצג קבלה"
-                                        >
-                                          <Eye />
-                                        </Button>
-                                      </TooltipTrigger>
-                                      <TooltipContent>הצג קבלה</TooltipContent>
-                                    </Tooltip>
-                                  ) : null}
                                 </span>
                               </TableCell>
                             </TableRow>
                           ))}
                         </TableBody>
                       </Table>
-                    </TooltipProvider>
+                    </div>
+
+                    <div className="block space-y-3 md:hidden">
+                      {cashCandidates.map((r) => (
+                        <div key={r.id} className="space-y-2 border border-border p-3">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium">{r.storeName ?? r.fileName}</span>
+                            <span className="font-semibold tabular-nums">
+                              {formatILS(Math.abs(r.amount ?? 0))}
+                            </span>
+                          </div>
+                          <p className="text-sm text-muted-foreground">{fmtDate(r.date)}</p>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              onClick={() => addReceiptExpense(r)}
+                              disabled={addingCashId !== null}
+                            >
+                              {addingCashId === r.id ? "מוסיף…" : "הוסף כהוצאה"}
+                            </Button>
+                            <Button
+                              variant="outline"
+                              onClick={() => { setSelectedReceipt(r); setPreviewOpen(false); }}
+                            >
+                              התאם ידנית
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Section>
+                ) : null}
+
+                {matchRan && unmatchedInPeriod.length > 0 ? (
+                  <Section title="קבלות ללא התאמה">
+                    <p className="mb-2 text-sm text-muted-foreground">
+                      הוספת קבלה שאינה מזומן יוצרת שורה ידנית — ודא/י שהחיוב אינו
+                      כבר בפירוט הבנק.
+                    </p>
+                    <div className="hidden md:block">
+                      <TooltipProvider>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>תאריך</TableHead>
+                              <TableHead>בית עסק</TableHead>
+                              <TableHead>סכום</TableHead>
+                              <TableHead>אמצעי תשלום</TableHead>
+                              <TableHead>מועמדים</TableHead>
+                              <TableHead></TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {unmatchedInPeriod.map((r) => (
+                              <TableRow key={r.id}>
+                                <TableCell className="whitespace-nowrap tabular-nums">
+                                  {fmtDate(r.date)}
+                                </TableCell>
+                                <TableCell>{r.storeName ?? r.fileName}</TableCell>
+                                <TableCell className="tabular-nums">
+                                  {formatILS(Math.abs(r.amount ?? 0))}
+                                </TableCell>
+                                <TableCell className="text-muted-foreground">
+                                  {r.paymentMethod}
+                                </TableCell>
+                                <TableCell className="tabular-nums">
+                                  {candidateCountLabel(r)}
+                                </TableCell>
+                                <TableCell>
+                                  <span className="flex items-center gap-2">
+                                    <Button
+                                      size="sm"
+                                      onClick={() => addReceiptExpense(r)}
+                                      disabled={addingCashId !== null}
+                                    >
+                                      {addingCashId === r.id ? "מוסיף…" : "הוסף כהוצאה"}
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => { setSelectedReceipt(r); setPreviewOpen(false); }}
+                                    >
+                                      התאם ידנית
+                                    </Button>
+                                    {r.driveFileId ? (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => { setSelectedReceipt(r); setPreviewOpen(true); }}
+                                            aria-label="הצג קבלה"
+                                          >
+                                            <Eye />
+                                          </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>הצג קבלה</TooltipContent>
+                                      </Tooltip>
+                                    ) : null}
+                                  </span>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TooltipProvider>
+                    </div>
+
+                    <div className="block space-y-3 md:hidden">
+                      {unmatchedInPeriod.map((r) => (
+                        <div key={r.id} className="space-y-2 border border-border p-3">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium">{r.storeName ?? r.fileName}</span>
+                            <span className="font-semibold tabular-nums">
+                              {formatILS(Math.abs(r.amount ?? 0))}
+                            </span>
+                          </div>
+                          <p className="text-sm text-muted-foreground">
+                            {fmtDate(r.date)} · {r.paymentMethod}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            מועמדים: {candidateCountLabel(r)}
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              onClick={() => addReceiptExpense(r)}
+                              disabled={addingCashId !== null}
+                            >
+                              {addingCashId === r.id ? "מוסיף…" : "הוסף כהוצאה"}
+                            </Button>
+                            <Button
+                              variant="outline"
+                              onClick={() => { setSelectedReceipt(r); setPreviewOpen(false); }}
+                            >
+                              התאם ידנית
+                            </Button>
+                            {r.driveFileId ? (
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                onClick={() => { setSelectedReceipt(r); setPreviewOpen(true); }}
+                                aria-label="הצג קבלה"
+                              >
+                                <Eye />
+                              </Button>
+                            ) : null}
+                          </div>
+                          {isMobile && selectedReceipt?.id === r.id ? (
+                            <MatchWorkbench
+                              receipt={selectedReceipt}
+                              expenses={expenses}
+                              onAttach={(i) => attachReceipt(selectedReceipt, i)}
+                              onClose={() => setSelectedReceipt(null)}
+                              previewOpen={previewOpen}
+                              onTogglePreview={() => setPreviewOpen((v) => !v)}
+                            />
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
                   </Section>
                 ) : null}
 
@@ -1374,7 +1461,20 @@ export function ReportWizard() {
                   </p>
                 ) : null}
 
-                {selectedReceipt ? (
+                {!isMobile && selectedReceipt ? (
+                  <MatchWorkbench
+                    receipt={selectedReceipt}
+                    expenses={expenses}
+                    onAttach={(i) => attachReceipt(selectedReceipt, i)}
+                    onClose={() => setSelectedReceipt(null)}
+                    previewOpen={previewOpen}
+                    onTogglePreview={() => setPreviewOpen((v) => !v)}
+                  />
+                ) : null}
+
+                {isMobile &&
+                selectedReceipt &&
+                !unmatchedInPeriod.some((r) => r.id === selectedReceipt.id) ? (
                   <MatchWorkbench
                     receipt={selectedReceipt}
                     expenses={expenses}
