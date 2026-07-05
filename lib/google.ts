@@ -181,6 +181,84 @@ export async function ensureSpreadsheet(accessToken: string): Promise<string> {
   return id;
 }
 
+// Generic find-or-create for a single named tab (a title not among the 4
+// known report tabs). Generalizes the `ensureTabs` skeleton below without
+// touching it — used by callers (e.g. the progress store) that manage their
+// own ad-hoc tabs, one per key, rather than a fixed set of named tabs.
+export async function ensureNamedTab(
+  accessToken: string,
+  spreadsheetId: string,
+  title: string,
+): Promise<void> {
+  const sheets = sheetsClient(accessToken);
+  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  const exists = (meta.data.sheets || []).some((s) => s.properties?.title === title);
+  if (exists) return;
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [{ addSheet: { properties: { title, rightToLeft: true } } }],
+    },
+  });
+}
+
+// Max characters per cell we write a JSON chunk into. Sheets' hard limit is
+// 50,000 chars/cell; stay comfortably under it.
+const JSON_DOC_CHUNK_SIZE = 45_000;
+
+// Read a JSON document previously written by `writeJsonDoc`: column A of the
+// named tab holds the JSON string split across rows (one chunk per row).
+// Returns null if the tab doesn't exist or holds no rows (never throws for
+// a missing/empty doc — callers treat that as "no progress yet").
+export async function readJsonDoc(
+  accessToken: string,
+  spreadsheetId: string,
+  title: string,
+): Promise<string | null> {
+  const sheets = sheetsClient(accessToken);
+  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  const exists = (meta.data.sheets || []).some((s) => s.properties?.title === title);
+  if (!exists) return null;
+  const r = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${title}!A:A`,
+  });
+  const rows = r.data.values || [];
+  if (rows.length === 0) return null;
+  const joined = rows.map((row) => String(row[0] ?? "")).join("");
+  return joined === "" ? null : joined;
+}
+
+// Write a JSON document to the named tab (created if missing): clears the
+// tab, then writes `json` split into <= JSON_DOC_CHUNK_SIZE-char chunks, one
+// chunk per row in column A. Callers are expected to pass an already
+// pretty-printed, stable-key-order JSON string (see progress-store.ts) so the
+// cells stay human-inspectable.
+export async function writeJsonDoc(
+  accessToken: string,
+  spreadsheetId: string,
+  title: string,
+  json: string,
+): Promise<void> {
+  await ensureNamedTab(accessToken, spreadsheetId, title);
+  const sheets = sheetsClient(accessToken);
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId,
+    range: `${title}!A:A`,
+  });
+  const chunks: string[] = [];
+  for (let i = 0; i < json.length; i += JSON_DOC_CHUNK_SIZE) {
+    chunks.push(json.slice(i, i + JSON_DOC_CHUNK_SIZE));
+  }
+  if (chunks.length === 0) chunks.push("");
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${title}!A1`,
+    valueInputOption: "RAW",
+    requestBody: { values: chunks.map((c) => [c]) },
+  });
+}
+
 async function ensureTabs(accessToken: string, spreadsheetId: string) {
   const sheets = sheetsClient(accessToken);
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
