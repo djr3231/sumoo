@@ -173,9 +173,13 @@ export function ReportWizard() {
   const [processError, setProcessError] = useState<string | null>(null);
   const [result, setResult] = useState<ProcessResult | null>(null);
   const [expenses, setExpenses] = useState<CategorizedExpense[]>([]);
-  const [transferInclude, setTransferInclude] = useState<boolean[]>([]);
-  const [expenseIncluded, setExpenseIncluded] = useState<boolean[]>([]);
-  const [incomeIncluded, setIncomeIncluded] = useState<boolean[]>([]);
+  // Decision state below is keyed by the line's stable `lineId`, not its array
+  // index — indexes shift on add/delete/re-process, lineId doesn't. Absent key
+  // falls back to each map's original default (expense/income: included;
+  // transfer: excluded — same defaults as the old index-keyed boolean[]s).
+  const [transferInclude, setTransferInclude] = useState<Record<string, boolean>>({});
+  const [expenseIncluded, setExpenseIncluded] = useState<Record<string, boolean>>({});
+  const [incomeIncluded, setIncomeIncluded] = useState<Record<string, boolean>>({});
   const [cardGapAck, setCardGapAck] = useState(false);
   // Receipt matching (step 3): pulled from the "Receipts – sumoo" sheet on demand.
   const [receiptsLoading, setReceiptsLoading] = useState(false);
@@ -199,7 +203,7 @@ export function ReportWizard() {
   // Per-review-credit routing: where the user sends each זיכוי לבדיקה. Unset =
   // still under review (counted in neither total). Never affects the card gap.
   const [creditRoute, setCreditRoute] = useState<
-    Record<number, "income" | "expense" | "exclude">
+    Record<string, "income" | "expense" | "exclude">
   >({});
   const [expenseFilter, setExpenseFilter] = useState("");
   const [expenseSourceFilter, setExpenseSourceFilter] = useState<
@@ -263,9 +267,9 @@ export function ReportWizard() {
       const r = data as ProcessResult;
       setResult(r);
       setExpenses(r.expenses);
-      setExpenseIncluded(r.expenses.map(() => true));
-      setIncomeIncluded(r.income.map(() => true));
-      setTransferInclude(r.transfers.map(() => false));
+      setExpenseIncluded({});
+      setIncomeIncluded({});
+      setTransferInclude({});
       setCreditRoute({});
       setCardGapAck(false);
       setCashGapAck(false);
@@ -281,8 +285,8 @@ export function ReportWizard() {
     }
   }
 
-  function patchExpense(i: number, patch: Partial<CategorizedExpense>) {
-    setExpenses((prev) => prev.map((e, idx) => (idx === i ? { ...e, ...patch } : e)));
+  function patchExpense(lineId: string, patch: Partial<CategorizedExpense>) {
+    setExpenses((prev) => prev.map((e) => (e.lineId === lineId ? { ...e, ...patch } : e)));
   }
 
   // Fetch the OCR'd receipts and attach each to its matching charge (by amount +
@@ -350,9 +354,11 @@ export function ReportWizard() {
     } catch {
       // classification is best-effort — the line stays editable under שונות
     }
+    const lineId = crypto.randomUUID();
     setExpenses((prev) => [
       ...prev,
       {
+        lineId,
         month,
         amount,
         description,
@@ -362,7 +368,6 @@ export function ReportWizard() {
         receipt: r.fileName,
       },
     ]);
-    setExpenseIncluded((prev) => [...prev, true]);
     if (r.driveFileId) {
       setReceiptLinks((prev) => ({
         ...prev,
@@ -378,11 +383,11 @@ export function ReportWizard() {
   // holds a receipt, that one is returned to the unmatched list (a swap).
   // keepAvailable (split receipt): the receipt stays in the unmatched list and
   // the workbench stays open, so the next charge can be attached to it too.
-  function attachReceipt(r: Receipt, lineIndex: number, keepAvailable = false) {
-    const nextExpenses = expenses.map((e, i) =>
-      i === lineIndex ? { ...e, receipt: r.fileName } : e,
+  function attachReceipt(r: Receipt, lineId: string, keepAvailable = false) {
+    const nextExpenses = expenses.map((e) =>
+      e.lineId === lineId ? { ...e, receipt: r.fileName } : e,
     );
-    const prevFile = expenses[lineIndex]?.receipt;
+    const prevFile = expenses.find((e) => e.lineId === lineId)?.receipt;
     if (prevFile) {
       const displaced = allReceipts.find((x) => x.fileName === prevFile);
       if (displaced && displaced.id !== r.id) {
@@ -411,12 +416,12 @@ export function ReportWizard() {
   }
 
   // Detach the receipt on a line, returning it to the unmatched list.
-  function detachReceipt(lineIndex: number) {
-    const file = expenses[lineIndex]?.receipt;
+  function detachReceipt(lineId: string) {
+    const file = expenses.find((e) => e.lineId === lineId)?.receipt;
     if (!file) return;
     const receipt = allReceipts.find((x) => x.fileName === file);
-    const nextExpenses = expenses.map((e, i) =>
-      i === lineIndex ? { ...e, receipt: undefined } : e,
+    const nextExpenses = expenses.map((e) =>
+      e.lineId === lineId ? { ...e, receipt: undefined } : e,
     );
     if (receipt) {
       setUnmatchedReceipts((prev) =>
@@ -426,15 +431,21 @@ export function ReportWizard() {
     setExpenses(nextExpenses);
   }
 
-  function deleteExpense(i: number) {
-    setExpenses((prev) => prev.filter((_, idx) => idx !== i));
-    setExpenseIncluded((prev) => prev.filter((_, idx) => idx !== i));
+  function deleteExpense(lineId: string) {
+    setExpenses((prev) => prev.filter((e) => e.lineId !== lineId));
+    setExpenseIncluded((prev) => {
+      if (!(lineId in prev)) return prev;
+      const next = { ...prev };
+      delete next[lineId];
+      return next;
+    });
   }
 
   function addExpense() {
     setExpenses((prev) => [
       ...prev,
       {
+        lineId: crypto.randomUUID(),
         month: pair?.m1 ?? 1,
         amount: 0,
         description: "",
@@ -442,10 +453,15 @@ export function ReportWizard() {
         source: "direct",
       },
     ]);
-    setExpenseIncluded((prev) => [...prev, true]);
   }
 
   const periodMonths = pair ? [pair.m1, pair.m2] : [];
+
+  // Absent key = included by default (expense/income lines start included).
+  const isExpenseIncluded = (lineId: string) => expenseIncluded[lineId] ?? true;
+  const isIncomeIncluded = (lineId: string) => incomeIncluded[lineId] ?? true;
+  // Absent key = excluded by default (transfers start unchecked).
+  const isTransferIncluded = (lineId: string) => transferInclude[lineId] ?? false;
 
   // Card reconciliation: live card-detail total (editable direct lines) vs the
   // bank ישראכרט-דיירקט settlements. Updates as the user adds/edits/deletes.
@@ -454,7 +470,7 @@ export function ReportWizard() {
   const CARD_GAP_TOLERANCE = 1;
   const liveCardDetailSum =
     expenses.reduce(
-      (a, e, i) => a + (e.source === "direct" && expenseIncluded[i] ? e.amount : 0),
+      (a, e) => a + (e.source === "direct" && isExpenseIncluded(e.lineId) ? e.amount : 0),
       0,
     ) -
     (result?.reviewCredits ?? []).reduce(
@@ -480,10 +496,11 @@ export function ReportWizard() {
     return expenseSort.dir === "asc" ? cmp : -cmp;
   };
 
-  // Filtered + sorted view of expenses, keyed to the original index so the
-  // include/edit/delete handlers still target the right row.
+  // Filtered + sorted view of expenses. Rows carry `e.lineId` (stable across
+  // add/delete/re-process) so the include/edit/delete handlers and React keys
+  // target the right row regardless of array position.
   const expenseView = expenses
-    .map((e, i) => ({ e, i }))
+    .map((e) => ({ e }))
     .filter(
       ({ e }) =>
         (expenseSourceFilter === "all" || e.source === expenseSourceFilter) &&
@@ -494,7 +511,7 @@ export function ReportWizard() {
     .sort(compareExpense);
 
   // Receipts step (3): all expenses, sorted the same way (no classify filter).
-  const receiptView = expenses.map((e, i) => ({ e, i })).sort(compareExpense);
+  const receiptView = expenses.map((e) => ({ e })).sort(compareExpense);
 
   // Receipts that matched no charge: cash ones dated in-period become expense
   // candidates; the rest are surfaced for manual review (never auto-added).
@@ -541,9 +558,9 @@ export function ReportWizard() {
   // Cash coverage per month (the מזומן step): withdrawn − Σ included cash lines.
   const cashRows = (result?.cashWithdrawals ?? []).map((c) => {
     const covered = expenses.reduce(
-      (a, e, i) =>
+      (a, e) =>
         a +
-        (e.source === "cash" && expenseIncluded[i] && e.month === c.month
+        (e.source === "cash" && isExpenseIncluded(e.lineId) && e.month === c.month
           ? e.amount
           : 0),
       0,
@@ -720,29 +737,35 @@ export function ReportWizard() {
                         {periodMonths.map((m) => {
                           const incomeTotal =
                             result.income.reduce(
-                              (a, x, i) =>
-                                a + (incomeIncluded[i] && x.month === m ? x.amount : 0),
+                              (a, x) =>
+                                a + (isIncomeIncluded(x.lineId) && x.month === m ? x.amount : 0),
                               0,
                             ) +
                             result.transfers
-                              .filter((t, i) => transferInclude[i] && t.month === m)
+                              .filter((t) => isTransferIncluded(t.lineId) && t.month === m)
                               .reduce((a, t) => a + t.amount, 0) +
                             result.reviewCredits.reduce(
-                              (a, c, i) =>
-                                a + (creditRoute[i] === "income" && c.month === m ? c.amount : 0),
+                              (a, c) =>
+                                a +
+                                (creditRoute[c.lineId] === "income" && c.month === m
+                                  ? c.amount
+                                  : 0),
                               0,
                             );
                           // Credits routed to "expense" are a minus (a refund), so
                           // they REDUCE the expense total — never add to it.
                           const expenseTotal =
                             expenses.reduce(
-                              (a, e, i) =>
-                                a + (expenseIncluded[i] && e.month === m ? e.amount : 0),
+                              (a, e) =>
+                                a + (isExpenseIncluded(e.lineId) && e.month === m ? e.amount : 0),
                               0,
                             ) -
                             result.reviewCredits.reduce(
-                              (a, c, i) =>
-                                a + (creditRoute[i] === "expense" && c.month === m ? c.amount : 0),
+                              (a, c) =>
+                                a +
+                                (creditRoute[c.lineId] === "expense" && c.month === m
+                                  ? c.amount
+                                  : 0),
                               0,
                             );
                           return (
@@ -808,15 +831,16 @@ export function ReportWizard() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {result.income.map((x, i) => (
-                          <TableRow key={i} className={incomeIncluded[i] ? "" : "opacity-50"}>
+                        {result.income.map((x) => (
+                          <TableRow
+                            key={x.lineId}
+                            className={isIncomeIncluded(x.lineId) ? "" : "opacity-50"}
+                          >
                             <TableCell>
                               <Checkbox
-                                checked={incomeIncluded[i] ?? true}
+                                checked={isIncomeIncluded(x.lineId)}
                                 onCheckedChange={(v) =>
-                                  setIncomeIncluded((p) =>
-                                    p.map((b, idx) => (idx === i ? v === true : b)),
-                                  )
+                                  setIncomeIncluded((p) => ({ ...p, [x.lineId]: v === true }))
                                 }
                               />
                             </TableCell>
@@ -902,15 +926,16 @@ export function ReportWizard() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {expenseView.map(({ e, i }) => (
-                          <TableRow key={i} className={expenseIncluded[i] ? "" : "opacity-50"}>
+                        {expenseView.map(({ e }) => (
+                          <TableRow
+                            key={e.lineId}
+                            className={isExpenseIncluded(e.lineId) ? "" : "opacity-50"}
+                          >
                             <TableCell>
                               <Checkbox
-                                checked={expenseIncluded[i] ?? true}
+                                checked={isExpenseIncluded(e.lineId)}
                                 onCheckedChange={(v) =>
-                                  setExpenseIncluded((p) =>
-                                    p.map((b, idx) => (idx === i ? v === true : b)),
-                                  )
+                                  setExpenseIncluded((p) => ({ ...p, [e.lineId]: v === true }))
                                 }
                               />
                             </TableCell>
@@ -918,7 +943,7 @@ export function ReportWizard() {
                               <Input
                                 value={e.description}
                                 onChange={(ev) =>
-                                  patchExpense(i, { description: ev.target.value })
+                                  patchExpense(e.lineId, { description: ev.target.value })
                                 }
                                 className="min-w-40"
                               />
@@ -929,7 +954,7 @@ export function ReportWizard() {
                             <TableCell>
                               <Select
                                 value={String(e.month)}
-                                onValueChange={(v) => patchExpense(i, { month: Number(v) })}
+                                onValueChange={(v) => patchExpense(e.lineId, { month: Number(v) })}
                               >
                                 <SelectTrigger className="w-20">
                                   <SelectValue />
@@ -951,7 +976,7 @@ export function ReportWizard() {
                                 type="number"
                                 value={e.amount}
                                 onChange={(ev) =>
-                                  patchExpense(i, { amount: ev.target.valueAsNumber || 0 })
+                                  patchExpense(e.lineId, { amount: ev.target.valueAsNumber || 0 })
                                 }
                                 className="w-24 tabular-nums"
                               />
@@ -960,7 +985,7 @@ export function ReportWizard() {
                               <Select
                                 value={e.category}
                                 onValueChange={(v) =>
-                                  patchExpense(i, { category: v as GovExpenseCategory })
+                                  patchExpense(e.lineId, { category: v as GovExpenseCategory })
                                 }
                               >
                                 <SelectTrigger className="w-full min-w-48">
@@ -979,7 +1004,7 @@ export function ReportWizard() {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => deleteExpense(i)}
+                                onClick={() => deleteExpense(e.lineId)}
                               >
                                 מחק
                               </Button>
@@ -1051,18 +1076,19 @@ export function ReportWizard() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {result.transfers.map((t, i) => (
-                            <TableRow key={i}>
+                          {result.transfers.map((t) => (
+                            <TableRow key={t.lineId}>
                               <TableCell>{t.name || t.description}</TableCell>
                               <TableCell>{t.month}</TableCell>
                               <TableCell className="tabular-nums">{formatILS(t.amount)}</TableCell>
                               <TableCell>
                                 <Checkbox
-                                  checked={transferInclude[i] ?? false}
+                                  checked={isTransferIncluded(t.lineId)}
                                   onCheckedChange={(v) =>
-                                    setTransferInclude((prev) =>
-                                      prev.map((b, idx) => (idx === i ? v === true : b)),
-                                    )
+                                    setTransferInclude((prev) => ({
+                                      ...prev,
+                                      [t.lineId]: v === true,
+                                    }))
                                   }
                                 />
                               </TableCell>
@@ -1137,8 +1163,8 @@ export function ReportWizard() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {result.reviewCredits.map((c, i) => (
-                            <TableRow key={i}>
+                          {result.reviewCredits.map((c) => (
+                            <TableRow key={c.lineId}>
                               <TableCell>{c.month}</TableCell>
                               <TableCell className="tabular-nums">{formatILS(c.amount)}</TableCell>
                               <TableCell>{c.description}</TableCell>
@@ -1154,12 +1180,12 @@ export function ReportWizard() {
                                     <Button
                                       key={route}
                                       size="sm"
-                                      variant={creditRoute[i] === route ? "default" : "outline"}
+                                      variant={creditRoute[c.lineId] === route ? "default" : "outline"}
                                       onClick={() =>
                                         setCreditRoute((prev) => {
                                           const next = { ...prev };
-                                          if (next[i] === route) delete next[i];
-                                          else next[i] = route;
+                                          if (next[c.lineId] === route) delete next[c.lineId];
+                                          else next[c.lineId] = route;
                                           return next;
                                         })
                                       }
@@ -1230,8 +1256,8 @@ export function ReportWizard() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {receiptView.map(({ e, i }) => (
-                        <TableRow key={i}>
+                      {receiptView.map(({ e }) => (
+                        <TableRow key={e.lineId}>
                           <TableCell>{e.month}</TableCell>
                           <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
                             {fmtDate(e.date)}
@@ -1256,7 +1282,7 @@ export function ReportWizard() {
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => detachReceipt(i)}
+                                  onClick={() => detachReceipt(e.lineId)}
                                 >
                                   בטל
                                 </Button>
@@ -1328,7 +1354,7 @@ export function ReportWizard() {
                                     <MatchWorkbench
                                       receipt={selectedReceipt}
                                       expenses={expenses}
-                                      onAttach={(i, keep) => attachReceipt(selectedReceipt, i, keep)}
+                                      onAttach={(lineId, keep) => attachReceipt(selectedReceipt, lineId, keep)}
                                       onClose={() => setSelectedReceipt(null)}
                                       previewOpen={previewOpen}
                                       onTogglePreview={() => setPreviewOpen((v) => !v)}
@@ -1370,7 +1396,7 @@ export function ReportWizard() {
                             <MatchWorkbench
                               receipt={selectedReceipt}
                               expenses={expenses}
-                              onAttach={(i, keep) => attachReceipt(selectedReceipt, i, keep)}
+                              onAttach={(lineId, keep) => attachReceipt(selectedReceipt, lineId, keep)}
                               onClose={() => setSelectedReceipt(null)}
                               previewOpen={previewOpen}
                               onTogglePreview={() => setPreviewOpen((v) => !v)}
@@ -1465,7 +1491,7 @@ export function ReportWizard() {
                                     <MatchWorkbench
                                       receipt={selectedReceipt}
                                       expenses={expenses}
-                                      onAttach={(i, keep) => attachReceipt(selectedReceipt, i, keep)}
+                                      onAttach={(lineId, keep) => attachReceipt(selectedReceipt, lineId, keep)}
                                       onClose={() => setSelectedReceipt(null)}
                                       previewOpen={previewOpen}
                                       onTogglePreview={() => setPreviewOpen((v) => !v)}
@@ -1526,7 +1552,7 @@ export function ReportWizard() {
                             <MatchWorkbench
                               receipt={selectedReceipt}
                               expenses={expenses}
-                              onAttach={(i, keep) => attachReceipt(selectedReceipt, i, keep)}
+                              onAttach={(lineId, keep) => attachReceipt(selectedReceipt, lineId, keep)}
                               onClose={() => setSelectedReceipt(null)}
                               previewOpen={previewOpen}
                               onTogglePreview={() => setPreviewOpen((v) => !v)}

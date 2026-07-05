@@ -19,6 +19,7 @@ import type { CardCharge } from "@/lib/parsers";
 export type ExpenseSource = "direct" | "checking" | "cash" | "manual";
 
 export interface ExpenseItem {
+  lineId: string; // stable identity across add/delete/re-process (crypto.randomUUID())
   month: number; // report month (one of the period's two months)
   amount: number; // ₪ expense (always positive; refunds are credits, not negatives)
   description: string;
@@ -29,6 +30,7 @@ export interface ExpenseItem {
 
 // Income is determinable by source, so it is categorized here.
 export interface IncomeItem {
+  lineId: string; // stable identity across add/delete/re-process (crypto.randomUUID())
   month: number;
   amount: number;
   category: GovIncomeCategory;
@@ -37,6 +39,7 @@ export interface IncomeItem {
 
 // העברה/<name> credits — surfaced for the user's per-transfer include/exclude.
 export interface TransferItem {
+  lineId: string; // stable identity across add/delete/re-process (crypto.randomUUID())
   month: number;
   amount: number;
   name: string;
@@ -46,6 +49,7 @@ export interface TransferItem {
 // Any other positive checking line we couldn't classify — surfaced, default
 // excluded from income, so nothing slips silently into the totals.
 export interface ReviewCredit {
+  lineId: string; // stable identity across add/delete/re-process (crypto.randomUUID())
   month: number;
   amount: number;
   description: string;
@@ -244,6 +248,7 @@ export function reconcile(input: {
       const incMonth = salaryIncomeMonth(t.date);
       if (incMonth !== null && months.includes(incMonth)) {
         income.push({
+          lineId: crypto.randomUUID(),
           month: incMonth,
           amount: amt,
           category: GOV_INCOME_CATEGORY.Salary,
@@ -291,6 +296,7 @@ export function reconcile(input: {
         continue;
       }
       expenseItems.push({
+        lineId: crypto.randomUUID(),
         month,
         amount: abs,
         description: desc,
@@ -300,15 +306,28 @@ export function reconcile(input: {
     } else if (amt > 0) {
       if (isChildAllowance(desc)) {
         income.push({
+          lineId: crypto.randomUUID(),
           month,
           amount: amt,
           category: GOV_INCOME_CATEGORY.NationalInsurance,
           source: desc,
         });
       } else if (isTransfer(desc)) {
-        transfers.push({ month, amount: amt, name: transferName(desc), description: desc });
+        transfers.push({
+          lineId: crypto.randomUUID(),
+          month,
+          amount: amt,
+          name: transferName(desc),
+          description: desc,
+        });
       } else {
-        reviewCredits.push({ month, amount: amt, description: desc, source: "checking" });
+        reviewCredits.push({
+          lineId: crypto.randomUUID(),
+          month,
+          amount: amt,
+          description: desc,
+          source: "checking",
+        });
       }
     }
   }
@@ -351,7 +370,7 @@ export function reconcile(input: {
       c.settlementDate === null ||
       (lastSettlementDate !== null && c.settlementDate <= lastSettlementDate);
     if (!settled) {
-      pending.push({ month, amount, description, source: "direct" });
+      pending.push({ lineId: crypto.randomUUID(), month, amount, description, source: "direct" });
       continue;
     }
     // Keep the amount (incl. refunds) in the card-detail checksum, but never emit
@@ -359,9 +378,16 @@ export function reconcile(input: {
     // tagged "direct" so it can cancel a matching charge or be routed by the user.
     directDetailSum += amount;
     if (amount < 0) {
-      reviewCredits.push({ month, amount: -amount, description, source: "direct" });
+      reviewCredits.push({
+        lineId: crypto.randomUUID(),
+        month,
+        amount: -amount,
+        description,
+        source: "direct",
+      });
     } else {
       expenseItems.push({
+        lineId: crypto.randomUUID(),
         month,
         amount,
         description,

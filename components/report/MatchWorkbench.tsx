@@ -31,7 +31,7 @@ interface Props {
   expenses: CategorizedExpense[];
   // keepAvailable = split receipt: the caller keeps the receipt matchable
   // (and this workbench open) so more lines can be attached to it.
-  onAttach: (lineIndex: number, keepAvailable?: boolean) => void;
+  onAttach: (lineId: string, keepAvailable?: boolean) => void;
   onClose: () => void;
   previewOpen: boolean;
   onTogglePreview: () => void;
@@ -54,7 +54,7 @@ export function MatchWorkbench({
 
   const query = search.trim().toLowerCase();
   const rows = expenses
-    .map((e, i) => ({ e, i, d: receiptLineDistance(e, receipt) }))
+    .map((e) => ({ e, d: receiptLineDistance(e, receipt) }))
     .filter(({ e, d }) => {
       // A non-empty search overrides the candidate gates: the user is hunting
       // a specific line (OCR errors, odd store names), so scan EVERYTHING —
@@ -159,8 +159,8 @@ export function MatchWorkbench({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {sorted.map(({ e, i, d }) => (
-                      <TableRow key={i} className={cn(d?.sameAmount ? "" : "text-muted-foreground")}>
+                    {sorted.map(({ e, d }) => (
+                      <TableRow key={e.lineId} className={cn(d?.sameAmount ? "" : "text-muted-foreground")}>
                         <TableCell className="whitespace-nowrap tabular-nums">
                           {fmtDate(e.date)}
                         </TableCell>
@@ -173,7 +173,7 @@ export function MatchWorkbench({
                           {d ? Math.round(d.daysDiff) : "—"}
                         </TableCell>
                         <TableCell>
-                          <Button size="sm" onClick={() => onAttach(i, splitMode)}>
+                          <Button size="sm" onClick={() => onAttach(e.lineId, splitMode)}>
                             {e.receipt ? "בחר (תפוס)" : "בחר"}
                           </Button>
                         </TableCell>
