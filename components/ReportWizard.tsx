@@ -23,6 +23,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { MatchWorkbench } from "@/components/report/MatchWorkbench";
+import { Eye } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   GOV_EXPENSE_CATEGORIES,
   GOV_EXPENSE_CATEGORY,
@@ -30,7 +32,7 @@ import {
   type GovExpenseCategory,
   type Receipt,
 } from "@/lib/types";
-import { matchReceiptsToLines, diagnoseUnmatched, type UnmatchedDiagnostic } from "@/lib/match";
+import { matchReceiptsToLines, receiptLineDistance } from "@/lib/match";
 import type { ReportFolders } from "@/lib/report/period";
 import type { CategorizedExpense, ProcessResult } from "@/lib/report/process";
 import type { ExpenseSource } from "@/lib/report/reconcile";
@@ -180,9 +182,8 @@ export function ReportWizard() {
   const [unmatchedReceipts, setUnmatchedReceipts] = useState<Receipt[]>([]);
   const [receiptLinks, setReceiptLinks] = useState<Record<string, string>>({});
   // All receipts fetched from the sheet (needed to return a detached receipt to
-  // the unmatched list), and the per-receipt "why no match" diagnostics.
+  // the unmatched list).
   const [allReceipts, setAllReceipts] = useState<Receipt[]>([]);
-  const [unmatchedDiag, setUnmatchedDiag] = useState<Record<string, UnmatchedDiagnostic>>({});
   const [addingCashId, setAddingCashId] = useState<string | null>(null);
   const [cashGapAck, setCashGapAck] = useState(false);
   // The unmatched receipt open in the matching workbench (null = closed),
@@ -266,7 +267,6 @@ export function ReportWizard() {
       setUnmatchedReceipts([]);
       setReceiptLinks({});
       setAllReceipts([]);
-      setUnmatchedDiag({});
     } catch (e) {
       setProcessError((e as Error).message);
     } finally {
@@ -304,25 +304,11 @@ export function ReportWizard() {
           links[r.fileName] = `https://drive.google.com/file/d/${r.driveFileId}/view`;
         }
       });
-      // Diagnose leftovers against the lines WITH their fresh receipt assignments,
-      // so "nearest line already taken" is reported truthfully.
-      const linesForDiag = expenses.map((e, i) => ({
-        date: e.date,
-        amount: e.amount,
-        description: e.description,
-        receipt: byLine[i]?.fileName ?? e.receipt,
-      }));
-      const diagList = diagnoseUnmatched(linesForDiag, leftover);
-      const diagMap: Record<string, UnmatchedDiagnostic> = {};
-      diagList.forEach((d) => {
-        diagMap[d.receiptId] = d;
-      });
       setReceiptLinks(links);
       setExpenses((prev) =>
         prev.map((e, i) => (byLine[i] ? { ...e, receipt: byLine[i]!.fileName } : e)),
       );
       setAllReceipts(receipts);
-      setUnmatchedDiag(diagMap);
       setUnmatchedReceipts(leftover);
       setMatchRan(true);
     } catch (e) {
@@ -381,20 +367,6 @@ export function ReportWizard() {
     setAddingCashId(null);
   }
 
-  // Diagnose a single receipt being RETURNED to the unmatched list, against the
-  // lines as they'll look right after this handler's own reassignment (so
-  // "nearest line already taken" reflects the new state, not the stale one).
-  function diagReturned(receipt: Receipt, nextExpenses: CategorizedExpense[]) {
-    const linesForDiag = nextExpenses.map((e) => ({
-      date: e.date,
-      amount: e.amount,
-      description: e.description,
-      receipt: e.receipt,
-    }));
-    const diag = diagnoseUnmatched(linesForDiag, [receipt])[0];
-    setUnmatchedDiag((prev) => ({ ...prev, [receipt.id]: diag }));
-  }
-
   // Manually attach an unmatched receipt to an expense line. If the line already
   // holds a receipt, that one is returned to the unmatched list (a swap).
   function attachReceipt(r: Receipt, lineIndex: number) {
@@ -408,7 +380,6 @@ export function ReportWizard() {
         setUnmatchedReceipts((prev) =>
           prev.some((x) => x.id === displaced.id) ? prev : [...prev, displaced],
         );
-        diagReturned(displaced, nextExpenses);
       }
     }
     setExpenses(nextExpenses);
@@ -434,7 +405,6 @@ export function ReportWizard() {
       setUnmatchedReceipts((prev) =>
         prev.some((x) => x.id === receipt.id) ? prev : [...prev, receipt],
       );
-      diagReturned(receipt, nextExpenses);
     }
     setExpenses(nextExpenses);
   }
@@ -530,6 +500,14 @@ export function ReportWizard() {
     const m = monthOfISO(r.date);
     return m !== null && periodMonths.includes(m);
   };
+  // Default-gate candidates for a receipt: exact amount + related name.
+  const candidateCount = (r: Receipt): number =>
+    expenses.reduce((n, e) => {
+      const d = receiptLineDistance(e, r);
+      return n + (d && d.sameAmount && d.nameRelated ? 1 : 0);
+    }, 0);
+  const candidateCountLabel = (r: Receipt): string =>
+    r.amount === null || !r.date ? "חסר סכום/תאריך בקבלה" : String(candidateCount(r));
   const unmatchedInPeriod = otherUnmatched.filter(isInPeriod);
   const unmatchedOutOfPeriod = otherUnmatched.filter((r) => !isInPeriod(r));
   // Foreign-card receipts in the period — excluded from matching (no proof
@@ -1310,34 +1288,24 @@ export function ReportWizard() {
 
                 {matchRan && unmatchedInPeriod.length > 0 ? (
                   <Section title="קבלות ללא התאמה">
-                    <p className="mb-2 text-sm text-muted-foreground">
-                      הוספת קבלה שאינה מזומן יוצרת שורה ידנית — ודא/י שהחיוב אינו
-                      כבר בפירוט הבנק.
-                    </p>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>תאריך</TableHead>
-                          <TableHead>בית עסק</TableHead>
-                          <TableHead>סכום</TableHead>
-                          <TableHead>אמצעי תשלום</TableHead>
-                          <TableHead>החיוב הקרוב</TableHead>
-                          <TableHead>הפרש סכום</TableHead>
-                          <TableHead>הפרש ימים</TableHead>
-                          <TableHead></TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {unmatchedInPeriod.map((r) => {
-                          const diag = unmatchedDiag[r.id];
-                          const near = diag?.nearest ?? null;
-                          const nearLine =
-                            near != null ? expenses[near.lineIndex] : undefined;
-                          const amountDiff =
-                            nearLine && r.amount !== null
-                              ? Math.abs(Math.abs(nearLine.amount) - Math.abs(r.amount))
-                              : null;
-                          return (
+                    <TooltipProvider>
+                      <p className="mb-2 text-sm text-muted-foreground">
+                        הוספת קבלה שאינה מזומן יוצרת שורה ידנית — ודא/י שהחיוב אינו
+                        כבר בפירוט הבנק.
+                      </p>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>תאריך</TableHead>
+                            <TableHead>בית עסק</TableHead>
+                            <TableHead>סכום</TableHead>
+                            <TableHead>אמצעי תשלום</TableHead>
+                            <TableHead>מועמדים</TableHead>
+                            <TableHead></TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {unmatchedInPeriod.map((r) => (
                             <TableRow key={r.id}>
                               <TableCell className="whitespace-nowrap tabular-nums">
                                 {fmtDate(r.date)}
@@ -1349,33 +1317,9 @@ export function ReportWizard() {
                               <TableCell className="text-muted-foreground">
                                 {r.paymentMethod}
                               </TableCell>
-                              {diag?.reason === "missing-fields" ? (
-                                <TableCell
-                                  colSpan={3}
-                                  className="text-muted-foreground"
-                                >
-                                  חסר סכום/תאריך בקבלה
-                                </TableCell>
-                              ) : (
-                                <>
-                                  <TableCell>
-                                    {nearLine ? (
-                                      <>
-                                        {nearLine.description || "—"}
-                                        {near?.lineHasReceipt ? " (תפוס)" : ""}
-                                      </>
-                                    ) : (
-                                      "—"
-                                    )}
-                                  </TableCell>
-                                  <TableCell className="tabular-nums">
-                                    {amountDiff !== null ? formatILS(amountDiff) : "—"}
-                                  </TableCell>
-                                  <TableCell className="tabular-nums">
-                                    {near ? Math.round(near.daysDiff) : "—"}
-                                  </TableCell>
-                                </>
-                              )}
+                              <TableCell className="tabular-nums">
+                                {candidateCountLabel(r)}
+                              </TableCell>
                               <TableCell>
                                 <span className="flex items-center gap-2">
                                   <Button
@@ -1392,13 +1336,28 @@ export function ReportWizard() {
                                   >
                                     התאם ידנית
                                   </Button>
+                                  {r.driveFileId ? (
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => { setSelectedReceipt(r); setPreviewOpen(true); }}
+                                          aria-label="הצג קבלה"
+                                        >
+                                          <Eye />
+                                        </Button>
+                                      </TooltipTrigger>
+                                      <TooltipContent>הצג קבלה</TooltipContent>
+                                    </Tooltip>
+                                  ) : null}
                                 </span>
                               </TableCell>
                             </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TooltipProvider>
                   </Section>
                 ) : null}
 
