@@ -45,10 +45,23 @@ export function MatchWorkbench({
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" } | null>(null);
 
+  const query = search.trim().toLowerCase();
   const rows = expenses
     .map((e, i) => ({ e, i, d: receiptLineDistance(e, receipt) }))
-    .filter(({ e }) => search === "" || e.description.includes(search))
-    .filter(({ d }) => showAll || (d !== null && d.sameAmount && d.nameRelated));
+    .filter(({ e, d }) => {
+      // A non-empty search overrides the candidate gates: the user is hunting
+      // a specific line (OCR errors, odd store names), so scan EVERYTHING —
+      // description, date (both renderings) and amount — like the global
+      // receipts-page search.
+      if (query !== "") {
+        return [e.description, e.date, fmtDate(e.date), String(e.amount)]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(query);
+      }
+      return showAll || (d !== null && d.sameAmount && d.nameRelated);
+    });
 
   const sortVal = (r: { e: CategorizedExpense; d: CandidateDistance | null }, key: SortKey) => {
     if (key === "amount") return r.e.amount;
@@ -95,7 +108,7 @@ export function MatchWorkbench({
               <Input
                 value={search}
                 onChange={(ev) => setSearch(ev.target.value)}
-                placeholder="חיפוש לפי תיאור"
+                placeholder="חיפוש"
                 className="w-56"
               />
               <Button
