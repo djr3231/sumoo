@@ -188,3 +188,51 @@ export function matchReceiptsToLines(
 
   return { byLine, unmatchedReceipts: receipts.filter((r) => !used.has(r.id)) };
 }
+
+// ----------------------------------------------------------------------------
+// Candidate suggestions ("amount is king", user decision 2026-07-05)
+// ----------------------------------------------------------------------------
+
+// A line is only worth OFFERING for a receipt when the amount is exactly equal
+// (float-safe to the agora) — a different amount ≈ not this invoice. The date
+// may lag (bank capture); it only orders candidates. An unrelated store name
+// disqualifies a line entirely.
+export const AMOUNT_EXACT_TOL = 0.005;
+export const NAME_SIMILARITY_MIN = 0.5;
+
+export interface CandidateDistance {
+  amountDiff: number;
+  daysDiff: number;
+  sameAmount: boolean;
+  nameRelated: boolean;
+}
+
+// Null when either side lacks an amount or a date — such lines can only appear
+// in the "show all" view, sorted last.
+export function receiptLineDistance(
+  line: { date?: string | null; amount: number | null; description: string | null },
+  r: Receipt,
+): CandidateDistance | null {
+  if (r.amount === null || !r.date || line.amount === null || !line.date) return null;
+  const amountDiff = Math.abs(Math.abs(line.amount) - Math.abs(r.amount));
+  return {
+    amountDiff,
+    daysDiff: daysBetween(line.date, r.date),
+    sameAmount: amountDiff <= AMOUNT_EXACT_TOL,
+    nameRelated: similarity(line.description, r.storeName) >= NAME_SIMILARITY_MIN,
+  };
+}
+
+// Lexicographic ordering: nulls last; same-amount lines first, ordered by day
+// gap; all other lines after, ordered by amount gap (day gap breaks ties).
+export function compareCandidates(
+  a: CandidateDistance | null,
+  b: CandidateDistance | null,
+): number {
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  if (a.sameAmount !== b.sameAmount) return a.sameAmount ? -1 : 1;
+  if (a.sameAmount) return a.daysDiff - b.daysDiff;
+  return a.amountDiff - b.amountDiff || a.daysDiff - b.daysDiff;
+}
