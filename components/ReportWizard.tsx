@@ -22,12 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { MatchWorkbench } from "@/components/report/MatchWorkbench";
 import {
   GOV_EXPENSE_CATEGORIES,
   GOV_EXPENSE_CATEGORY,
@@ -67,20 +62,6 @@ const SOURCE_LABEL: Record<"direct" | "checking" | "cash" | "manual", string> = 
   cash: "מזומן",
   manual: "ידני",
 };
-
-// Closeness of an expense line to a receipt (₪ gap, day gap, combined score).
-// Null when either side lacks an amount or date. Same weights as the matcher.
-function lineDistanceToReceipt(
-  line: { date?: string | null; amount: number },
-  r: Receipt,
-): { amountDiff: number; daysDiff: number; score: number } | null {
-  if (r.amount === null || !r.date || !line.date) return null;
-  const amountDiff = Math.abs(Math.abs(line.amount) - Math.abs(r.amount));
-  const days = Math.abs(new Date(line.date).getTime() - new Date(r.date).getTime());
-  const daysDiff = Number.isNaN(days) ? Infinity : days / 86_400_000;
-  const amountDiffPct = amountDiff / Math.max(Math.abs(r.amount), 1);
-  return { amountDiff, daysDiff, score: amountDiffPct + daysDiff * 0.05 };
-}
 
 // Two-digit month label, e.g. 3 -> "03".
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -204,8 +185,10 @@ export function ReportWizard() {
   const [unmatchedDiag, setUnmatchedDiag] = useState<Record<string, UnmatchedDiagnostic>>({});
   const [addingCashId, setAddingCashId] = useState<string | null>(null);
   const [cashGapAck, setCashGapAck] = useState(false);
-  // The unmatched receipt whose "attach to a line" picker is open (null = closed).
-  const [pickerReceipt, setPickerReceipt] = useState<Receipt | null>(null);
+  // The unmatched receipt open in the matching workbench (null = closed),
+  // and whether its Drive preview iframe is shown.
+  const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   // Per-review-credit routing: where the user sends each זיכוי לבדיקה. Unset =
   // still under review (counted in neither total). Never affects the card gap.
   const [creditRoute, setCreditRoute] = useState<
@@ -394,6 +377,7 @@ export function ReportWizard() {
       }));
     }
     setUnmatchedReceipts((prev) => prev.filter((x) => x.id !== r.id));
+    setSelectedReceipt((prev) => (prev?.id === r.id ? null : prev));
     setAddingCashId(null);
   }
 
@@ -435,7 +419,7 @@ export function ReportWizard() {
       }));
     }
     setUnmatchedReceipts((prev) => prev.filter((x) => x.id !== r.id));
-    setPickerReceipt(null);
+    setSelectedReceipt(null);
   }
 
   // Detach the receipt on a line, returning it to the unmatched list.
@@ -1311,7 +1295,7 @@ export function ReportWizard() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => setPickerReceipt(r)}
+                                  onClick={() => { setSelectedReceipt(r); setPreviewOpen(false); }}
                                 >
                                   התאם ידנית
                                 </Button>
@@ -1404,7 +1388,7 @@ export function ReportWizard() {
                                   <Button
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => setPickerReceipt(r)}
+                                    onClick={() => { setSelectedReceipt(r); setPreviewOpen(false); }}
                                   >
                                     התאם ידנית
                                   </Button>
@@ -1431,72 +1415,16 @@ export function ReportWizard() {
                   </p>
                 ) : null}
 
-                <Dialog
-                  open={pickerReceipt !== null}
-                  onOpenChange={(open) => !open && setPickerReceipt(null)}
-                >
-                  <DialogContent className="sm:max-w-2xl">
-                    <DialogHeader>
-                      <DialogTitle>בחר/י שורת הוצאה להתאמה</DialogTitle>
-                    </DialogHeader>
-                    {pickerReceipt ? (
-                      <div className="max-h-96 overflow-y-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>תאריך</TableHead>
-                            <TableHead>תיאור</TableHead>
-                            <TableHead>סכום</TableHead>
-                            <TableHead>הפרש סכום</TableHead>
-                            <TableHead>הפרש ימים</TableHead>
-                            <TableHead></TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {expenses
-                            .map((e, i) => ({ e, i }))
-                            .map(({ e, i }) => ({
-                              e,
-                              i,
-                              dist: lineDistanceToReceipt(e, pickerReceipt),
-                            }))
-                            .sort((a, b) => {
-                              if (!a.dist && !b.dist) return 0;
-                              if (!a.dist) return 1;
-                              if (!b.dist) return -1;
-                              return a.dist.score - b.dist.score;
-                            })
-                            .map(({ e, i, dist }) => (
-                              <TableRow key={i}>
-                                <TableCell className="whitespace-nowrap tabular-nums">
-                                  {fmtDate(e.date)}
-                                </TableCell>
-                                <TableCell>{e.description || "—"}</TableCell>
-                                <TableCell className="tabular-nums">
-                                  {formatILS(e.amount)}
-                                </TableCell>
-                                <TableCell className="tabular-nums">
-                                  {dist ? formatILS(dist.amountDiff) : "—"}
-                                </TableCell>
-                                <TableCell className="tabular-nums">
-                                  {dist ? Math.round(dist.daysDiff) : "—"}
-                                </TableCell>
-                                <TableCell>
-                                  <Button
-                                    size="sm"
-                                    onClick={() => attachReceipt(pickerReceipt, i)}
-                                  >
-                                    {e.receipt ? "בחר (תפוס)" : "בחר"}
-                                  </Button>
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                        </TableBody>
-                      </Table>
-                      </div>
-                    ) : null}
-                  </DialogContent>
-                </Dialog>
+                {selectedReceipt ? (
+                  <MatchWorkbench
+                    receipt={selectedReceipt}
+                    expenses={expenses}
+                    onAttach={(i) => attachReceipt(selectedReceipt, i)}
+                    onClose={() => setSelectedReceipt(null)}
+                    previewOpen={previewOpen}
+                    onTogglePreview={() => setPreviewOpen((v) => !v)}
+                  />
+                ) : null}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
