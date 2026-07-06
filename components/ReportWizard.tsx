@@ -406,6 +406,7 @@ export function ReportWizard() {
           setAttachments(hydrated.attachments);
           setResumedStep(hydrated.step);
           setStep(hydrated.step);
+          setMaxStep(hydrated.maxStep);
           resumed = true;
         }
       } catch {
@@ -784,6 +785,7 @@ export function ReportWizard() {
   // saved snapshot with an empty one).
   const progressState: WizardProgressState = {
     step,
+    maxStep,
     year,
     pair,
     created,

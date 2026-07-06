@@ -37,6 +37,7 @@ export interface ReceiptAttachment {
 // this shape out of ReportWizard's state and writes it back on resume.
 export interface WizardProgressState {
   step: number;
+  maxStep: number;
   year: number;
   pair: { m1: number; m2: number } | null;
   created: WizardProgressPeriod | null;
@@ -66,6 +67,7 @@ export interface WizardProgressState {
 export interface ReportProgress {
   schemaVersion: 1;
   step: number;
+  maxStep: number;
   year: number;
   pair: { m1: number; m2: number } | null;
   created: WizardProgressPeriod | null;
@@ -91,6 +93,7 @@ export function serializeProgress(state: WizardProgressState): ReportProgress {
   return {
     schemaVersion: 1,
     step: state.step,
+    maxStep: state.maxStep,
     year: state.year,
     pair: state.pair,
     created: state.created,
@@ -112,6 +115,7 @@ export function serializeProgress(state: WizardProgressState): ReportProgress {
 export function hydrateProgress(progress: ReportProgress): WizardProgressState {
   return {
     step: progress.step,
+    maxStep: progress.maxStep ?? progress.step,
     year: progress.year,
     pair: progress.pair,
     created: progress.created,
