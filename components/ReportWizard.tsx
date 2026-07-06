@@ -959,29 +959,40 @@ export function ReportWizard() {
     <div className="space-y-6">
       {/* Stepper header */}
       <ol className="flex flex-wrap gap-2">
-        {STEPS.map((label, i) => (
-          <li
-            key={label}
-            className={cn(
-              "flex items-center gap-2 border px-3 py-2 text-xs",
-              i === step
-                ? "border-primary text-foreground"
-                : "border-border text-muted-foreground",
-            )}
-          >
-            <span
-              className={cn(
-                "flex size-5 items-center justify-center text-[11px] font-semibold",
-                i === step
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground",
-              )}
-            >
-              {i + 1}
-            </span>
-            {label}
-          </li>
-        ))}
+        {STEPS.map((label, i) => {
+          const reachable = i <= maxStep;
+          const active = i === step;
+          return (
+            <li key={label}>
+              <button
+                type="button"
+                onClick={() => setStep(i)}
+                disabled={!reachable}
+                aria-current={active ? "step" : undefined}
+                className={cn(
+                  "inline-flex min-h-10 items-center gap-2 border px-3 py-2 text-xs transition-colors",
+                  active
+                    ? "border-primary text-foreground"
+                    : reachable
+                      ? "border-border text-muted-foreground hover:border-primary hover:text-foreground"
+                      : "border-border text-muted-foreground opacity-50 cursor-not-allowed",
+                )}
+              >
+                <span
+                  className={cn(
+                    "flex size-5 items-center justify-center text-[11px] font-semibold",
+                    active
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground",
+                  )}
+                >
+                  {i + 1}
+                </span>
+                {label}
+              </button>
+            </li>
+          );
+        })}
       </ol>
 
       {resumedStep !== null ? (
