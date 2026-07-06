@@ -401,9 +401,73 @@ export function ReportWizard() {
     setExpenses((prev) => prev.map((e) => (e.lineId === lineId ? { ...e, ...patch } : e)));
   }
 
-  // Fetch the OCR'd receipts and attach each to its matching charge (by amount +
-  // date + name). Leftover receipts (matched no charge) are the cash / unmatched
-  // candidates handled in the cash step.
+  // Merge freshly-fetched receipts into the current match state WITHOUT
+  // touching anything the user already decided on (manual attach/dismiss/
+  // split/edit). Idempotent: receipts already dismissed, already attached
+  // (by id), or already reflected on a line (by fileName, a fallback for
+  // robustness) are excluded from matching entirely, and a match is only
+  // ever assigned to a line that has no `.receipt` yet — an existing
+  // attachment is never overwritten. On the very first run nothing is
+  // handled yet and no line has a receipt, so this reduces to "match
+  // everything", identical to the old behavior; every later run is
+  // additive-only.
+  function mergeNewReceipts(
+    receipts: Receipt[],
+    expensesSnapshot: CategorizedExpense[],
+  ) {
+    // Foreign-card receipts can't serve as proof of purchase (documentation
+    // only) — keep them out of the matching pool, surfaced as a count below.
+    const evidence = receipts.filter((r) => r.paymentMethod !== PAYMENT_METHOD.ForeignCard);
+
+    const handled = (r: Receipt) =>
+      dismissedIds.has(r.id) ||
+      attachments.some((a) => a.receiptId === r.id) ||
+      expensesSnapshot.some((e) => e.receipt === r.fileName);
+    const unhandled = evidence.filter((r) => !handled(r));
+
+    const { byLine, unmatchedReceipts: leftover } = matchReceiptsToLines(
+      expensesSnapshot.map((e) => ({ date: e.date, amount: e.amount, description: e.description })),
+      unhandled,
+    );
+
+    // Only apply an assignment when the line is still empty — never
+    // overwrite an existing manual (or prior-run) attachment.
+    const appliedIndexes = byLine
+      .map((r, i) => (r && !expensesSnapshot[i].receipt ? i : -1))
+      .filter((i) => i !== -1);
+
+    setExpenses((prev) =>
+      prev.map((e, i) =>
+        appliedIndexes.includes(i) ? { ...e, receipt: byLine[i]!.fileName } : e,
+      ),
+    );
+
+    const newLinks: Record<string, string> = {};
+    appliedIndexes.forEach((i) => {
+      const r = byLine[i]!;
+      if (r.driveFileId) {
+        newLinks[r.fileName] = `https://drive.google.com/file/d/${r.driveFileId}/view`;
+      }
+    });
+    setReceiptLinks((prev) => ({ ...prev, ...newLinks }));
+
+    const newAttachments: ReceiptAttachment[] = appliedIndexes.map((i) => {
+      const r = byLine[i]!;
+      return { lineId: expensesSnapshot[i].lineId, receiptId: r.id, receiptFileName: r.fileName };
+    });
+    setAttachments((prev) => [...prev, ...newAttachments]);
+
+    setAllReceipts(receipts);
+    setUnmatchedReceipts(leftover);
+    setMatchRan(true);
+    setMatchGeneration((g) => g + 1);
+  }
+
+  // Fetch the OCR'd receipts and merge new matches into the current state.
+  // First run: nothing is handled yet, so this matches everything (same as
+  // the old destructive behavior). Later runs: only newly-scanned receipts
+  // get auto-placed, and only onto lines with no receipt yet — manual
+  // attach/dismiss/split/edit work from prior runs is left untouched.
   async function runReceiptMatch() {
     setReceiptsLoading(true);
     setReceiptsError(null);
@@ -412,35 +476,7 @@ export function ReportWizard() {
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "שגיאה בטעינת הקבלות");
       const receipts = data.receipts as Receipt[];
-      // Foreign-card receipts can't serve as proof of purchase (documentation
-      // only) — keep them out of the matching pool, surfaced as a count below.
-      const evidence = receipts.filter(
-        (r) => r.paymentMethod !== PAYMENT_METHOD.ForeignCard,
-      );
-      const { byLine, unmatchedReceipts: leftover } = matchReceiptsToLines(
-        expenses.map((e) => ({ date: e.date, amount: e.amount, description: e.description })),
-        evidence,
-      );
-      const links: Record<string, string> = {};
-      byLine.forEach((r) => {
-        if (r?.driveFileId) {
-          links[r.fileName] = `https://drive.google.com/file/d/${r.driveFileId}/view`;
-        }
-      });
-      setReceiptLinks(links);
-      setExpenses((prev) =>
-        prev.map((e, i) => (byLine[i] ? { ...e, receipt: byLine[i]!.fileName } : e)),
-      );
-      setAttachments(
-        expenses.flatMap((e, i) => {
-          const r = byLine[i];
-          return r ? [{ lineId: e.lineId, receiptId: r.id, receiptFileName: r.fileName }] : [];
-        }),
-      );
-      setAllReceipts(receipts);
-      setUnmatchedReceipts(leftover);
-      setMatchRan(true);
-      setMatchGeneration((g) => g + 1);
+      mergeNewReceipts(receipts, expenses);
     } catch (e) {
       setReceiptsError((e as Error).message);
     } finally {
@@ -1399,7 +1435,7 @@ export function ReportWizard() {
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <Button onClick={runReceiptMatch} disabled={receiptsLoading}>
-                    {receiptsLoading ? "מתאים…" : "התאם קבלות"}
+                    {receiptsLoading ? "מתאים…" : matchRan ? "התאם קבלות חדשות" : "התאם קבלות"}
                   </Button>
                   {matchRan ? (
                     <span className="text-sm text-muted-foreground">
