@@ -1,6 +1,15 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { cn, formatILS } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -158,6 +167,102 @@ function FileSlot({
     </div>
   );
 }
+
+// One row of the step-2 expense classify table. Memoized because real
+// reports have ~200-300 rows, each with two Radix `Select`s — without
+// memoization, every keystroke in one row re-renders all of them. Relies on
+// `patchExpense` preserving referential identity for unchanged rows (see
+// `setExpenses` in `ReportWizard`), so an edit to row A leaves row B's `e`
+// (and every other prop here) referentially unchanged and this component
+// skips re-rendering.
+const ExpenseRow = memo(function ExpenseRow({
+  e,
+  included,
+  months,
+  categories,
+  onPatch,
+  onDelete,
+  onToggleInclude,
+}: {
+  e: CategorizedExpense;
+  included: boolean;
+  months: number[];
+  categories: readonly GovExpenseCategory[];
+  onPatch: (lineId: string, patch: Partial<CategorizedExpense>) => void;
+  onDelete: (lineId: string) => void;
+  onToggleInclude: (lineId: string, checked: boolean) => void;
+}) {
+  return (
+    <TableRow className={included ? "" : "opacity-50"}>
+      <TableCell>
+        <Checkbox
+          checked={included}
+          onCheckedChange={(v) => onToggleInclude(e.lineId, v === true)}
+        />
+      </TableCell>
+      <TableCell>
+        <Input
+          value={e.description}
+          onChange={(ev) => onPatch(e.lineId, { description: ev.target.value })}
+          className="min-w-40"
+        />
+      </TableCell>
+      <TableCell className="whitespace-nowrap text-muted-foreground">
+        {SOURCE_LABEL[e.source]}
+      </TableCell>
+      <TableCell>
+        <Select
+          value={String(e.month)}
+          onValueChange={(v) => onPatch(e.lineId, { month: Number(v) })}
+        >
+          <SelectTrigger className="w-20">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {months.map((m) => (
+              <SelectItem key={m} value={String(m)}>
+                {m}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </TableCell>
+      <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
+        {fmtDate(e.date)}
+      </TableCell>
+      <TableCell>
+        <Input
+          type="number"
+          value={e.amount}
+          onChange={(ev) => onPatch(e.lineId, { amount: ev.target.valueAsNumber || 0 })}
+          className="w-24 tabular-nums"
+        />
+      </TableCell>
+      <TableCell>
+        <Select
+          value={e.category}
+          onValueChange={(v) => onPatch(e.lineId, { category: v as GovExpenseCategory })}
+        >
+          <SelectTrigger className="w-full min-w-48">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {categories.map((c) => (
+              <SelectItem key={c} value={c}>
+                {c}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </TableCell>
+      <TableCell>
+        <Button variant="ghost" size="sm" onClick={() => onDelete(e.lineId)}>
+          מחק
+        </Button>
+      </TableCell>
+    </TableRow>
+  );
+});
 
 export function ReportWizard() {
   const [step, setStep] = useState(0);
@@ -405,9 +510,9 @@ export function ReportWizard() {
     setStep(0);
   }
 
-  function patchExpense(lineId: string, patch: Partial<CategorizedExpense>) {
+  const patchExpense = useCallback((lineId: string, patch: Partial<CategorizedExpense>) => {
     setExpenses((prev) => prev.map((e) => (e.lineId === lineId ? { ...e, ...patch } : e)));
-  }
+  }, []);
 
   // Merge freshly-fetched receipts into the current match state WITHOUT
   // touching anything the user already decided on (manual attach/dismiss/
@@ -632,7 +737,7 @@ export function ReportWizard() {
     setAttachments((prev) => prev.filter((a) => a.lineId !== lineId));
   }
 
-  function deleteExpense(lineId: string) {
+  const deleteExpense = useCallback((lineId: string) => {
     setExpenses((prev) => prev.filter((e) => e.lineId !== lineId));
     setExpenseIncluded((prev) => {
       if (!(lineId in prev)) return prev;
@@ -641,7 +746,11 @@ export function ReportWizard() {
       return next;
     });
     setAttachments((prev) => prev.filter((a) => a.lineId !== lineId));
-  }
+  }, []);
+
+  const onToggleExpenseInclude = useCallback((lineId: string, checked: boolean) => {
+    setExpenseIncluded((p) => ({ ...p, [lineId]: checked }));
+  }, []);
 
   function addExpense() {
     setExpenses((prev) => [
@@ -657,7 +766,7 @@ export function ReportWizard() {
     ]);
   }
 
-  const periodMonths = pair ? [pair.m1, pair.m2] : [];
+  const periodMonths = useMemo(() => (pair ? [pair.m1, pair.m2] : []), [pair]);
 
   // Persisted wizard progress (lib/report/progress.ts). Enabled only once a
   // period folder exists AND documents have been processed — nothing worth
@@ -1190,89 +1299,16 @@ export function ReportWizard() {
                       </TableHeader>
                       <TableBody>
                         {expenseView.map(({ e }) => (
-                          <TableRow
+                          <ExpenseRow
                             key={e.lineId}
-                            className={isExpenseIncluded(e.lineId) ? "" : "opacity-50"}
-                          >
-                            <TableCell>
-                              <Checkbox
-                                checked={isExpenseIncluded(e.lineId)}
-                                onCheckedChange={(v) =>
-                                  setExpenseIncluded((p) => ({ ...p, [e.lineId]: v === true }))
-                                }
-                              />
-                            </TableCell>
-                            <TableCell>
-                              <Input
-                                value={e.description}
-                                onChange={(ev) =>
-                                  patchExpense(e.lineId, { description: ev.target.value })
-                                }
-                                className="min-w-40"
-                              />
-                            </TableCell>
-                            <TableCell className="whitespace-nowrap text-muted-foreground">
-                              {SOURCE_LABEL[e.source]}
-                            </TableCell>
-                            <TableCell>
-                              <Select
-                                value={String(e.month)}
-                                onValueChange={(v) => patchExpense(e.lineId, { month: Number(v) })}
-                              >
-                                <SelectTrigger className="w-20">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {periodMonths.map((m) => (
-                                    <SelectItem key={m} value={String(m)}>
-                                      {m}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </TableCell>
-                            <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
-                              {fmtDate(e.date)}
-                            </TableCell>
-                            <TableCell>
-                              <Input
-                                type="number"
-                                value={e.amount}
-                                onChange={(ev) =>
-                                  patchExpense(e.lineId, { amount: ev.target.valueAsNumber || 0 })
-                                }
-                                className="w-24 tabular-nums"
-                              />
-                            </TableCell>
-                            <TableCell>
-                              <Select
-                                value={e.category}
-                                onValueChange={(v) =>
-                                  patchExpense(e.lineId, { category: v as GovExpenseCategory })
-                                }
-                              >
-                                <SelectTrigger className="w-full min-w-48">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {GOV_EXPENSE_CATEGORIES.map((c) => (
-                                    <SelectItem key={c} value={c}>
-                                      {c}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </TableCell>
-                            <TableCell>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => deleteExpense(e.lineId)}
-                              >
-                                מחק
-                              </Button>
-                            </TableCell>
-                          </TableRow>
+                            e={e}
+                            included={isExpenseIncluded(e.lineId)}
+                            months={periodMonths}
+                            categories={GOV_EXPENSE_CATEGORIES}
+                            onPatch={patchExpense}
+                            onDelete={deleteExpense}
+                            onToggleInclude={onToggleExpenseInclude}
+                          />
                         ))}
                       </TableBody>
                     </Table>
