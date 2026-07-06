@@ -127,6 +127,35 @@ export const GOV_EXPENSE_CATEGORY = {
 export type GovExpenseCategory = (typeof GOV_EXPENSE_CATEGORY)[keyof typeof GOV_EXPENSE_CATEGORY];
 export const GOV_EXPENSE_CATEGORIES: GovExpenseCategory[] = Object.values(GOV_EXPENSE_CATEGORY);
 
+// ----------------------------------------------------------------------------
+// Retail-pharmacy default: drugstore chains whose spend defaults to
+// food/household ("כלכלה (מזון)"), NOT medical — toiletries/cosmetics dominate.
+// Health-fund pharmacies (מכבי פארם, בית מרקחת כללית) are deliberately excluded
+// (matched on FULL chain names, not the bare word "פארם"), so they stay
+// "הוצאות רפואיות חריגות". Tokens are pre-normalized (see normalizeStoreName).
+// ----------------------------------------------------------------------------
+export const PHARMACY_CHAINS = [
+  "סופרפארם",
+  "ניופארם",
+  "גודפארם",
+  "superpharm",
+  "newpharm",
+  "goodpharm",
+] as const;
+
+// Normalize a store name for tolerant matching: lowercase, strip spaces and
+// hyphens (ASCII "-" and Hebrew maqaf "־").
+export function normalizeStoreName(s: string): string {
+  return s.toLowerCase().replace(/[\s\-־]/g, "");
+}
+
+// True when the description names one of PHARMACY_CHAINS (normalized substring),
+// e.g. `סופר-פארם ר"ג`, `SUPER-PHARM #123`, `ניו פארם`.
+export function isPharmacyStore(description: string): boolean {
+  const n = normalizeStoreName(description);
+  return PHARMACY_CHAINS.some((chain) => n.includes(chain));
+}
+
 // ============================================================================
 // Report period + individual (one report per individual; shared household data)
 // ============================================================================
