@@ -49,15 +49,17 @@ if (step > maxStep) {
 
 - `maxStep` only ever increases; jumping backward does not lower it, so all
   previously-reached steps stay reachable (requirement 2/4).
-- **Not added to `WizardProgressState`.** On resume, `setStep(hydrated.step)`
-  already fires, and the render-time adjustment above lifts `maxStep` to the
-  hydrated step on the next render. This keeps the persistence schema
-  (`lib/report/progress.ts`) and the Sheets write payload unchanged — no extra
-  Google-quota cost.
-- **Start-fresh reset also clears it:** `discardProgress` calls `setMaxStep(0)`
+- **Persisted in `WizardProgressState`** (added by the follow-up fix `0623a20`).
+  `maxStep` is the furthest step *reached*, which can exceed the currently-viewed
+  `step`; deriving it from the saved `step` on resume (the original design) lost
+  that information and re-locked already-reached steps after a reload. So
+  `maxStep` is serialized alongside `step` and restored explicitly on resume
+  (`setMaxStep(hydrated.maxStep)`). `hydrateProgress` falls back to
+  `progress.step` when the field is absent (backward-compat with saves made
+  before the field existed); `schemaVersion` stays `1`. This is a payload-only
+  field — it adds no Google Sheets requests.
+- **Start-fresh reset clears it:** `discardProgress` calls `setMaxStep(0)`
   alongside `setStep(0)`, so a restart re-disables previously-reached steps.
-- Alternative considered and rejected: persist `maxStep` in progress. Rejected
-  as redundant (derivable from `step`) and as needless schema/quota surface.
 
 > **Note (implementation):** the plan originally specified a `useEffect`-based
 > derivation. During implementation it was replaced with the render-time
