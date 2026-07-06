@@ -38,23 +38,32 @@ step already reached; steps not yet reached stay disabled.
 
 ### State: `maxStep` (derived, not persisted)
 
-Add:
+Add (shipped form — React's "adjust state while rendering" pattern, not an effect):
 
 ```ts
 const [maxStep, setMaxStep] = useState(0);
-useEffect(() => {
-  setMaxStep((m) => Math.max(m, step));
-}, [step]);
+if (step > maxStep) {
+  setMaxStep(step);
+}
 ```
 
 - `maxStep` only ever increases; jumping backward does not lower it, so all
   previously-reached steps stay reachable (requirement 2/4).
 - **Not added to `WizardProgressState`.** On resume, `setStep(hydrated.step)`
-  already fires, and the effect above lifts `maxStep` to the hydrated step
-  automatically. This keeps the persistence schema (`lib/report/progress.ts`)
-  and the Sheets write payload unchanged — no extra Google-quota cost.
+  already fires, and the render-time adjustment above lifts `maxStep` to the
+  hydrated step on the next render. This keeps the persistence schema
+  (`lib/report/progress.ts`) and the Sheets write payload unchanged — no extra
+  Google-quota cost.
+- **Start-fresh reset also clears it:** `discardProgress` calls `setMaxStep(0)`
+  alongside `setStep(0)`, so a restart re-disables previously-reached steps.
 - Alternative considered and rejected: persist `maxStep` in progress. Rejected
   as redundant (derivable from `step`) and as needless schema/quota surface.
+
+> **Note (implementation):** the plan originally specified a `useEffect`-based
+> derivation. During implementation it was replaced with the render-time
+> adjustment shown above (commit `8dd74e6`) because the effect form tripped the
+> `react-hooks/set-state-in-effect` lint rule; the render-time form is React's
+> canonical pattern for this case and avoids a one-frame stale-disabled window.
 
 ### Stepper header: three visual states
 

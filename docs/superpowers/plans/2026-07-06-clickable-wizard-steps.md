@@ -2,6 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Implementation addendum (2026-07-06):** As shipped, `maxStep` is adjusted
+> during render (`if (step > maxStep) setMaxStep(step)`), not via the `useEffect`
+> shown in Task 2 — the effect form tripped `react-hooks/set-state-in-effect`
+> (commit `8dd74e6`). `discardProgress` also resets it (`setMaxStep(0)`, commit
+> `3af0ca1`). See the spec's State section for rationale.
+
 **Goal:** Let the user jump between report-wizard steps by clicking the stepper header, restricted to steps already reached.
 
 **Architecture:** Add a derived `maxStep` state to `ReportWizard.tsx` that tracks the furthest step reached (bumped by an effect keyed on `step`, never lowered). Rework the stepper `<li>` map so each step renders as a `<button>` that navigates via `setStep(i)` when `i <= maxStep`, and is disabled otherwise. No persistence, gate, or resume changes.
