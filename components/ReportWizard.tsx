@@ -517,6 +517,7 @@ export function ReportWizard() {
     setPreviewOpen(false);
     setAddingCashId(null);
     setStep(0);
+    setMaxStep(0);
   }
 
   const patchExpense = useCallback((lineId: string, patch: Partial<CategorizedExpense>) => {
