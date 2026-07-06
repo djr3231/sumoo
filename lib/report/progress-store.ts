@@ -4,7 +4,7 @@
 // future `dbProgressStore` can implement the same interface without any
 // wizard changes.
 
-import { clearJsonDoc, ensureNamedTab, readJsonDoc, writeJsonDoc } from "@/lib/google";
+import { clearJsonDoc, readJsonDoc, writeJsonDoc } from "@/lib/google";
 import type { ReportProgress } from "@/lib/report/progress";
 
 export interface ProgressStore {
@@ -60,7 +60,9 @@ export function googleSheetProgressStore(
 
     async save(periodKey: string, progress: ReportProgress): Promise<void> {
       const title = progressTabTitle(periodKey);
-      await ensureNamedTab(accessToken, spreadsheetId, title);
+      // writeJsonDoc already calls ensureNamedTab internally (lib/google.ts) —
+      // calling it again here would just be a second, redundant
+      // spreadsheets.get per save.
       await writeJsonDoc(accessToken, spreadsheetId, title, stableStringify(progress));
     },
 

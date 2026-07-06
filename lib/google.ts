@@ -181,25 +181,64 @@ export async function ensureSpreadsheet(accessToken: string): Promise<string> {
   return id;
 }
 
+// Lean spreadsheet-id lookup that skips ensureTabs entirely (no
+// spreadsheets.get + values.batchGet + spreadsheets.get for the 4 main report
+// tabs). Used by callers — like the progress autosave route — that only need
+// the id to reach their OWN tab (e.g. a progress_<period> tab, ensured
+// separately by writeJsonDoc) and have no business validating/creating the
+// main Receipts/Txns/Stores/Settings tabs on every call.
+export async function resolveSpreadsheetId(accessToken: string): Promise<string> {
+  const pinned = process.env.SUMOO_SPREADSHEET_ID;
+  if (pinned) return pinned;
+
+  const drive = driveClient(accessToken);
+  const found = await drive.files.list({
+    q: `name = '${SHEET_NAME}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+    fields: "files(id,name)",
+    pageSize: 1,
+  });
+  if (found.data.files && found.data.files.length > 0) {
+    return found.data.files[0].id!;
+  }
+
+  // Not found yet (first run) — fall back to the full create-and-validate
+  // path so the spreadsheet and its main tabs get created correctly.
+  return ensureSpreadsheet(accessToken);
+}
+
 // Generic find-or-create for a single named tab (a title not among the 4
 // known report tabs). Generalizes the `ensureTabs` skeleton below without
 // touching it — used by callers (e.g. the progress store) that manage their
 // own ad-hoc tabs, one per key, rather than a fixed set of named tabs.
+// Best-effort per-process cache of tabs already confirmed to exist, keyed by
+// `${spreadsheetId}::${title}`. Safe for the progress feature's tabs because
+// they're only ever value-cleared (clearJsonDoc), never deleted — once a tab
+// is known to exist it stays existing, so a stale cache entry can't cause a
+// write to a nonexistent tab. Not used by readJsonDoc/clearJsonDoc, whose own
+// existence checks guard a "no doc yet" no-op rather than a create.
+const knownTabs = new Set<string>();
+
 export async function ensureNamedTab(
   accessToken: string,
   spreadsheetId: string,
   title: string,
 ): Promise<void> {
+  const cacheKey = `${spreadsheetId}::${title}`;
+  if (knownTabs.has(cacheKey)) return;
   const sheets = sheetsClient(accessToken);
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
   const exists = (meta.data.sheets || []).some((s) => s.properties?.title === title);
-  if (exists) return;
+  if (exists) {
+    knownTabs.add(cacheKey);
+    return;
+  }
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
     requestBody: {
       requests: [{ addSheet: { properties: { title, rightToLeft: true } } }],
     },
   });
+  knownTabs.add(cacheKey);
 }
 
 // Max characters per cell we write a JSON chunk into. Sheets' hard limit is

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { ensureSpreadsheet, requireAccessToken } from "@/lib/google";
+import { requireAccessToken, resolveSpreadsheetId } from "@/lib/google";
 import { googleSheetProgressStore } from "@/lib/report/progress-store";
 import type { ReportProgress } from "@/lib/report/progress";
 
@@ -20,7 +20,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Invalid or missing period" }, { status: 400 });
     }
     const token = await requireAccessToken();
-    const spreadsheetId = await ensureSpreadsheet(token);
+    const spreadsheetId = await resolveSpreadsheetId(token);
     const progress = await googleSheetProgressStore(token, spreadsheetId).load(period);
     return NextResponse.json({ ok: true, progress });
   } catch (e) {
@@ -36,7 +36,7 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: "Invalid or missing period" }, { status: 400 });
     }
     const token = await requireAccessToken();
-    const spreadsheetId = await ensureSpreadsheet(token);
+    const spreadsheetId = await resolveSpreadsheetId(token);
     await googleSheetProgressStore(token, spreadsheetId).clear(period);
     return NextResponse.json({ ok: true });
   } catch (e) {
@@ -55,7 +55,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid or missing progress" }, { status: 400 });
     }
     const token = await requireAccessToken();
-    const spreadsheetId = await ensureSpreadsheet(token);
+    const spreadsheetId = await resolveSpreadsheetId(token);
     await googleSheetProgressStore(token, spreadsheetId).save(period, progress);
     return NextResponse.json({ ok: true });
   } catch (e) {

@@ -14,7 +14,11 @@ import { serializeProgress, type WizardProgressState } from "@/lib/report/progre
 
 export type ReportProgressSaveStatus = "idle" | "saving" | "saved" | "error";
 
-const AUTOSAVE_DEBOUNCE_MS = 1500;
+// 4s (rather than a snappier ~1.5s) to keep autosave frugal against a tight
+// Sheets API quota: fewer debounce windows -> fewer POSTs -> fewer Sheets API
+// calls per minute of active editing. saveNow() bypasses this entirely for
+// points that need an immediate flush (step transitions, after a match).
+const AUTOSAVE_DEBOUNCE_MS = 4000;
 
 export interface UseReportProgressArgs {
   periodKey: string | undefined;
@@ -62,6 +66,14 @@ export function useReportProgress({
   // or saveNow — so a fresh edit after discard can autosave again.
   const abortedRef = useRef(false);
 
+  // Payload dedupe: remembers the (period, serialized-progress) pair from the
+  // last SUCCESSFUL POST so doSave can skip the network entirely when a save
+  // fires but nothing persisted actually changed (e.g. only transient UI
+  // state triggered the effect). Only set on success, so a failed save leaves
+  // these stale and the next attempt still goes through.
+  const lastSavedPayloadRef = useRef<string | null>(null);
+  const lastSavedPeriodRef = useRef<string | undefined>(undefined);
+
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
       clearTimeout(timerRef.current);
@@ -69,11 +81,24 @@ export function useReportProgress({
     }
   }, []);
 
-  // Performs one POST attempt for whatever is currently in the refs.
+  // Performs one POST attempt for whatever is currently in the refs — unless
+  // the payload is byte-identical to the last successfully saved one for the
+  // same period, in which case it's already persisted and we skip the
+  // network call entirely (this is the dedupe's actual enforcement point:
+  // every save path funnels through here).
   const postOnce = useCallback(async (period: string) => {
+    const progress = serializeProgress(stateRef.current);
+    const progressJson = JSON.stringify(progress);
+
+    if (period === lastSavedPeriodRef.current && progressJson === lastSavedPayloadRef.current) {
+      // Nothing persisted actually changed — don't burn a Sheets API call.
+      resaveNeededRef.current = false;
+      if (!abortedRef.current) setStatus("saved");
+      return;
+    }
+
     setStatus("saving");
     try {
-      const progress = serializeProgress(stateRef.current);
       const res = await fetch("/api/report/progress", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -87,6 +112,8 @@ export function useReportProgress({
       // response has already been written server-side, but we must not
       // report a stale "saved" status nor let the caller think this write
       // is authoritative.
+      lastSavedPayloadRef.current = progressJson;
+      lastSavedPeriodRef.current = period;
       if (!abortedRef.current) setStatus("saved");
     } catch {
       if (!abortedRef.current) setStatus("error");
@@ -147,7 +174,9 @@ export function useReportProgress({
   }, [clearTimer, doSave]);
 
   // Debounced autosave: any change to `state` (while enabled) restarts the
-  // 1.5s timer, coalescing rapid edits into a single save. `state` itself is
+  // AUTOSAVE_DEBOUNCE_MS timer, coalescing rapid edits into a single save (and,
+  // via postOnce's dedupe, into zero network calls if nothing persisted
+  // actually changed). `state` itself is
   // read fresh from stateRef inside doSave (kept in sync by the effect
   // above), so this effect only needs to know THAT something changed.
   // Arming a fresh timer here means a legitimate new edit is in play, so any
