@@ -266,14 +266,15 @@ const ExpenseRow = memo(function ExpenseRow({
 
 export function ReportWizard() {
   const [step, setStep] = useState(0);
-  // Highest step the user has reached. Derived from `step` (never lowered), so
-  // jumping backward keeps every previously-reached step navigable, and resume
-  // (which calls setStep(hydrated.step)) lifts this automatically — no need to
-  // persist it in WizardProgressState.
+  // Highest step the user has reached. Adjusted during render (React's
+  // "adjust state while rendering" pattern — see the You-Might-Not-Need-an-Effect
+  // docs) rather than in an effect: it never lowers, resume (which calls
+  // setStep(hydrated.step)) lifts it on the next render, and it stays out of
+  // WizardProgressState so no persistence is needed.
   const [maxStep, setMaxStep] = useState(0);
-  useEffect(() => {
-    setMaxStep((m) => Math.max(m, step));
-  }, [step]);
+  if (step > maxStep) {
+    setMaxStep(step);
+  }
   const isMobile = useIsMobile();
 
   // Step 1 (period) form state.
