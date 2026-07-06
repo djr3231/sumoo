@@ -19,6 +19,7 @@ import {
   type TransferItem,
 } from "@/lib/report/reconcile";
 import type { BankTxn, GovExpenseCategory, ReportPeriod } from "@/lib/types";
+import { GOV_EXPENSE_CATEGORY, isPharmacyStore } from "@/lib/types";
 
 // A source document handed to the orchestrator (already read into memory).
 export interface SourceFile {
@@ -159,7 +160,12 @@ export async function processPeriodDocuments(args: {
   );
   const expenses: CategorizedExpense[] = recon.expenseItems.map((e, i) => ({
     ...e,
-    category: categories[i],
+    // Retail pharmacies default to food/household, not exceptional-medical.
+    // Deterministic override wins over the LLM classification (the LLM sees
+    // only the store name, so this is at least as accurate and predictable).
+    category: isPharmacyStore(e.description)
+      ? GOV_EXPENSE_CATEGORY.Food
+      : categories[i],
   }));
 
   return {
