@@ -432,29 +432,55 @@ export function ReportWizard() {
 
     // Only apply an assignment when the line is still empty — never
     // overwrite an existing manual (or prior-run) attachment.
-    const appliedIndexes = byLine
-      .map((r, i) => (r && !expensesSnapshot[i].receipt ? i : -1))
-      .filter((i) => i !== -1);
+    //
+    // Keyed by lineId (not array index): `expensesSnapshot`/`byLine` are
+    // aligned to the render that kicked off the receipts fetch, but the
+    // `setExpenses` functional update below runs against whatever `expenses`
+    // is CURRENT when the update is applied. If the user adds/removes/
+    // reorders a line while the fetch is in flight, an index-based write
+    // would land on the wrong line. Keying by lineId makes that impossible:
+    // the write only ever lands on the line it was actually matched against
+    // (or is a no-op if that line no longer exists).
+    const applied = new Map<
+      string,
+      { fileName: string; receiptId: string; driveFileId: string | null }
+    >();
+    byLine.forEach((r, i) => {
+      if (r && !expensesSnapshot[i].receipt) {
+        applied.set(expensesSnapshot[i].lineId, {
+          fileName: r.fileName,
+          receiptId: r.id,
+          driveFileId: r.driveFileId ?? null,
+        });
+      }
+    });
 
     setExpenses((prev) =>
-      prev.map((e, i) =>
-        appliedIndexes.includes(i) ? { ...e, receipt: byLine[i]!.fileName } : e,
+      prev.map((e) =>
+        applied.has(e.lineId) && !e.receipt
+          ? { ...e, receipt: applied.get(e.lineId)!.fileName }
+          : e,
       ),
     );
 
     const newLinks: Record<string, string> = {};
-    appliedIndexes.forEach((i) => {
-      const r = byLine[i]!;
-      if (r.driveFileId) {
-        newLinks[r.fileName] = `https://drive.google.com/file/d/${r.driveFileId}/view`;
+    applied.forEach(({ fileName, driveFileId }) => {
+      if (driveFileId) {
+        newLinks[fileName] = `https://drive.google.com/file/d/${driveFileId}/view`;
       }
     });
     setReceiptLinks((prev) => ({ ...prev, ...newLinks }));
 
-    const newAttachments: ReceiptAttachment[] = appliedIndexes.map((i) => {
-      const r = byLine[i]!;
-      return { lineId: expensesSnapshot[i].lineId, receiptId: r.id, receiptFileName: r.fileName };
-    });
+    // Skip lines that no longer exist (e.g. deleted mid-fetch) so an
+    // attachment is never created for a line that isn't there anymore.
+    const currentLineIds = new Set(expenses.map((e) => e.lineId));
+    const newAttachments: ReceiptAttachment[] = Array.from(applied.entries())
+      .filter(([lineId]) => currentLineIds.has(lineId))
+      .map(([lineId, { receiptId, fileName }]) => ({
+        lineId,
+        receiptId,
+        receiptFileName: fileName,
+      }));
     setAttachments((prev) => [...prev, ...newAttachments]);
 
     setAllReceipts(receipts);
