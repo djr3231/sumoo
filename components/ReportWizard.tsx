@@ -185,6 +185,14 @@ export function ReportWizard() {
   const [processError, setProcessError] = useState<string | null>(null);
   const [result, setResult] = useState<ProcessResult | null>(null);
   const [expenses, setExpenses] = useState<CategorizedExpense[]>([]);
+  // Always holds the latest committed `expenses`, kept in sync by the effect
+  // below. Used by mergeNewReceipts to check line-existence against genuinely
+  // live state instead of the stale pre-fetch closure value — see that
+  // function for why the closure value can't be trusted for this check.
+  const expensesRef = useRef(expenses);
+  useEffect(() => {
+    expensesRef.current = expenses;
+  }, [expenses]);
   // Decision state below is keyed by the line's stable `lineId`, not its array
   // index — indexes shift on add/delete/re-process, lineId doesn't. Absent key
   // falls back to each map's original default (expense/income: included;
@@ -473,9 +481,12 @@ export function ReportWizard() {
 
     // Skip lines that no longer exist (e.g. deleted mid-fetch) so an
     // attachment is never created for a line that isn't there anymore.
-    const currentLineIds = new Set(expenses.map((e) => e.lineId));
+    // `expensesRef.current` reflects genuinely live state (kept in sync by an
+    // effect), unlike `expenses`/`expensesSnapshot` here, which are both the
+    // same stale pre-fetch closure value — so this check actually works.
+    const liveLineIds = new Set(expensesRef.current.map((e) => e.lineId));
     const newAttachments: ReceiptAttachment[] = Array.from(applied.entries())
-      .filter(([lineId]) => currentLineIds.has(lineId))
+      .filter(([lineId]) => liveLineIds.has(lineId))
       .map(([lineId, { receiptId, fileName }]) => ({
         lineId,
         receiptId,
