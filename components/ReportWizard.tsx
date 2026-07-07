@@ -69,6 +69,14 @@ function fmtDate(d?: string | null): string {
   return d ? d.split("-").reverse().join("/") : "—";
 }
 
+// A manual "+ הוסף שורה" row the user has not filled in yet. Draft rows sort
+// to the END of the expense tables (directly above the add button) so adding
+// one gives immediate visible feedback, and addExpense refuses to stack a
+// second untouched draft.
+function isDraftExpense(e: { amount: number; description: string }): boolean {
+  return e.amount === 0 && e.description.trim() === "";
+}
+
 // Month number from an ISO date (null-safe).
 function monthOfISO(d?: string | null): number | null {
   const m = d ? Number(d.slice(5, 7)) : NaN;
@@ -764,17 +772,22 @@ export function ReportWizard() {
   }, []);
 
   function addExpense() {
-    setExpenses((prev) => [
-      ...prev,
-      {
-        lineId: crypto.randomUUID(),
-        month: pair?.m1 ?? 1,
-        amount: 0,
-        description: "",
-        category: GOV_EXPENSE_CATEGORY.Miscellaneous,
-        source: "direct",
-      },
-    ]);
+    setExpenses((prev) => {
+      // One untouched draft at a time: repeated clicks (e.g. when the user
+      // didn't notice the row appear) must not stack empty rows.
+      if (prev.some(isDraftExpense)) return prev;
+      return [
+        ...prev,
+        {
+          lineId: crypto.randomUUID(),
+          month: pair?.m1 ?? 1,
+          amount: 0,
+          description: "",
+          category: GOV_EXPENSE_CATEGORY.Miscellaneous,
+          source: "direct",
+        },
+      ];
+    });
   }
 
   const periodMonths = useMemo(() => (pair ? [pair.m1, pair.m2] : []), [pair]);
@@ -856,6 +869,12 @@ export function ReportWizard() {
     a: { e: CategorizedExpense },
     b: { e: CategorizedExpense },
   ) => {
+    // Draft rows always sort last, regardless of key/direction, so a freshly
+    // added row lands next to the "+ הוסף שורה" button instead of vanishing
+    // into the middle of the month-sorted table.
+    const aDraft = isDraftExpense(a.e);
+    const bDraft = isDraftExpense(b.e);
+    if (aDraft !== bDraft) return aDraft ? 1 : -1;
     const k = expenseSort.key;
     const cmp =
       k === "amount" || k === "month"
