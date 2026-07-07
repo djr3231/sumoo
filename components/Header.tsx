@@ -33,6 +33,9 @@ export default async function Header() {
                 <Link href="/compare" className="px-3 py-1.5 hover:bg-accent">
                   השוואה
                 </Link>
+                <Link href="/report" className="px-3 py-1.5 hover:bg-accent">
+                  דוח דו-חודשי
+                </Link>
                 <Link href="/settings" className="px-3 py-1.5 hover:bg-accent">
                   הגדרות
                 </Link>

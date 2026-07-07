@@ -7,10 +7,13 @@ import {
   CATEGORIES,
   EXTRACTED_DOC_TYPE,
   EXTRACTED_METHOD,
+  GOV_EXPENSE_CATEGORY,
+  GOV_EXPENSE_CATEGORIES,
   type Category,
   type Confidence,
   type ExtractedDocType,
   type ExtractedMethod,
+  type GovExpenseCategory,
 } from "./types";
 
 const OCR_MODEL = "gemini-2.5-pro";
@@ -493,5 +496,219 @@ export async function parseStatementPDF(args: {
     return JSON.parse(raw);
   } catch {
     return { source_label: "לא ידוע", transactions: [] };
+  }
+}
+
+// ============================================================================
+// parseSalarySlip
+// ============================================================================
+
+export interface SalarySlip {
+  month: number | null; // month the slip is FOR (work/eligibility month), 1-12
+  year: number | null;
+  net: number | null; // net pay (נטו לתשלום), the amount that reaches the bank
+  gross: number | null; // total payments (ברוטו)
+  deductions: number | null; // total deductions (ניכויים)
+  employer: string | null; // e.g. "עיריית חריש" / "מופת/צה\"ל"
+}
+
+const SALARY_SCHEMA = {
+  type: SchemaType.OBJECT,
+  properties: {
+    month: { type: SchemaType.NUMBER, nullable: true },
+    year: { type: SchemaType.NUMBER, nullable: true },
+    net: { type: SchemaType.NUMBER, nullable: true },
+    gross: { type: SchemaType.NUMBER, nullable: true },
+    deductions: { type: SchemaType.NUMBER, nullable: true },
+    employer: { type: SchemaType.STRING, nullable: true },
+  },
+  required: ["month", "year", "net", "gross", "deductions", "employer"],
+};
+
+const SALARY_SYSTEM = `You extract data from an Israeli salary slip (PDF).
+- month/year: the month and year the salary is FOR (the pay month, "עבור חודש"), NOT the actual payment date.
+- net: the net pay that reaches the bank. If an explicit "נטו לתשלום" or "שכר חודשי נטו" line exists, use it. Otherwise compute total payments (gross) minus total deductions.
+- gross: total payments / gross. deductions: total deductions.
+- employer: the employer or income source (e.g. "עיריית חריש", "מופת/צה\"ל").
+- Never invent data. Prefer null over guessing. All amounts in ₪ as plain numbers (no ₪ sign or commas).`;
+
+export async function parseSalarySlip(args: {
+  pdfBase64: string;
+  hint?: string;
+}): Promise<SalarySlip> {
+  const m = model({
+    modelName: OCR_MODEL,
+    systemInstruction: SALARY_SYSTEM,
+    responseSchema: SALARY_SCHEMA,
+  });
+
+  const result = await withRetry(() =>
+    m.generateContent([
+      { inlineData: { data: args.pdfBase64, mimeType: "application/pdf" } },
+      {
+        text: args.hint
+          ? `רמז: ${args.hint}. חלץ את נתוני התלוש.`
+          : "חלץ את נתוני התלוש.",
+      },
+    ]),
+  );
+
+  const raw = result.response.text();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { month: null, year: null, net: null, gross: null, deductions: null, employer: null };
+  }
+}
+
+// ============================================================================
+// classifyExpenses — map expense lines to the fixed government categories
+// ============================================================================
+
+const CLASSIFY_SCHEMA = {
+  type: SchemaType.OBJECT,
+  properties: {
+    results: {
+      type: SchemaType.ARRAY,
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          i: { type: SchemaType.NUMBER },
+          category: { type: SchemaType.STRING },
+        },
+        required: ["i", "category"],
+      },
+    },
+  },
+  required: ["results"],
+};
+
+const CLASSIFY_SYSTEM = `You classify Israeli household expenses into the FIXED government insolvency-report categories. For each item pick exactly one category from this closed list, returning the Hebrew string verbatim:
+${GOV_EXPENSE_CATEGORIES.map((c) => `- ${c}`).join("\n")}
+
+Mapping hints (merchant → category):
+- supermarket / grocery / food store / bakery (שופרסל, רמי לוי, ויקטורי, יינות ביתן) → "כלכלה (מזון)"
+- fuel / garage / parking / toll road / car insurance or test → "אחזקת רכב"
+- public transport (רב-קו, אגד, רכבת, מטרונית) → "נסיעות בתחבורה ציבורית"
+- electricity company → "חשמל"; water corporation → "מים"; gas company → "גז"
+- municipality / ארנונה → "מיסי עירייה"
+- mobile carrier (פרטנר, סלקום, פלאפון, הוט מובייל) → "טלפון נייד"
+- internet / TV / landline (בזק, הוט, יס) → "תקשורת ביתית (טלפון, טלוויזיה, אינטרנט)"
+- pharmacy / HMO / clinic / doctor → "הוצאות רפואיות חריגות"
+- clothing / footwear → "הלבשה"
+- barber / hair salon → "תספורת"
+- lawyer → "עו\"ד"
+- house committee (ועד בית) → "וועד בית"
+- receiver / trustee / payment to trustee (כונס, ממונה) → "תשלום חודשי לממונה"
+- household goods / cleaning supplies / home maintenance → "כלי בית ותחזוקה"
+- school / tuition / courses / books / cinema (סינמה סיטי, יס פלאנט) / museums / attractions / חוגים → "חינוך ותרבות"
+- if nothing clearly fits → "שונות".
+
+For each item return its i and its category. Do not invent categories outside the list.`;
+
+// Classify a batch of expense lines. Returns one category per item, aligned by
+// index; off-list / missing answers fall back to "שונות".
+export async function classifyExpenses(
+  items: Array<{ description: string; amount: number }>,
+): Promise<GovExpenseCategory[]> {
+  if (items.length === 0) return [];
+
+  const m = model({
+    modelName: UTIL_MODEL,
+    systemInstruction: CLASSIFY_SYSTEM,
+    responseSchema: CLASSIFY_SCHEMA,
+  });
+
+  const payload = items.map((it, i) => ({ i, name: it.description, amount: it.amount }));
+  const result = await withRetry(() =>
+    m.generateContent([
+      { text: `סווג את הפריטים הבאים (JSON):\n${JSON.stringify(payload)}` },
+    ]),
+  );
+
+  const raw = result.response.text();
+  const out: GovExpenseCategory[] = items.map(() => GOV_EXPENSE_CATEGORY.Miscellaneous);
+  const allowed = GOV_EXPENSE_CATEGORIES as string[];
+  try {
+    const parsed = JSON.parse(raw) as { results: Array<{ i: number; category: string }> };
+    for (const r of parsed.results ?? []) {
+      if (r.i >= 0 && r.i < items.length && allowed.includes(r.category)) {
+        out[r.i] = r.category as GovExpenseCategory;
+      }
+    }
+  } catch {
+    // keep fallbacks
+  }
+  return out;
+}
+
+// ============================================================================
+// parseDirectStatement — individual charges from a Direct/credit card statement
+// ============================================================================
+
+export interface DirectCharge {
+  date: string | null; // transaction date (YYYY-MM-DD)
+  merchant: string | null; // שם בית העסק
+  amount: number | null; // positive ₪ (סכום החיוב בש"ח); sign set by isCredit
+  isCredit: boolean; // זיכוי/refund
+}
+
+const DIRECT_SCHEMA = {
+  type: SchemaType.OBJECT,
+  properties: {
+    charges: {
+      type: SchemaType.ARRAY,
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          date: { type: SchemaType.STRING, nullable: true },
+          merchant: { type: SchemaType.STRING, nullable: true },
+          amount: { type: SchemaType.NUMBER, nullable: true },
+          isCredit: { type: SchemaType.BOOLEAN },
+        },
+        required: ["date", "merchant", "amount", "isCredit"],
+      },
+    },
+  },
+  required: ["charges"],
+};
+
+const DIRECT_SYSTEM = `You extract individual charges from an Israeli immediate-debit credit-card statement (e.g. Isracard "MC דירקט").
+- Return ONLY individual merchant charges. For each: the transaction date, the merchant name, and the shekel (₪) billing amount.
+- NEVER return summary or total rows of any kind: "סה\"כ חיוב לתאריך", "סה\"כ", subtotals, balances, section headers (e.g. "עסקות שחויבו / זוכו - בארץ", "רכישות בחו\"ל", "עסקות לתאריך החיוב"), billing-date dividers, or any roll-up line.
+- Refunds/credits (marked "זיכוי") → isCredit=true. A normal charge → isCredit=false.
+- date: YYYY-MM-DD, taken from the transaction date.
+- merchant: the business name exactly as printed (keep Hebrew or Latin script as-is).
+- amount: the ₪ billing amount as a positive number (no ₪ sign or commas). The sign is conveyed by isCredit.
+- IMPORTANT: skip charges billed in a foreign currency ($, €, etc.) that have no ₪ billing amount in the statement (e.g. ANTHROPIC, CLAUDE, HETZNER in foreign currency). Those settle in the bank account as "קיזוז מטח" lines and are handled from there. Return only charges that have a ₪ billing amount.
+- Never invent data (including currency conversions). Skip any row that is not a single ₪ merchant charge.`;
+
+export async function parseDirectStatement(args: {
+  pdfBase64: string;
+  hint?: string;
+}): Promise<{ charges: DirectCharge[] }> {
+  const m = model({
+    modelName: OCR_MODEL,
+    systemInstruction: DIRECT_SYSTEM,
+    responseSchema: DIRECT_SCHEMA,
+  });
+
+  const result = await withRetry(() =>
+    m.generateContent([
+      { inlineData: { data: args.pdfBase64, mimeType: "application/pdf" } },
+      {
+        text: args.hint
+          ? `רמז: ${args.hint}. חלץ את כל החיובים הבודדים בלבד (ללא שורות סיכום).`
+          : "חלץ את כל החיובים הבודדים בלבד (ללא שורות סיכום).",
+      },
+    ]),
+  );
+
+  const raw = result.response.text();
+  try {
+    const parsed = JSON.parse(raw) as { charges: DirectCharge[] };
+    return { charges: parsed.charges ?? [] };
+  } catch {
+    return { charges: [] };
   }
 }

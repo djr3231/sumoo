@@ -181,6 +181,142 @@ export async function ensureSpreadsheet(accessToken: string): Promise<string> {
   return id;
 }
 
+// Lean spreadsheet-id lookup that skips ensureTabs entirely (no
+// spreadsheets.get + values.batchGet + spreadsheets.get for the 4 main report
+// tabs). Used by callers — like the progress autosave route — that only need
+// the id to reach their OWN tab (e.g. a progress_<period> tab, ensured
+// separately by writeJsonDoc) and have no business validating/creating the
+// main Receipts/Txns/Stores/Settings tabs on every call.
+export async function resolveSpreadsheetId(accessToken: string): Promise<string> {
+  const pinned = process.env.SUMOO_SPREADSHEET_ID;
+  if (pinned) return pinned;
+
+  const drive = driveClient(accessToken);
+  const found = await drive.files.list({
+    q: `name = '${SHEET_NAME}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+    fields: "files(id,name)",
+    pageSize: 1,
+  });
+  if (found.data.files && found.data.files.length > 0) {
+    return found.data.files[0].id!;
+  }
+
+  // Not found yet (first run) — fall back to the full create-and-validate
+  // path so the spreadsheet and its main tabs get created correctly.
+  return ensureSpreadsheet(accessToken);
+}
+
+// Generic find-or-create for a single named tab (a title not among the 4
+// known report tabs). Generalizes the `ensureTabs` skeleton below without
+// touching it — used by callers (e.g. the progress store) that manage their
+// own ad-hoc tabs, one per key, rather than a fixed set of named tabs.
+// Best-effort per-process cache of tabs already confirmed to exist, keyed by
+// `${spreadsheetId}::${title}`. Safe for the progress feature's tabs because
+// they're only ever value-cleared (clearJsonDoc), never deleted — once a tab
+// is known to exist it stays existing, so a stale cache entry can't cause a
+// write to a nonexistent tab. Not used by readJsonDoc/clearJsonDoc, whose own
+// existence checks guard a "no doc yet" no-op rather than a create.
+const knownTabs = new Set<string>();
+
+export async function ensureNamedTab(
+  accessToken: string,
+  spreadsheetId: string,
+  title: string,
+): Promise<void> {
+  const cacheKey = `${spreadsheetId}::${title}`;
+  if (knownTabs.has(cacheKey)) return;
+  const sheets = sheetsClient(accessToken);
+  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  const exists = (meta.data.sheets || []).some((s) => s.properties?.title === title);
+  if (exists) {
+    knownTabs.add(cacheKey);
+    return;
+  }
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [{ addSheet: { properties: { title, rightToLeft: true } } }],
+    },
+  });
+  knownTabs.add(cacheKey);
+}
+
+// Max characters per cell we write a JSON chunk into. Sheets' hard limit is
+// 50,000 chars/cell; stay comfortably under it.
+const JSON_DOC_CHUNK_SIZE = 45_000;
+
+// Read a JSON document previously written by `writeJsonDoc`: column A of the
+// named tab holds the JSON string split across rows (one chunk per row).
+// Returns null if the tab doesn't exist or holds no rows (never throws for
+// a missing/empty doc — callers treat that as "no progress yet").
+export async function readJsonDoc(
+  accessToken: string,
+  spreadsheetId: string,
+  title: string,
+): Promise<string | null> {
+  const sheets = sheetsClient(accessToken);
+  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  const exists = (meta.data.sheets || []).some((s) => s.properties?.title === title);
+  if (!exists) return null;
+  const r = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${title}!A:A`,
+  });
+  const rows = r.data.values || [];
+  if (rows.length === 0) return null;
+  const joined = rows.map((row) => String(row[0] ?? "")).join("");
+  return joined === "" ? null : joined;
+}
+
+// Write a JSON document to the named tab (created if missing): clears the
+// tab, then writes `json` split into <= JSON_DOC_CHUNK_SIZE-char chunks, one
+// chunk per row in column A. Callers are expected to pass an already
+// pretty-printed, stable-key-order JSON string (see progress-store.ts) so the
+// cells stay human-inspectable.
+export async function writeJsonDoc(
+  accessToken: string,
+  spreadsheetId: string,
+  title: string,
+  json: string,
+): Promise<void> {
+  await ensureNamedTab(accessToken, spreadsheetId, title);
+  const sheets = sheetsClient(accessToken);
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId,
+    range: `${title}!A:A`,
+  });
+  const chunks: string[] = [];
+  for (let i = 0; i < json.length; i += JSON_DOC_CHUNK_SIZE) {
+    chunks.push(json.slice(i, i + JSON_DOC_CHUNK_SIZE));
+  }
+  if (chunks.length === 0) chunks.push("");
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${title}!A1`,
+    valueInputOption: "RAW",
+    requestBody: { values: chunks.map((c) => [c]) },
+  });
+}
+
+// Clear a JSON document written by `writeJsonDoc`: wipes column A of the
+// named tab so a subsequent `readJsonDoc` returns null. No-op if the tab
+// doesn't exist (never creates it — clearing a doc that was never saved is
+// a normal, non-error case).
+export async function clearJsonDoc(
+  accessToken: string,
+  spreadsheetId: string,
+  title: string,
+): Promise<void> {
+  const sheets = sheetsClient(accessToken);
+  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  const exists = (meta.data.sheets || []).some((s) => s.properties?.title === title);
+  if (!exists) return;
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId,
+    range: `${title}!A:A`,
+  });
+}
+
 async function ensureTabs(accessToken: string, spreadsheetId: string) {
   const sheets = sheetsClient(accessToken);
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
@@ -577,6 +713,53 @@ export async function ensureUploadFolder(accessToken: string): Promise<string> {
     fields: "id",
   });
   return created.data.id!;
+}
+
+// Generic find-or-create for a Drive folder, optionally nested under a parent.
+// Idempotent: returns the existing folder's id when one with the same name
+// already lives under the given parent, else creates it. Generalizes
+// ensureUploadFolder for the report feature's nested folder structure.
+export async function ensureDriveFolder(
+  accessToken: string,
+  name: string,
+  parentId?: string,
+): Promise<string> {
+  const drive = driveClient(accessToken);
+  const safeName = name.replace(/'/g, "\\'");
+  const parentClause = parentId ? ` and '${parentId}' in parents` : "";
+  const found = await drive.files.list({
+    q: `name = '${safeName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false${parentClause}`,
+    fields: "files(id,name)",
+    pageSize: 1,
+  });
+  if (found.data.files && found.data.files.length > 0) {
+    return found.data.files[0].id!;
+  }
+  const created = await drive.files.create({
+    requestBody: {
+      name,
+      mimeType: "application/vnd.google-apps.folder",
+      ...(parentId ? { parents: [parentId] } : {}),
+    },
+    fields: "id",
+  });
+  return created.data.id!;
+}
+
+// Returns the id of a non-trashed file with the given name in the folder, or
+// null. Used to avoid re-uploading the same source document across runs.
+export async function findDriveFileInFolder(
+  accessToken: string,
+  folderId: string,
+  name: string,
+): Promise<string | null> {
+  const drive = driveClient(accessToken);
+  const res = await drive.files.list({
+    q: `name = '${name.replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed = false`,
+    fields: "files(id,name)",
+    pageSize: 1,
+  });
+  return res.data.files?.[0]?.id ?? null;
 }
 
 export async function uploadFileToDrive(
