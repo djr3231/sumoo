@@ -1,16 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
 
 // Must match SHARE_CACHE in public/sw.js.
 const SHARE_CACHE = "sumoo-shared-files";
 
 // On /upload?shared=1, read the files the service worker stashed in Cache
-// Storage, return them once, then clear the cache and strip the query param so a
-// refresh does not re-ingest. Returns [] when there is nothing to pick up or the
-// platform lacks Cache Storage.
-export function useSharedFiles(): File[] {
-  const [shared, setShared] = useState<File[]>([]);
+// Storage and hand them to `onFiles` exactly once, then clear the cache and
+// strip the query param so a refresh does not re-ingest. No-op when there is
+// nothing to pick up or the platform lacks Cache Storage.
+export function useSharedFiles(onFiles: (files: File[]) => void): void {
+  const onFilesRef = useRef(onFiles);
+  useEffect(() => {
+    onFilesRef.current = onFiles;
+  });
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -36,11 +39,10 @@ export function useSharedFiles(): File[] {
           files.push(new File([blob], name, { type }));
         }
         await caches.delete(SHARE_CACHE);
-        if (!cancelled && files.length > 0) setShared(files);
+        if (!cancelled && files.length > 0) onFilesRef.current(files);
       } catch {
         // ignore — feature is best-effort
       } finally {
-        // Strip ?shared=1 so a refresh is a no-op.
         params.delete("shared");
         const qs = params.toString();
         const next =
@@ -53,6 +55,4 @@ export function useSharedFiles(): File[] {
       cancelled = true;
     };
   }, []);
-
-  return shared;
 }

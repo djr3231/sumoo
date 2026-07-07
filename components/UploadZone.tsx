@@ -123,13 +123,7 @@ export function UploadZone() {
   const [folder, setFolder] = useState<FolderSelection>({ kind: "default" });
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
-  const sharedFiles = useSharedFiles();
-  useEffect(() => {
-    if (sharedFiles.length > 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- merging a one-shot value from an external system (Cache Storage via useSharedFiles), not derivable during render
-      setFiles((prev) => [...prev, ...sharedFiles]);
-    }
-  }, [sharedFiles]);
+  useSharedFiles((shared) => setFiles((prev) => [...prev, ...shared]));
 
   useEffect(() => {
     try {
