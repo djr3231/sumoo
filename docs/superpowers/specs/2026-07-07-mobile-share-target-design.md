@@ -79,37 +79,46 @@ Client component (`"use client"`) mounted once in `app/layout.tsx`. On mount, if
 inside a `window` load handler; swallow/log errors. Renders `null`. No UI.
 
 ### 4. `lib/use-shared-files.ts` (`useSharedFiles`) + `UploadZone` wiring
-- `useSharedFiles(): File[]` — on mount, if `new URLSearchParams(location.search)`
-  has `shared`, open `SHARE_CACHE`, read every entry (`cache.keys()` →
-  `cache.match` → `blob()` + `x-filename`/`content-type` headers →
-  `new File([blob], decodeURIComponent(name), { type })`), then `caches.delete(
-  SHARE_CACHE)` and strip the `?shared=1` param via `history.replaceState`.
-  Returns the files once (state), `[]` otherwise. Guards: no `caches` support →
-  `[]`.
-- `UploadZone` consumes it: an effect merges any returned shared files into the
-  existing `files` queue state — the same state `onDrop` populates
-  (`setFiles((prev) => [...prev, ...shared])`) — so the shared files appear in the
-  "התחל סריקה (N קבצים)" queue exactly as if dropped. From there the existing
-  per-file `/api/ocr` flow runs unchanged. (NOTE: `files` is the drop/scan queue;
-  `pendingFiles` is the separate server-busy retry queue — shared files go to
-  `files`.)
+- `useSharedFiles(onFiles: (files: File[]) => void): void` — on mount, if
+  `new URLSearchParams(location.search)` has `shared`, open `SHARE_CACHE`, read
+  every entry (`cache.keys()` → `cache.match` → `blob()` + `x-filename`/
+  `content-type` headers → `new File([blob], decodeURIComponent(name), { type })`),
+  then `caches.delete(SHARE_CACHE)` and strip the `?shared=1` param via
+  `history.replaceState`. Calls `onFiles(files)` exactly once when files are
+  picked up (via a latest-`onFiles` ref so a changing inline callback never
+  re-runs the one-shot pickup). Guards: SSR / no `caches` support → no-op.
+  (Shipped as a callback, not a returned `File[]` — see commit `20e9c9f`; the
+  return-value form pushed the `setState` into a consumer `useEffect`, tripping
+  `react-hooks/set-state-in-effect`.)
+- `UploadZone` consumes it in one line —
+  `useSharedFiles((shared) => setFiles((prev) => [...prev, ...shared]))` — merging
+  into the existing `files` queue (the same state `onDrop` populates), so the
+  shared files appear in the "התחל סריקה (N קבצים)" queue exactly as if dropped.
+  From there the existing per-file `/api/ocr` flow runs unchanged. (NOTE: `files`
+  is the drop/scan queue; `pendingFiles` is the separate server-busy retry queue —
+  shared files go to `files`.)
 
 ## Data flow
 
 OS share sheet → `POST /share-target` (multipart) → SW intercepts → stores files
 in `sumoo-shared-files` cache → `303` redirect → `/upload?shared=1` → `UploadZone`
-mounts → `useSharedFiles` reads cache → `File[]` → merged into `pendingFiles` →
+mounts → `useSharedFiles` reads cache → `onFiles(File[])` → merged into `files` →
 existing OCR pipeline.
 
 ## Error handling
 
 - No/empty/unsupported files: SW still redirects; `useSharedFiles` finds nothing
-  → returns `[]` → no-op.
+  → `onFiles` is never called → no-op.
 - SW unsupported / not installed / not HTTPS: feature is simply absent
   (progressive enhancement) — `/upload` works normally.
 - Cache is deleted immediately after the client reads it, so a page refresh does
   not re-ingest the same files. The `?shared=1` param is stripped after pickup.
 - Registration failure is caught and logged; the app is unaffected.
+- `/upload` is auth-gated (redirects to `/` without a session). If a share
+  arrives while logged out, the redirect lands on `/`, the hook never runs, and
+  the stashed files stay in the cache until the next share overwrites them
+  (clear-then-store). Acceptable for an installed PWA where the user is normally
+  signed in; not handled specially.
 
 ## Constraints & compliance
 
@@ -146,3 +155,6 @@ existing OCR pipeline.
 
 Pickup logic lives in a dedicated hook `useSharedFiles` (not inline in
 `UploadZone`) to keep `UploadZone` focused and isolate the cache/URL handling.
+The hook takes an `onFiles` callback (rather than returning `File[]`) so the
+`setFiles` happens inside the hook's own effect via a latest-ref, avoiding a
+consumer-side `useEffect` and the `react-hooks/set-state-in-effect` rule.

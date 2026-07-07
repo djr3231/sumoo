@@ -2,6 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Implementation addendum (2026-07-07):** Task 5's `useSharedFiles` shipped as a
+> CALLBACK, not a returned `File[]`: `useSharedFiles(onFiles: (files: File[]) => void): void`,
+> consumed in `UploadZone` as `useSharedFiles((shared) => setFiles((prev) => [...prev, ...shared]))`
+> (commit `20e9c9f`). The original return-`File[]`-then-`useEffect` form (shown in
+> Task 5 below) tripped `react-hooks/set-state-in-effect`; the callback form calls
+> `onFiles` from inside the hook's own effect via a latest-ref, so there is no
+> consumer-side effect and no lint suppression. See the spec's unit-4 for the
+> shipped shape.
+
 **Goal:** Let the OS share sheet send image/PDF files into sumoo, landing them in the existing `/upload` scan queue.
 
 **Architecture:** A `share_target` in the manifest points a POST/multipart share to `/share-target`; a minimal, share-only service worker (`public/sw.js`) intercepts that POST, stashes the files in a dedicated Cache Storage bucket, and 303-redirects to `/upload?shared=1`; a `useSharedFiles` hook reads the cache on `/upload` and merges the files into `UploadZone`'s existing `files` queue. No offline caching, no npm deps, no TWA.
