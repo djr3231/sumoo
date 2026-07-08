@@ -50,13 +50,13 @@ Another example: The payment of property taxes to the Harish Municipality is rec
   report is now instant (was ~1900ms/keystroke) and "+ הוסף שורה" dropped 1534ms→~204ms.
   Remaining:
   (a) initial render of ~300 rows is still heavy when entering step 2 (one-time) —
-      consider list virtualization (needs a lib, e.g. @tanstack/react-virtual — discuss
-      before adding a dependency);
+  consider list virtualization (needs a lib, e.g. @tanstack/react-virtual — discuss
+  before adding a dependency);
   (b) apply the same memoized-row extraction to the income / transfer / review-credit
-      tables and the step-3 receipt table (all share the un-memoized inline .map pattern);
+  tables and the step-3 receipt table (all share the un-memoized inline .map pattern);
   (c) the step-3 receipt table also recomputes candidateCount() — O(receipts × expenses)
-      via receiptLineDistance — on every render; memoize it (useMemo keyed on
-      expenses/unmatchedReceipts);
+  via receiptLineDistance — on every render; memoize it (useMemo keyed on
+  expenses/unmatchedReceipts);
   (d) "+ הוסף שורה" residual ~204ms/click (acceptable for now, tracked here).
 
 - vercel show logs of:
@@ -155,3 +155,7 @@ Environment: production
 
 Branch: main
 ```
+
+- vercel 5:50pm 07/07/2026
+  ````(node:4) [DEP0169] DeprecationWarning:`url.parse()`behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for`url.parse()`vulnerabilities.
+(Use`node --trace-deprecation ...` to show where the warning was created)

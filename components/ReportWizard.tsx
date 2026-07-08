@@ -551,22 +551,31 @@ export function ReportWizard() {
     // only) — keep them out of the matching pool, surfaced as a count below.
     const evidence = receipts.filter((r) => r.paymentMethod !== PAYMENT_METHOD.ForeignCard);
 
-    const handled = (r: Receipt) =>
-      dismissedIds.has(r.id) ||
+    // A receipt is genuinely "handled" — and must never re-enter matching —
+    // only when it's already attached to a line (or sits on a line). Dismissed
+    // receipts are a SEPARATE class: they're withheld from *consuming* a match,
+    // but must stay in the unmatched pool so the "restore dismissed" row keeps
+    // working after a merge (see the `dismissed` re-add below).
+    const isAttached = (r: Receipt) =>
       attachments.some((a) => a.receiptId === r.id) ||
       expensesSnapshot.some((e) => e.receipt === r.fileName);
-    const unhandled = evidence.filter((r) => !handled(r));
+    const matchable = evidence.filter((r) => !isAttached(r) && !dismissedIds.has(r.id));
+
+    // Match only against lines that still have NO receipt. A line that already
+    // carries a receipt must never *consume* (and thereby swallow) a candidate:
+    // the matcher would mark the receipt used, but the apply step won't write to
+    // a filled line, so the receipt would vanish from both the line and the
+    // unmatched pool. Excluding filled lines up front makes that impossible, and
+    // keeps `byLine` index-aligned to `emptyLines` for the lineId-keyed apply.
+    const emptyLines = expensesSnapshot.filter((e) => !e.receipt);
 
     const { byLine, unmatchedReceipts: leftover } = matchReceiptsToLines(
-      expensesSnapshot.map((e) => ({ date: e.date, amount: e.amount, description: e.description })),
-      unhandled,
+      emptyLines.map((e) => ({ date: e.date, amount: e.amount, description: e.description })),
+      matchable,
     );
 
-    // Only apply an assignment when the line is still empty — never
-    // overwrite an existing manual (or prior-run) attachment.
-    //
-    // Keyed by lineId (not array index): `expensesSnapshot`/`byLine` are
-    // aligned to the render that kicked off the receipts fetch, but the
+    // `emptyLines`/`byLine` are aligned to the render that kicked off the
+    // receipts fetch. Key the result by lineId (not array index) because the
     // `setExpenses` functional update below runs against whatever `expenses`
     // is CURRENT when the update is applied. If the user adds/removes/
     // reorders a line while the fetch is in flight, an index-based write
@@ -578,8 +587,8 @@ export function ReportWizard() {
       { fileName: string; receiptId: string; driveFileId: string | null }
     >();
     byLine.forEach((r, i) => {
-      if (r && !expensesSnapshot[i].receipt) {
-        applied.set(expensesSnapshot[i].lineId, {
+      if (r) {
+        applied.set(emptyLines[i].lineId, {
           fileName: r.fileName,
           receiptId: r.id,
           driveFileId: r.driveFileId ?? null,
@@ -619,7 +628,15 @@ export function ReportWizard() {
     setAttachments((prev) => [...prev, ...newAttachments]);
 
     setAllReceipts(receipts);
-    setUnmatchedReceipts(leftover);
+    // Dismissed receipts were held out of matching (they can't consume a line)
+    // but must remain in the unmatched pool so the "N קבלות הוסרו מההתאמה"
+    // restore row survives a merge — the UI derives `dismissedCount` from
+    // `unmatchedReceipts`. They can't overlap `leftover` (dismissed are excluded
+    // from `matchable`); attached ones stay filtered out as genuinely handled.
+    const dismissed = evidence.filter(
+      (r) => dismissedIds.has(r.id) && !isAttached(r),
+    );
+    setUnmatchedReceipts([...leftover, ...dismissed]);
     setMatchRan(true);
     setMatchGeneration((g) => g + 1);
   }
