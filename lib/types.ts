@@ -183,12 +183,31 @@ export interface ReportPeriod {
 
 export const SETTINGS_KEY = {
   MyCardsLast4: "myCardsLast4",
+  HouseholdSize: "householdSize",
+  ReportTemplate: "reportTemplate",
 } as const;
 export type SettingsKey = (typeof SETTINGS_KEY)[keyof typeof SETTINGS_KEY];
 
 export interface UserSettings {
   myCardsLast4: string[]; // exactly 4-digit strings, validated
+  householdSize: number | null; // 1..20; null = unset (fall back to DEFAULT_HOUSEHOLD_SIZE)
+  reportTemplate: { id: string; name: string } | null; // null = built-in default template
 }
+
+// Household-size default for the Food row when the setting is unset (user-confirmed).
+export const DEFAULT_HOUSEHOLD_SIZE = 3;
+
+// The Food row label carries the household size in both the working sheet and
+// the government report (user-confirmed uniformity requirement).
+export function formatFoodCategory(householdSize: number): string {
+  return `${GOV_EXPENSE_CATEGORY.Food}, מס' נפשות ${householdSize}`;
+}
+
+// Hebrew month names for the gov-report header (1-based month → index-1).
+export const HEBREW_MONTHS = [
+  "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני",
+  "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר",
+] as const;
 
 // ============================================================================
 // Receipt + bank txn shapes

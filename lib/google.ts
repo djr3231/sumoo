@@ -796,7 +796,7 @@ export async function getUserSettings(
   spreadsheetId: string,
 ): Promise<UserSettings> {
   const sheets = sheetsClient(accessToken);
-  const empty: UserSettings = { myCardsLast4: [] };
+  const empty: UserSettings = { myCardsLast4: [], householdSize: null, reportTemplate: null };
   try {
     const r = await sheets.spreadsheets.values.get({
       spreadsheetId,
@@ -812,6 +812,18 @@ export async function getUserSettings(
           .split(",")
           .map((s) => s.trim())
           .filter((s) => CARD_LAST4_RE.test(s));
+      }
+      if (key === SETTINGS_KEY.HouseholdSize) {
+        const n = Number(value);
+        out.householdSize = Number.isInteger(n) && n >= 1 && n <= 20 ? n : null;
+      }
+      if (key === SETTINGS_KEY.ReportTemplate) {
+        try {
+          const t = JSON.parse(value) as { id?: unknown; name?: unknown };
+          if (typeof t.id === "string" && t.id && typeof t.name === "string") {
+            out.reportTemplate = { id: t.id, name: t.name };
+          }
+        } catch { /* malformed row — treat as unset */ }
       }
     }
     return out;
@@ -833,12 +845,15 @@ export async function writeUserSettings(
     spreadsheetId,
     range: `${SHEET_TAB_SETTINGS}!A2:B`,
   });
+  const rows: string[][] = [[SETTINGS_KEY.MyCardsLast4, validCards.join(",")]];
+  if (s.householdSize !== null) rows.push([SETTINGS_KEY.HouseholdSize, String(s.householdSize)]);
+  if (s.reportTemplate !== null) rows.push([SETTINGS_KEY.ReportTemplate, JSON.stringify(s.reportTemplate)]);
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range: `${SHEET_TAB_SETTINGS}!A2`,
     valueInputOption: "RAW",
     requestBody: {
-      values: [[SETTINGS_KEY.MyCardsLast4, validCards.join(",")]],
+      values: rows,
     },
   });
 }
