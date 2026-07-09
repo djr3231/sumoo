@@ -1783,7 +1783,7 @@ export function ReportWizard() {
                             </TableCell>
                             <TableCell>
                               {e.receipt ? (
-                                <span className="flex items-center justify-between b gap-2 min-w-0 ">
+                                <span className="flex items-center justify-between gap-2 min-w-0 ">
                                   {receiptLinks[e.receipt] ? (
                                     <Link
                                       href={receiptLinks[e.receipt]}
