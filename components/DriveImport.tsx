@@ -320,7 +320,9 @@ export function DriveImport() {
                       disabled={paused || newFiles.length === 0}
                     >
                       {newFiles.length === 0
-                        ? `${results.length} קבצים עובדו בהצלחה`
+                        ? results.length > 0
+                          ? `${results.length} קבצים עובדו בהצלחה`
+                          : "אין קבצים נוספים לעיבוד"
                         : `סרוק חדשים (${newFiles.length})`}
                     </Button>
                     {doneCount > 0 && (

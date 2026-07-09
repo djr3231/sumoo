@@ -33,7 +33,12 @@ import {
 } from "@/components/ui/select";
 import { MatchWorkbench } from "@/components/report/MatchWorkbench";
 import { Eye } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import {
   GOV_EXPENSE_CATEGORIES,
@@ -53,6 +58,7 @@ import {
   type WizardProgressState,
 } from "@/lib/report/progress";
 import { useReportProgress } from "@/lib/report/use-report-progress";
+import Link from "next/link";
 
 // Six wizard steps — labels verbatim from the spec (§4.2).
 const STEPS = [
@@ -83,12 +89,13 @@ function monthOfISO(d?: string | null): number | null {
   return Number.isFinite(m) && m >= 1 && m <= 12 ? m : null;
 }
 
-const SOURCE_LABEL: Record<"direct" | "checking" | "cash" | "manual", string> = {
-  direct: "כרטיס",
-  checking: "בנק",
-  cash: "מזומן",
-  manual: "ידני",
-};
+const SOURCE_LABEL: Record<"direct" | "checking" | "cash" | "manual", string> =
+  {
+    direct: "כרטיס",
+    checking: "בנק",
+    cash: "מזומן",
+    manual: "ידני",
+  };
 
 // Two-digit month label, e.g. 3 -> "03".
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -152,7 +159,11 @@ function FileSlot({
         onChange={(e) => onChange(Array.from(e.target.files ?? []))}
       />
       <div className="flex items-center gap-3">
-        <Button variant="outline" type="button" onClick={() => ref.current?.click()}>
+        <Button
+          variant="outline"
+          type="button"
+          onClick={() => ref.current?.click()}
+        >
           בחר קובץ
         </Button>
         {files.length > 0 ? (
@@ -242,14 +253,18 @@ const ExpenseRow = memo(function ExpenseRow({
         <Input
           type="number"
           value={e.amount}
-          onChange={(ev) => onPatch(e.lineId, { amount: ev.target.valueAsNumber || 0 })}
+          onChange={(ev) =>
+            onPatch(e.lineId, { amount: ev.target.valueAsNumber || 0 })
+          }
           className="w-24 tabular-nums"
         />
       </TableCell>
       <TableCell>
         <Select
           value={e.category}
-          onValueChange={(v) => onPatch(e.lineId, { category: v as GovExpenseCategory })}
+          onValueChange={(v) =>
+            onPatch(e.lineId, { category: v as GovExpenseCategory })
+          }
         >
           <SelectTrigger className="w-full min-w-48">
             <SelectValue />
@@ -319,9 +334,15 @@ export function ReportWizard() {
   // index — indexes shift on add/delete/re-process, lineId doesn't. Absent key
   // falls back to each map's original default (expense/income: included;
   // transfer: excluded — same defaults as the old index-keyed boolean[]s).
-  const [transferInclude, setTransferInclude] = useState<Record<string, boolean>>({});
-  const [expenseIncluded, setExpenseIncluded] = useState<Record<string, boolean>>({});
-  const [incomeIncluded, setIncomeIncluded] = useState<Record<string, boolean>>({});
+  const [transferInclude, setTransferInclude] = useState<
+    Record<string, boolean>
+  >({});
+  const [expenseIncluded, setExpenseIncluded] = useState<
+    Record<string, boolean>
+  >({});
+  const [incomeIncluded, setIncomeIncluded] = useState<Record<string, boolean>>(
+    {},
+  );
   const [cardGapAck, setCardGapAck] = useState(false);
   // Receipt matching (step 3): pulled from the "Receipts – sumoo" sheet on demand.
   const [receiptsLoading, setReceiptsLoading] = useState(false);
@@ -360,8 +381,18 @@ export function ReportWizard() {
   const [expenseSourceFilter, setExpenseSourceFilter] = useState<
     "all" | "direct" | "checking" | "cash" | "manual"
   >("all");
+  const [receiptMatchFilter, setReceiptMatchFilter] = useState<
+    "all" | "matched" | "unmatched"
+  >("all");
   const [expenseSort, setExpenseSort] = useState<{
-    key: "month" | "amount" | "description" | "source" | "category" | "date";
+    key:
+      | "month"
+      | "amount"
+      | "description"
+      | "source"
+      | "category"
+      | "date"
+      | "receipt";
     dir: "asc" | "desc";
   }>({ key: "month", dir: "asc" });
 
@@ -450,7 +481,10 @@ export function ReportWizard() {
       for (const f of directFiles) fd.append("direct", f);
       for (const f of salaryFiles) fd.append("salary", f);
 
-      const res = await fetch("/api/report/process", { method: "POST", body: fd });
+      const res = await fetch("/api/report/process", {
+        method: "POST",
+        body: fd,
+      });
       const data = await res.json();
       if (!res.ok || !data.ok) {
         throw new Error(data.error ?? "שגיאה בעיבוד המסמכים");
@@ -529,9 +563,14 @@ export function ReportWizard() {
     setMaxStep(0);
   }
 
-  const patchExpense = useCallback((lineId: string, patch: Partial<CategorizedExpense>) => {
-    setExpenses((prev) => prev.map((e) => (e.lineId === lineId ? { ...e, ...patch } : e)));
-  }, []);
+  const patchExpense = useCallback(
+    (lineId: string, patch: Partial<CategorizedExpense>) => {
+      setExpenses((prev) =>
+        prev.map((e) => (e.lineId === lineId ? { ...e, ...patch } : e)),
+      );
+    },
+    [],
+  );
 
   // Merge freshly-fetched receipts into the current match state WITHOUT
   // touching anything the user already decided on (manual attach/dismiss/
@@ -549,7 +588,9 @@ export function ReportWizard() {
   ) {
     // Foreign-card receipts can't serve as proof of purchase (documentation
     // only) — keep them out of the matching pool, surfaced as a count below.
-    const evidence = receipts.filter((r) => r.paymentMethod !== PAYMENT_METHOD.ForeignCard);
+    const evidence = receipts.filter(
+      (r) => r.paymentMethod !== PAYMENT_METHOD.ForeignCard,
+    );
 
     // A receipt is genuinely "handled" — and must never re-enter matching —
     // only when it's already attached to a line (or sits on a line). Dismissed
@@ -559,7 +600,9 @@ export function ReportWizard() {
     const isAttached = (r: Receipt) =>
       attachments.some((a) => a.receiptId === r.id) ||
       expensesSnapshot.some((e) => e.receipt === r.fileName);
-    const matchable = evidence.filter((r) => !isAttached(r) && !dismissedIds.has(r.id));
+    const matchable = evidence.filter(
+      (r) => !isAttached(r) && !dismissedIds.has(r.id),
+    );
 
     // Match only against lines that still have NO receipt. A line that already
     // carries a receipt must never *consume* (and thereby swallow) a candidate:
@@ -570,7 +613,11 @@ export function ReportWizard() {
     const emptyLines = expensesSnapshot.filter((e) => !e.receipt);
 
     const { byLine, unmatchedReceipts: leftover } = matchReceiptsToLines(
-      emptyLines.map((e) => ({ date: e.date, amount: e.amount, description: e.description })),
+      emptyLines.map((e) => ({
+        date: e.date,
+        amount: e.amount,
+        description: e.description,
+      })),
       matchable,
     );
 
@@ -607,7 +654,8 @@ export function ReportWizard() {
     const newLinks: Record<string, string> = {};
     applied.forEach(({ fileName, driveFileId }) => {
       if (driveFileId) {
-        newLinks[fileName] = `https://drive.google.com/file/d/${driveFileId}/view`;
+        newLinks[fileName] =
+          `https://drive.google.com/file/d/${driveFileId}/view`;
       }
     });
     setReceiptLinks((prev) => ({ ...prev, ...newLinks }));
@@ -652,7 +700,8 @@ export function ReportWizard() {
     try {
       const res = await fetch("/api/report/receipts");
       const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error ?? "שגיאה בטעינת הקבלות");
+      if (!res.ok || !data.ok)
+        throw new Error(data.error ?? "שגיאה בטעינת הקבלות");
       const receipts = data.receipts as Receipt[];
       mergeNewReceipts(receipts, expenses);
     } catch (e) {
@@ -671,7 +720,8 @@ export function ReportWizard() {
     if (r.amount === null || month === null) return;
     const amount = Math.abs(r.amount);
     const description = r.storeName ?? r.fileName;
-    const source: ExpenseSource = r.paymentMethod === PAYMENT_METHOD.Cash ? "cash" : "manual";
+    const source: ExpenseSource =
+      r.paymentMethod === PAYMENT_METHOD.Cash ? "cash" : "manual";
     setAddingCashId(r.id);
     let category: GovExpenseCategory = GOV_EXPENSE_CATEGORY.Miscellaneous;
     try {
@@ -784,9 +834,12 @@ export function ReportWizard() {
     setAttachments((prev) => prev.filter((a) => a.lineId !== lineId));
   }, []);
 
-  const onToggleExpenseInclude = useCallback((lineId: string, checked: boolean) => {
-    setExpenseIncluded((p) => ({ ...p, [lineId]: checked }));
-  }, []);
+  const onToggleExpenseInclude = useCallback(
+    (lineId: string, checked: boolean) => {
+      setExpenseIncluded((p) => ({ ...p, [lineId]: checked }));
+    },
+    [],
+  );
 
   function addExpense() {
     setExpenses((prev) => {
@@ -859,7 +912,8 @@ export function ReportWizard() {
   const isExpenseIncluded = (lineId: string) => expenseIncluded[lineId] ?? true;
   const isIncomeIncluded = (lineId: string) => incomeIncluded[lineId] ?? true;
   // Absent key = excluded by default (transfers start unchecked).
-  const isTransferIncluded = (lineId: string) => transferInclude[lineId] ?? false;
+  const isTransferIncluded = (lineId: string) =>
+    transferInclude[lineId] ?? false;
 
   // Card reconciliation: live card-detail total (editable direct lines) vs the
   // bank ישראכרט-דיירקט settlements. Updates as the user adds/edits/deletes.
@@ -868,7 +922,9 @@ export function ReportWizard() {
   const CARD_GAP_TOLERANCE = 1;
   const liveCardDetailSum =
     expenses.reduce(
-      (a, e) => a + (e.source === "direct" && isExpenseIncluded(e.lineId) ? e.amount : 0),
+      (a, e) =>
+        a +
+        (e.source === "direct" && isExpenseIncluded(e.lineId) ? e.amount : 0),
       0,
     ) -
     (result?.reviewCredits ?? []).reduce(
@@ -893,6 +949,11 @@ export function ReportWizard() {
     const bDraft = isDraftExpense(b.e);
     if (aDraft !== bDraft) return aDraft ? 1 : -1;
     const k = expenseSort.key;
+    if (k === "receipt") {
+      // Matched rows (have a receipt file) first, "—" rows last.
+      const cmp = (a.e.receipt ? 0 : 1) - (b.e.receipt ? 0 : 1);
+      return expenseSort.dir === "asc" ? cmp : -cmp;
+    }
     const cmp =
       k === "amount" || k === "month"
         ? a.e[k] - b.e[k]
@@ -915,7 +976,16 @@ export function ReportWizard() {
     .sort(compareExpense);
 
   // Receipts step (3): all expenses, sorted the same way (no classify filter).
-  const receiptView = expenses.map((e) => ({ e })).sort(compareExpense);
+  const receiptView = expenses
+    .map((e) => ({ e }))
+    .filter(({ e }) =>
+      receiptMatchFilter === "all"
+        ? true
+        : receiptMatchFilter === "matched"
+          ? Boolean(e.receipt)
+          : !e.receipt,
+    )
+    .sort(compareExpense);
 
   // Receipts that matched no charge: cash ones dated in-period become expense
   // candidates; the rest are surfaced for manual review (never auto-added).
@@ -945,7 +1015,9 @@ export function ReportWizard() {
       return n + (d && d.sameAmount && d.nameRelated ? 1 : 0);
     }, 0);
   const candidateCountLabel = (r: Receipt): string =>
-    r.amount === null || !r.date ? "חסר סכום/תאריך בקבלה" : String(candidateCount(r));
+    r.amount === null || !r.date
+      ? "חסר סכום/תאריך בקבלה"
+      : String(candidateCount(r));
   const unmatchedInPeriod = otherUnmatched.filter(
     (r) => isInPeriod(r) && !dismissedIds.has(r.id),
   );
@@ -964,12 +1036,19 @@ export function ReportWizard() {
     const covered = expenses.reduce(
       (a, e) =>
         a +
-        (e.source === "cash" && isExpenseIncluded(e.lineId) && e.month === c.month
+        (e.source === "cash" &&
+        isExpenseIncluded(e.lineId) &&
+        e.month === c.month
           ? e.amount
           : 0),
       0,
     );
-    return { month: c.month, withdrawn: c.amount, covered, residual: c.amount - covered };
+    return {
+      month: c.month,
+      withdrawn: c.amount,
+      covered,
+      residual: c.amount - covered,
+    };
   });
   // Period totals for the live cash summary (updates as receipts are added).
   const cashTotals = cashRows.reduce(
@@ -1037,9 +1116,7 @@ export function ReportWizard() {
 
       {resumedStep !== null ? (
         <div className="flex flex-wrap items-center justify-between gap-3 border border-border bg-muted p-3 text-sm text-muted-foreground">
-          <span>
-            נמצאה התקדמות שמורה · ממשיך משלב {STEPS[resumedStep]}
-          </span>
+          <span>נמצאה התקדמות שמורה · ממשיך משלב {STEPS[resumedStep]}</span>
           <Button
             variant="outline"
             size="sm"
@@ -1092,7 +1169,9 @@ export function ReportWizard() {
                 </div>
               </div>
 
-              {error ? <p className="text-sm text-destructive">{error}</p> : null}
+              {error ? (
+                <p className="text-sm text-destructive">{error}</p>
+              ) : null}
 
               {created ? (
                 <p className="text-sm text-muted-foreground">
@@ -1169,16 +1248,23 @@ export function ReportWizard() {
                           const incomeTotal =
                             result.income.reduce(
                               (a, x) =>
-                                a + (isIncomeIncluded(x.lineId) && x.month === m ? x.amount : 0),
+                                a +
+                                (isIncomeIncluded(x.lineId) && x.month === m
+                                  ? x.amount
+                                  : 0),
                               0,
                             ) +
                             result.transfers
-                              .filter((t) => isTransferIncluded(t.lineId) && t.month === m)
+                              .filter(
+                                (t) =>
+                                  isTransferIncluded(t.lineId) && t.month === m,
+                              )
                               .reduce((a, t) => a + t.amount, 0) +
                             result.reviewCredits.reduce(
                               (a, c) =>
                                 a +
-                                (creditRoute[c.lineId] === "income" && c.month === m
+                                (creditRoute[c.lineId] === "income" &&
+                                c.month === m
                                   ? c.amount
                                   : 0),
                               0,
@@ -1188,13 +1274,17 @@ export function ReportWizard() {
                           const expenseTotal =
                             expenses.reduce(
                               (a, e) =>
-                                a + (isExpenseIncluded(e.lineId) && e.month === m ? e.amount : 0),
+                                a +
+                                (isExpenseIncluded(e.lineId) && e.month === m
+                                  ? e.amount
+                                  : 0),
                               0,
                             ) -
                             result.reviewCredits.reduce(
                               (a, c) =>
                                 a +
-                                (creditRoute[c.lineId] === "expense" && c.month === m
+                                (creditRoute[c.lineId] === "expense" &&
+                                c.month === m
                                   ? c.amount
                                   : 0),
                               0,
@@ -1231,11 +1321,16 @@ export function ReportWizard() {
                       </div>
                       <div className="flex justify-between font-semibold">
                         <span>הפרש</span>
-                        <span className="tabular-nums">{formatILS(cardGap)}</span>
+                        <span className="tabular-nums">
+                          {formatILS(cardGap)}
+                        </span>
                       </div>
                       {Math.abs(cardGap) > CARD_GAP_TOLERANCE ? (
                         <div className="space-y-2 border border-destructive p-3 text-destructive">
-                          <p>קיים פער בין חיובי הכרטיס לבנק. ודא שכל החיובים נקלטו לפני המשך.</p>
+                          <p>
+                            קיים פער בין חיובי הכרטיס לבנק. ודא שכל החיובים
+                            נקלטו לפני המשך.
+                          </p>
                           <label className="flex items-center gap-2">
                             <Checkbox
                               checked={cardGapAck}
@@ -1245,7 +1340,9 @@ export function ReportWizard() {
                           </label>
                         </div>
                       ) : (
-                        <p className="text-muted-foreground">החיובים תואמים את הבנק ✓</p>
+                        <p className="text-muted-foreground">
+                          החיובים תואמים את הבנק ✓
+                        </p>
                       )}
                     </div>
                   </Section>
@@ -1265,19 +1362,26 @@ export function ReportWizard() {
                         {result.income.map((x) => (
                           <TableRow
                             key={x.lineId}
-                            className={isIncomeIncluded(x.lineId) ? "" : "opacity-50"}
+                            className={
+                              isIncomeIncluded(x.lineId) ? "" : "opacity-50"
+                            }
                           >
                             <TableCell>
                               <Checkbox
                                 checked={isIncomeIncluded(x.lineId)}
                                 onCheckedChange={(v) =>
-                                  setIncomeIncluded((p) => ({ ...p, [x.lineId]: v === true }))
+                                  setIncomeIncluded((p) => ({
+                                    ...p,
+                                    [x.lineId]: v === true,
+                                  }))
                                 }
                               />
                             </TableCell>
                             <TableCell>{x.source}</TableCell>
                             <TableCell>{x.month}</TableCell>
-                            <TableCell className="tabular-nums">{formatILS(x.amount)}</TableCell>
+                            <TableCell className="tabular-nums">
+                              {formatILS(x.amount)}
+                            </TableCell>
                             <TableCell>{x.category}</TableCell>
                           </TableRow>
                         ))}
@@ -1297,7 +1401,12 @@ export function ReportWizard() {
                         value={expenseSourceFilter}
                         onValueChange={(v) =>
                           setExpenseSourceFilter(
-                            v as "all" | "direct" | "checking" | "cash" | "manual",
+                            v as
+                              | "all"
+                              | "direct"
+                              | "checking"
+                              | "cash"
+                              | "manual",
                           )
                         }
                       >
@@ -1391,7 +1500,9 @@ export function ReportWizard() {
                             <TableRow key={i}>
                               <TableCell>{x.month}</TableCell>
                               <TableCell>{x.description}</TableCell>
-                              <TableCell className="tabular-nums">{formatILS(x.amount)}</TableCell>
+                              <TableCell className="tabular-nums">
+                                {formatILS(x.amount)}
+                              </TableCell>
                             </TableRow>
                           ))}
                         </TableBody>
@@ -1414,7 +1525,9 @@ export function ReportWizard() {
                             <TableRow key={i}>
                               <TableCell>{x.month}</TableCell>
                               <TableCell>{x.description}</TableCell>
-                              <TableCell className="tabular-nums">{formatILS(x.amount)}</TableCell>
+                              <TableCell className="tabular-nums">
+                                {formatILS(x.amount)}
+                              </TableCell>
                             </TableRow>
                           ))}
                         </TableBody>
@@ -1438,7 +1551,9 @@ export function ReportWizard() {
                             <TableRow key={t.lineId}>
                               <TableCell>{t.name || t.description}</TableCell>
                               <TableCell>{t.month}</TableCell>
-                              <TableCell className="tabular-nums">{formatILS(t.amount)}</TableCell>
+                              <TableCell className="tabular-nums">
+                                {formatILS(t.amount)}
+                              </TableCell>
                               <TableCell>
                                 <Checkbox
                                   checked={isTransferIncluded(t.lineId)}
@@ -1471,9 +1586,15 @@ export function ReportWizard() {
                         {cashRows.map((c) => (
                           <TableRow key={c.month}>
                             <TableCell>{c.month}</TableCell>
-                            <TableCell className="tabular-nums">{formatILS(c.withdrawn)}</TableCell>
-                            <TableCell className="tabular-nums">{formatILS(c.covered)}</TableCell>
-                            <TableCell className="tabular-nums">{formatILS(c.residual)}</TableCell>
+                            <TableCell className="tabular-nums">
+                              {formatILS(c.withdrawn)}
+                            </TableCell>
+                            <TableCell className="tabular-nums">
+                              {formatILS(c.covered)}
+                            </TableCell>
+                            <TableCell className="tabular-nums">
+                              {formatILS(c.residual)}
+                            </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -1496,7 +1617,9 @@ export function ReportWizard() {
                           {result.salaryCrossChecks.map((s, i) => (
                             <TableRow key={i}>
                               <TableCell>{s.month}</TableCell>
-                              <TableCell className="tabular-nums">{formatILS(s.bankNet)}</TableCell>
+                              <TableCell className="tabular-nums">
+                                {formatILS(s.bankNet)}
+                              </TableCell>
                               <TableCell className="tabular-nums">
                                 {s.slipNet == null ? "—" : formatILS(s.slipNet)}
                               </TableCell>
@@ -1524,7 +1647,9 @@ export function ReportWizard() {
                           {result.reviewCredits.map((c) => (
                             <TableRow key={c.lineId}>
                               <TableCell>{c.month}</TableCell>
-                              <TableCell className="tabular-nums">{formatILS(c.amount)}</TableCell>
+                              <TableCell className="tabular-nums">
+                                {formatILS(c.amount)}
+                              </TableCell>
                               <TableCell>{c.description}</TableCell>
                               <TableCell>
                                 <div className="flex gap-1">
@@ -1538,11 +1663,16 @@ export function ReportWizard() {
                                     <Button
                                       key={route}
                                       size="sm"
-                                      variant={creditRoute[c.lineId] === route ? "default" : "outline"}
+                                      variant={
+                                        creditRoute[c.lineId] === route
+                                          ? "default"
+                                          : "outline"
+                                      }
                                       onClick={() =>
                                         setCreditRoute((prev) => {
                                           const next = { ...prev };
-                                          if (next[c.lineId] === route) delete next[c.lineId];
+                                          if (next[c.lineId] === route)
+                                            delete next[c.lineId];
                                           else next[c.lineId] = route;
                                           return next;
                                         })
@@ -1567,12 +1697,16 @@ export function ReportWizard() {
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <Button onClick={runReceiptMatch} disabled={receiptsLoading}>
-                    {receiptsLoading ? "מתאים…" : matchRan ? "התאם קבלות חדשות" : "התאם קבלות"}
+                    {receiptsLoading
+                      ? "מתאים…"
+                      : matchRan
+                        ? "התאם קבלות חדשות"
+                        : "התאם קבלות"}
                   </Button>
                   {matchRan ? (
                     <span className="text-sm text-muted-foreground">
-                      {expenses.filter((e) => e.receipt).length} מתוך {expenses.length} חיובים
-                      עם קבלה
+                      {expenses.filter((e) => e.receipt).length} מתוך{" "}
+                      {expenses.length} חיובים עם קבלה
                       {unmatchedReceipts.length > 0
                         ? ` · ${unmatchedReceipts.length} קבלות ללא התאמה`
                         : ""}
@@ -1583,83 +1717,116 @@ export function ReportWizard() {
                   <p className="text-sm text-destructive">{receiptsError}</p>
                 ) : null}
                 {matchRan ? (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead
-                          className="cursor-pointer"
-                          onClick={() => toggleSort("month")}
-                        >
-                          חודש{sortArrow("month")}
-                        </TableHead>
-                        <TableHead
-                          className="cursor-pointer"
-                          onClick={() => toggleSort("date")}
-                        >
-                          תאריך{sortArrow("date")}
-                        </TableHead>
-                        <TableHead
-                          className="cursor-pointer"
-                          onClick={() => toggleSort("description")}
-                        >
-                          תיאור{sortArrow("description")}
-                        </TableHead>
-                        <TableHead
-                          className="cursor-pointer"
-                          onClick={() => toggleSort("amount")}
-                        >
-                          סכום{sortArrow("amount")}
-                        </TableHead>
-                        <TableHead>קבלה</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {receiptView.map(({ e }) => (
-                        <TableRow key={e.lineId}>
-                          <TableCell>{e.month}</TableCell>
-                          <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
-                            {fmtDate(e.date)}
-                          </TableCell>
-                          <TableCell>{e.description}</TableCell>
-                          <TableCell className="tabular-nums">{formatILS(e.amount)}</TableCell>
-                          <TableCell>
-                            {e.receipt ? (
-                              <span className="flex items-center gap-2">
-                                {receiptLinks[e.receipt] ? (
-                                  <a
-                                    href={receiptLinks[e.receipt]}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="underline"
-                                  >
-                                    {e.receipt}
-                                  </a>
-                                ) : (
-                                  e.receipt
-                                )}
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => detachReceipt(e.lineId)}
-                                >
-                                  בטל
-                                </Button>
-                              </span>
-                            ) : (
-                              <span className="text-muted-foreground">—</span>
-                            )}
-                          </TableCell>
+                  <div>
+                    <Select
+                      value={receiptMatchFilter}
+                      onValueChange={(v) =>
+                        setReceiptMatchFilter(
+                          v as "all" | "matched" | "unmatched",
+                        )
+                      }
+                    >
+                      <SelectTrigger className="w-40">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">הכל</SelectItem>
+                        <SelectItem value="matched">עם קבלה</SelectItem>
+                        <SelectItem value="unmatched">ללא קבלה</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead
+                            className="cursor-pointer"
+                            onClick={() => toggleSort("month")}
+                          >
+                            חודש{sortArrow("month")}
+                          </TableHead>
+                          <TableHead
+                            className="cursor-pointer"
+                            onClick={() => toggleSort("date")}
+                          >
+                            תאריך{sortArrow("date")}
+                          </TableHead>
+                          <TableHead
+                            className="cursor-pointer"
+                            onClick={() => toggleSort("description")}
+                          >
+                            תיאור{sortArrow("description")}
+                          </TableHead>
+                          <TableHead
+                            className="cursor-pointer"
+                            onClick={() => toggleSort("amount")}
+                          >
+                            סכום{sortArrow("amount")}
+                          </TableHead>
+                          <TableHead
+                            className="cursor-pointer"
+                            onClick={() => toggleSort("receipt")}
+                          >
+                            {sortArrow("receipt")}קבלה
+                          </TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {receiptView.map(({ e }) => (
+                          <TableRow key={e.lineId}>
+                            <TableCell>{e.month}</TableCell>
+                            <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
+                              {fmtDate(e.date)}
+                            </TableCell>
+                            <TableCell>{e.description}</TableCell>
+                            <TableCell className="tabular-nums">
+                              {formatILS(e.amount)}
+                            </TableCell>
+                            <TableCell>
+                              {e.receipt ? (
+                                <span className="flex items-center justify-between gap-2 min-w-0 ">
+                                  {receiptLinks[e.receipt] ? (
+                                    <Link
+                                      href={receiptLinks[e.receipt]}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      title={e.receipt}
+                                      className="underline truncate min-w-0 max-w-70"
+                                    >
+                                      {e.receipt}
+                                    </Link>
+                                  ) : (
+                                    <span
+                                      className="truncate min-w-0"
+                                      title={e.receipt}
+                                    >
+                                      {e.receipt}
+                                    </span>
+                                  )}
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="shrink-0 max-h-fit"
+                                    onClick={() => detachReceipt(e.lineId)}
+                                  >
+                                    בטל
+                                  </Button>
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 ) : null}
 
                 {matchRan && cashCandidates.length > 0 ? (
                   <Section title="קבלות מזומן">
                     <p className="mb-2 text-sm text-muted-foreground">
-                      קבלות שלא תואמות אף חיוב — הוספה תיצור שורת הוצאה ותקטין את
-                      יתרת המזומן של החודש.
+                      קבלות שלא תואמות אף חיוב — הוספה תיצור שורת הוצאה ותקטין
+                      את יתרת המזומן של החודש.
                     </p>
                     <p className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-sm font-medium tabular-nums">
                       <span>משיכות: {formatILS(cashTotals.withdrawn)}</span>
@@ -1683,7 +1850,9 @@ export function ReportWizard() {
                                 <TableCell className="whitespace-nowrap tabular-nums">
                                   {fmtDate(r.date)}
                                 </TableCell>
-                                <TableCell>{r.storeName ?? r.fileName}</TableCell>
+                                <TableCell>
+                                  {r.storeName ?? r.fileName}
+                                </TableCell>
                                 <TableCell className="tabular-nums">
                                   {formatILS(Math.abs(r.amount ?? 0))}
                                 </TableCell>
@@ -1694,12 +1863,17 @@ export function ReportWizard() {
                                       onClick={() => addReceiptExpense(r)}
                                       disabled={addingCashId !== null}
                                     >
-                                      {addingCashId === r.id ? "מוסיף…" : "הוסף כהוצאה"}
+                                      {addingCashId === r.id
+                                        ? "מוסיף…"
+                                        : "הוסף כהוצאה"}
                                     </Button>
                                     <Button
                                       variant="outline"
                                       size="sm"
-                                      onClick={() => { setSelectedReceipt(r); setPreviewOpen(false); }}
+                                      onClick={() => {
+                                        setSelectedReceipt(r);
+                                        setPreviewOpen(false);
+                                      }}
                                     >
                                       התאם ידנית
                                     </Button>
@@ -1707,15 +1881,26 @@ export function ReportWizard() {
                                 </TableCell>
                               </TableRow>
                               {!isMobile && selectedReceipt?.id === r.id ? (
-                                <TableRow key={`${r.id}-workbench`} className="hover:bg-transparent">
+                                <TableRow
+                                  key={`${r.id}-workbench`}
+                                  className="hover:bg-transparent"
+                                >
                                   <TableCell colSpan={4} className="p-0">
                                     <MatchWorkbench
                                       receipt={selectedReceipt}
                                       expenses={expenses}
-                                      onAttach={(lineId, keep) => attachReceipt(selectedReceipt, lineId, keep)}
+                                      onAttach={(lineId, keep) =>
+                                        attachReceipt(
+                                          selectedReceipt,
+                                          lineId,
+                                          keep,
+                                        )
+                                      }
                                       onClose={() => setSelectedReceipt(null)}
                                       previewOpen={previewOpen}
-                                      onTogglePreview={() => setPreviewOpen((v) => !v)}
+                                      onTogglePreview={() =>
+                                        setPreviewOpen((v) => !v)
+                                      }
                                     />
                                   </TableCell>
                                 </TableRow>
@@ -1728,14 +1913,21 @@ export function ReportWizard() {
 
                     <div className="block space-y-3 md:hidden">
                       {cashCandidates.map((r) => (
-                        <div key={r.id} className="space-y-2 border border-border p-3">
+                        <div
+                          key={r.id}
+                          className="space-y-2 border border-border p-3"
+                        >
                           <div className="flex items-center justify-between">
-                            <span className="font-medium">{r.storeName ?? r.fileName}</span>
+                            <span className="font-medium">
+                              {r.storeName ?? r.fileName}
+                            </span>
                             <span className="font-semibold tabular-nums">
                               {formatILS(Math.abs(r.amount ?? 0))}
                             </span>
                           </div>
-                          <p className="text-sm text-muted-foreground">{fmtDate(r.date)}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {fmtDate(r.date)}
+                          </p>
                           <div className="flex flex-wrap gap-2">
                             <Button
                               onClick={() => addReceiptExpense(r)}
@@ -1745,7 +1937,10 @@ export function ReportWizard() {
                             </Button>
                             <Button
                               variant="outline"
-                              onClick={() => { setSelectedReceipt(r); setPreviewOpen(false); }}
+                              onClick={() => {
+                                setSelectedReceipt(r);
+                                setPreviewOpen(false);
+                              }}
                             >
                               התאם ידנית
                             </Button>
@@ -1754,7 +1949,9 @@ export function ReportWizard() {
                             <MatchWorkbench
                               receipt={selectedReceipt}
                               expenses={expenses}
-                              onAttach={(lineId, keep) => attachReceipt(selectedReceipt, lineId, keep)}
+                              onAttach={(lineId, keep) =>
+                                attachReceipt(selectedReceipt, lineId, keep)
+                              }
                               onClose={() => setSelectedReceipt(null)}
                               previewOpen={previewOpen}
                               onTogglePreview={() => setPreviewOpen((v) => !v)}
@@ -1766,11 +1963,12 @@ export function ReportWizard() {
                   </Section>
                 ) : null}
 
-                {matchRan && (unmatchedInPeriod.length > 0 || dismissedCount > 0) ? (
+                {matchRan &&
+                (unmatchedInPeriod.length > 0 || dismissedCount > 0) ? (
                   <Section title="קבלות ללא התאמה">
                     <p className="mb-2 text-sm text-muted-foreground">
-                      הוספת קבלה שאינה מזומן יוצרת שורה ידנית — ודא/י שהחיוב אינו
-                      כבר בפירוט הבנק.
+                      הוספת קבלה שאינה מזומן יוצרת שורה ידנית — ודא/י שהחיוב
+                      אינו כבר בפירוט הבנק.
                     </p>
                     <div className="hidden md:block">
                       <TooltipProvider>
@@ -1788,75 +1986,95 @@ export function ReportWizard() {
                           <TableBody>
                             {unmatchedInPeriod.map((r) => (
                               <Fragment key={r.id}>
-                              <TableRow>
-                                <TableCell className="whitespace-nowrap tabular-nums">
-                                  {fmtDate(r.date)}
-                                </TableCell>
-                                <TableCell>{r.storeName ?? r.fileName}</TableCell>
-                                <TableCell className="tabular-nums">
-                                  {formatILS(Math.abs(r.amount ?? 0))}
-                                </TableCell>
-                                <TableCell className="text-muted-foreground">
-                                  {r.paymentMethod}
-                                </TableCell>
-                                <TableCell className="tabular-nums">
-                                  {candidateCountLabel(r)}
-                                </TableCell>
-                                <TableCell>
-                                  <span className="flex items-center gap-2">
-                                    <Button
-                                      size="sm"
-                                      onClick={() => addReceiptExpense(r)}
-                                      disabled={addingCashId !== null}
-                                    >
-                                      {addingCashId === r.id ? "מוסיף…" : "הוסף כהוצאה"}
-                                    </Button>
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => { setSelectedReceipt(r); setPreviewOpen(false); }}
-                                    >
-                                      התאם ידנית
-                                    </Button>
-                                    {r.driveFileId ? (
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => { setSelectedReceipt(r); setPreviewOpen(true); }}
-                                            aria-label="הצג קבלה"
-                                          >
-                                            <Eye />
-                                          </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>הצג קבלה</TooltipContent>
-                                      </Tooltip>
-                                    ) : null}
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => dismissReceipt(r)}
-                                    >
-                                      הסר מההתאמה
-                                    </Button>
-                                  </span>
-                                </TableCell>
-                              </TableRow>
-                              {!isMobile && selectedReceipt?.id === r.id ? (
-                                <TableRow className="hover:bg-transparent">
-                                  <TableCell colSpan={6} className="p-0">
-                                    <MatchWorkbench
-                                      receipt={selectedReceipt}
-                                      expenses={expenses}
-                                      onAttach={(lineId, keep) => attachReceipt(selectedReceipt, lineId, keep)}
-                                      onClose={() => setSelectedReceipt(null)}
-                                      previewOpen={previewOpen}
-                                      onTogglePreview={() => setPreviewOpen((v) => !v)}
-                                    />
+                                <TableRow>
+                                  <TableCell className="whitespace-nowrap tabular-nums">
+                                    {fmtDate(r.date)}
+                                  </TableCell>
+                                  <TableCell>
+                                    {r.storeName ?? r.fileName}
+                                  </TableCell>
+                                  <TableCell className="tabular-nums">
+                                    {formatILS(Math.abs(r.amount ?? 0))}
+                                  </TableCell>
+                                  <TableCell className="text-muted-foreground">
+                                    {r.paymentMethod}
+                                  </TableCell>
+                                  <TableCell className="tabular-nums">
+                                    {candidateCountLabel(r)}
+                                  </TableCell>
+                                  <TableCell>
+                                    <span className="flex items-center gap-2">
+                                      <Button
+                                        size="sm"
+                                        onClick={() => addReceiptExpense(r)}
+                                        disabled={addingCashId !== null}
+                                      >
+                                        {addingCashId === r.id
+                                          ? "מוסיף…"
+                                          : "הוסף כהוצאה"}
+                                      </Button>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => {
+                                          setSelectedReceipt(r);
+                                          setPreviewOpen(false);
+                                        }}
+                                      >
+                                        התאם ידנית
+                                      </Button>
+                                      {r.driveFileId ? (
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Button
+                                              variant="outline"
+                                              size="sm"
+                                              onClick={() => {
+                                                setSelectedReceipt(r);
+                                                setPreviewOpen(true);
+                                              }}
+                                              aria-label="הצג קבלה"
+                                            >
+                                              <Eye />
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent>
+                                            הצג קבלה
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      ) : null}
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => dismissReceipt(r)}
+                                      >
+                                        הסר מההתאמה
+                                      </Button>
+                                    </span>
                                   </TableCell>
                                 </TableRow>
-                              ) : null}
+                                {!isMobile && selectedReceipt?.id === r.id ? (
+                                  <TableRow className="hover:bg-transparent">
+                                    <TableCell colSpan={6} className="p-0">
+                                      <MatchWorkbench
+                                        receipt={selectedReceipt}
+                                        expenses={expenses}
+                                        onAttach={(lineId, keep) =>
+                                          attachReceipt(
+                                            selectedReceipt,
+                                            lineId,
+                                            keep,
+                                          )
+                                        }
+                                        onClose={() => setSelectedReceipt(null)}
+                                        previewOpen={previewOpen}
+                                        onTogglePreview={() =>
+                                          setPreviewOpen((v) => !v)
+                                        }
+                                      />
+                                    </TableCell>
+                                  </TableRow>
+                                ) : null}
                               </Fragment>
                             ))}
                           </TableBody>
@@ -1866,9 +2084,14 @@ export function ReportWizard() {
 
                     <div className="block space-y-3 md:hidden">
                       {unmatchedInPeriod.map((r) => (
-                        <div key={r.id} className="space-y-2 border border-border p-3">
+                        <div
+                          key={r.id}
+                          className="space-y-2 border border-border p-3"
+                        >
                           <div className="flex items-center justify-between">
-                            <span className="font-medium">{r.storeName ?? r.fileName}</span>
+                            <span className="font-medium">
+                              {r.storeName ?? r.fileName}
+                            </span>
                             <span className="font-semibold tabular-nums">
                               {formatILS(Math.abs(r.amount ?? 0))}
                             </span>
@@ -1888,7 +2111,10 @@ export function ReportWizard() {
                             </Button>
                             <Button
                               variant="outline"
-                              onClick={() => { setSelectedReceipt(r); setPreviewOpen(false); }}
+                              onClick={() => {
+                                setSelectedReceipt(r);
+                                setPreviewOpen(false);
+                              }}
                             >
                               התאם ידנית
                             </Button>
@@ -1896,13 +2122,19 @@ export function ReportWizard() {
                               <Button
                                 variant="outline"
                                 size="icon"
-                                onClick={() => { setSelectedReceipt(r); setPreviewOpen(true); }}
+                                onClick={() => {
+                                  setSelectedReceipt(r);
+                                  setPreviewOpen(true);
+                                }}
                                 aria-label="הצג קבלה"
                               >
                                 <Eye />
                               </Button>
                             ) : null}
-                            <Button variant="ghost" onClick={() => dismissReceipt(r)}>
+                            <Button
+                              variant="ghost"
+                              onClick={() => dismissReceipt(r)}
+                            >
                               הסר מההתאמה
                             </Button>
                           </div>
@@ -1910,7 +2142,9 @@ export function ReportWizard() {
                             <MatchWorkbench
                               receipt={selectedReceipt}
                               expenses={expenses}
-                              onAttach={(lineId, keep) => attachReceipt(selectedReceipt, lineId, keep)}
+                              onAttach={(lineId, keep) =>
+                                attachReceipt(selectedReceipt, lineId, keep)
+                              }
                               onClose={() => setSelectedReceipt(null)}
                               previewOpen={previewOpen}
                               onTogglePreview={() => setPreviewOpen((v) => !v)}
@@ -1942,8 +2176,8 @@ export function ReportWizard() {
 
                 {matchRan && foreignInPeriod.length > 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    {foreignInPeriod.length} קבלות ב{PAYMENT_METHOD.ForeignCard} — לתיעוד
-                    בלבד
+                    {foreignInPeriod.length} קבלות ב{PAYMENT_METHOD.ForeignCard}{" "}
+                    — לתיעוד בלבד
                   </p>
                 ) : null}
               </div>
@@ -1977,7 +2211,9 @@ export function ReportWizard() {
                         <TableCell
                           className={cn(
                             "tabular-nums",
-                            r.residual < -CARD_GAP_TOLERANCE ? "text-destructive" : "",
+                            r.residual < -CARD_GAP_TOLERANCE
+                              ? "text-destructive"
+                              : "",
                           )}
                         >
                           {formatILS(r.residual)}
@@ -1991,7 +2227,9 @@ export function ReportWizard() {
                     סכום קבלות המזומן עולה על סכום המשיכות — בדוק/י את הקבלות.
                   </p>
                 ) : null}
-                {cashRows.some((r) => Math.abs(r.residual) > CARD_GAP_TOLERANCE) ? (
+                {cashRows.some(
+                  (r) => Math.abs(r.residual) > CARD_GAP_TOLERANCE,
+                ) ? (
                   <div className="space-y-2 border border-destructive p-3 text-sm text-destructive">
                     <p>קיימת יתרת מזומן שאינה מכוסה בקבלות.</p>
                     <label className="flex items-center gap-2">
@@ -2043,7 +2281,9 @@ export function ReportWizard() {
         {step > 0 && step < STEPS.length - 1 ? (
           <Button
             variant="outline"
-            disabled={(step === 2 && cardGapBlocking) || (step === 4 && cashGapBlocking)}
+            disabled={
+              (step === 2 && cardGapBlocking) || (step === 4 && cashGapBlocking)
+            }
             onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}
           >
             המשך
