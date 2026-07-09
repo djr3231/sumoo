@@ -49,34 +49,39 @@ interface DriveFolder {
 }
 
 export function DriveImport() {
-  const [selectedFolder, setSelectedFolder] = React.useState<DriveFolder | null>(null);
+  const [selectedFolder, setSelectedFolder] =
+    React.useState<DriveFolder | null>(null);
   const [searchResults, setSearchResults] = React.useState<DriveFolder[]>([]);
   const [folderIdError, setFolderIdError] = React.useState<string | null>(null);
   const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = React.useRef<AbortController | null>(null);
 
   const [files, setFiles] = React.useState<DriveFile[]>([]);
-  const [existingDriveIds, setExistingDriveIds] = React.useState<Set<string>>(new Set());
+  const [existingDriveIds, setExistingDriveIds] = React.useState<Set<string>>(
+    new Set(),
+  );
   const [progress, setProgress] = React.useState({ done: 0, total: 0 });
   const [loadingFolder, setLoadingFolder] = React.useState(false);
   const [running, setRunning] = React.useState(false);
   const [results, setResults] = React.useState<Receipt[]>([]);
-  const [errors, setErrors] = React.useState<{ name: string; error: string }[]>([]);
+  const [errors, setErrors] = React.useState<{ name: string; error: string }[]>(
+    [],
+  );
   const [paused, setPaused] = React.useState(false);
   const [pendingFiles, setPendingFiles] = React.useState<DriveFile[]>([]);
 
   // Keep the currently-selected folder visible in the list even after results change.
   const items = React.useMemo(() => {
-    if (!selectedFolder || searchResults.some((f) => f.id === selectedFolder.id)) {
+    if (
+      !selectedFolder ||
+      searchResults.some((f) => f.id === selectedFolder.id)
+    ) {
       return searchResults;
     }
     return [...searchResults, selectedFolder];
   }, [searchResults, selectedFolder]);
 
-  function handleInputChange(
-    next: string,
-    details: { reason?: string },
-  ) {
+  function handleInputChange(next: string, details: { reason?: string }) {
     if (details.reason === "item-press") return;
     if (next.trim() === "") {
       setSearchResults([]);
@@ -155,14 +160,19 @@ export function DriveImport() {
     setRunning(true);
     setPaused(false);
 
-    const totalForProgress = progress.total > 0 ? progress.total : toProcess.length;
+    const totalForProgress =
+      progress.total > 0 ? progress.total : toProcess.length;
     const baseDone = progress.done;
     setProgress({ done: baseDone, total: totalForProgress });
 
     const queue = [...toProcess];
     const newResults: Receipt[] = [...results];
     const newErrors: typeof errors = [...errors];
-    const state = { consecutiveOverloads: 0, halted: false, doneCount: baseDone };
+    const state = {
+      consecutiveOverloads: 0,
+      halted: false,
+      doneCount: baseDone,
+    };
 
     const workers = Array.from(
       { length: Math.min(CONCURRENCY, queue.length) },
@@ -181,6 +191,7 @@ export function DriveImport() {
                 body: JSON.stringify({ receipts: rs }),
               });
             }
+            setExistingDriveIds((prev) => new Set(prev).add(f.id));
           } catch (e) {
             const err = e as Error & { status?: number };
             newErrors.push({ name: f.name, error: err.message });
@@ -224,9 +235,8 @@ export function DriveImport() {
     await runBatch(pendingFiles);
   }
 
-  const pct = progress.total > 0
-    ? Math.round((progress.done / progress.total) * 100)
-    : 0;
+  const pct =
+    progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
 
   return (
     <div className="space-y-3">
@@ -261,12 +271,18 @@ export function DriveImport() {
               </ComboboxContent>
             </Combobox>
           </div>
-          <Button onClick={loadFolder} variant="outline" disabled={loadingFolder || running}>
+          <Button
+            onClick={loadFolder}
+            variant="outline"
+            disabled={loadingFolder || running}
+          >
             {loadingFolder && <Loader2 className="animate-spin size-4 me-2" />}
             {loadingFolder ? "טוען..." : "טען תיקייה"}
           </Button>
         </div>
-        {folderIdError && <p className="text-xs text-destructive">{folderIdError}</p>}
+        {folderIdError && (
+          <p className="text-xs text-destructive">{folderIdError}</p>
+        )}
       </div>
 
       {loadingFolder && (
@@ -278,54 +294,59 @@ export function DriveImport() {
         </div>
       )}
 
-      {!loadingFolder && files.length > 0 && (() => {
-        const newFiles = files.filter((f) => !existingDriveIds.has(f.id));
-        const doneCount = files.length - newFiles.length;
-        return (
-          <>
-            <p className="text-sm text-muted-foreground">
-              נמצאו {files.length} קבצים בתיקייה
-              {doneCount > 0 && ` · ${doneCount} כבר עובדו · ${newFiles.length} חדשים`}.
-            </p>
-            <div className="flex gap-2 flex-wrap">
-              {running ? (
-                <Button disabled>
-                  <Loader2 className="animate-spin size-4 me-2" />
-                  מעבד {progress.done}/{progress.total}...
-                </Button>
-              ) : (
-                <>
-                  <Button
-                    onClick={() => startProcessing(newFiles)}
-                    disabled={paused || newFiles.length === 0}
-                  >
-                    {newFiles.length === 0 ? "כל הקבצים כבר עובדו" : `סרוק חדשים (${newFiles.length})`}
+      {!loadingFolder &&
+        files.length > 0 &&
+        (() => {
+          const newFiles = files.filter((f) => !existingDriveIds.has(f.id));
+          const doneCount = files.length - newFiles.length;
+          return (
+            <>
+              <p className="text-sm text-muted-foreground">
+                נמצאו {files.length} קבצים בתיקייה
+                {doneCount > 0 &&
+                  ` · ${doneCount} כבר עובדו · ${newFiles.length} חדשים`}
+                .
+              </p>
+              <div className="flex gap-2 flex-wrap">
+                {running ? (
+                  <Button disabled>
+                    <Loader2 className="animate-spin size-4 me-2" />
+                    מעבד {progress.done}/{progress.total}...
                   </Button>
-                  {doneCount > 0 && (
+                ) : (
+                  <>
                     <Button
-                      variant="outline"
-                      onClick={() => startProcessing(files)}
-                      disabled={paused}
+                      onClick={() => startProcessing(newFiles)}
+                      disabled={paused || newFiles.length === 0}
                     >
-                      סרוק הכל מחדש ({files.length})
+                      {newFiles.length === 0
+                        ? `${results.length} קבצים עובדו בהצלחה`
+                        : `סרוק חדשים (${newFiles.length})`}
                     </Button>
-                  )}
-                </>
-              )}
-            </div>
-          </>
-        );
-      })()}
+                    {doneCount > 0 && (
+                      <Button
+                        variant="outline"
+                        onClick={() => startProcessing(files)}
+                        disabled={paused}
+                      >
+                        סרוק הכל מחדש ({files.length})
+                      </Button>
+                    )}
+                  </>
+                )}
+              </div>
+            </>
+          );
+        })()}
 
-      {progress.total > 0 && (
-        <Progress value={pct} />
-      )}
+      {progress.total > 0 && <Progress value={pct} />}
 
       {paused && (
         <Alert>
           <AlertTitle>⏸ הסריקה הושהתה — Gemini עמוס</AlertTitle>
           <AlertDescription>
-            {pendingFiles.length} קבצים ממתינים. נסה שוב כשהשרת ישתחרר (לעיתים נדרשות מספר דקות).
+            {pendingFiles.length} קבצים ממתינים. נסה שוב כשהשרת ישתחרר (לעיתים
+            נדרשות מספר דקות).
           </AlertDescription>
           <Button onClick={resume} disabled={running} className="mt-2">
             המשך סריקה ({pendingFiles.length})
