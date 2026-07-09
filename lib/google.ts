@@ -777,6 +777,109 @@ export async function findDriveFileInFolder(
   return res.data.files?.[0]?.id ?? null;
 }
 
+// ============================================================================
+// Generic Drive/Sheets helpers (report generator — Task 5 builds on these)
+// ============================================================================
+
+// Copy a Drive file into a folder, converting it to a native Google Sheet
+// (required: the report template is an .xlsx, which Sheets API cannot edit).
+export async function copyDriveFileAsSheet(
+  accessToken: string,
+  fileId: string,
+  name: string,
+  parentId: string,
+): Promise<string> {
+  const drive = driveClient(accessToken);
+  const res = await drive.files.copy({
+    fileId,
+    requestBody: {
+      name,
+      parents: [parentId],
+      mimeType: "application/vnd.google-apps.spreadsheet",
+    },
+    fields: "id",
+  });
+  return res.data.id!;
+}
+
+// Find-or-create a blank native spreadsheet by name inside a folder.
+// (ensureSpreadsheet creates only the main app sheet at Drive root.)
+export async function createSpreadsheetInFolder(
+  accessToken: string,
+  name: string,
+  parentId: string,
+): Promise<string> {
+  const existing = await findDriveFileInFolder(accessToken, parentId, name);
+  if (existing) return existing;
+  const drive = driveClient(accessToken);
+  const res = await drive.files.create({
+    requestBody: {
+      name,
+      mimeType: "application/vnd.google-apps.spreadsheet",
+      parents: [parentId],
+    },
+    fields: "id",
+  });
+  return res.data.id!;
+}
+
+export async function listSheetTabs(
+  accessToken: string,
+  spreadsheetId: string,
+): Promise<Array<{ sheetId: number; title: string }>> {
+  const sheets = sheetsClient(accessToken);
+  const res = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets(properties(sheetId,title))",
+  });
+  return (res.data.sheets ?? []).map((s) => ({
+    sheetId: s.properties!.sheetId!,
+    title: s.properties!.title!,
+  }));
+}
+
+// Whole-tab read as a 2D string grid. `unformatted` returns raw numbers
+// (needed when comparing totals to computed values); default returns the
+// display strings (needed for label anchoring).
+export async function getSheetGrid(
+  accessToken: string,
+  spreadsheetId: string,
+  tabTitle: string,
+  unformatted = false,
+): Promise<string[][]> {
+  const sheets = sheetsClient(accessToken);
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${tabTitle.replace(/'/g, "''")}'`,
+    valueRenderOption: unformatted ? "UNFORMATTED_VALUE" : "FORMATTED_VALUE",
+  });
+  return (res.data.values ?? []).map((row) => row.map((c) => String(c ?? "")));
+}
+
+// Write many discrete ranges in ONE API call (quota-frugal; the report fill
+// is a single batch). RAW: numbers stay numbers (template cell formats apply
+// the ₪), strings are never reinterpreted (ARCHITECTURE.md §8.3).
+export async function batchWriteCells(
+  accessToken: string,
+  spreadsheetId: string,
+  data: Array<{ range: string; values: (string | number)[][] }>,
+): Promise<void> {
+  const sheets = sheetsClient(accessToken);
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: { valueInputOption: "RAW", data },
+  });
+}
+
+export async function clearSheetRange(
+  accessToken: string,
+  spreadsheetId: string,
+  range: string,
+): Promise<void> {
+  const sheets = sheetsClient(accessToken);
+  await sheets.spreadsheets.values.clear({ spreadsheetId, range });
+}
+
 export async function uploadFileToDrive(
   accessToken: string,
   folderId: string,
