@@ -677,6 +677,21 @@ export async function searchDriveFolders(
   return (res.data.files ?? []).map((f) => ({ id: f.id!, name: f.name! }));
 }
 
+// Name-contains search over spreadsheet-like files (native Sheets + xlsx),
+// used by the report-template picker. Max 20, excludes trashed.
+export async function searchDriveFiles(
+  accessToken: string,
+  query: string,
+): Promise<Array<{ id: string; name: string }>> {
+  const drive = driveClient(accessToken);
+  const res = await drive.files.list({
+    q: `(mimeType='application/vnd.google-apps.spreadsheet' or mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') and name contains '${query.replace(/'/g, "\\'")}' and trashed=false`,
+    fields: "files(id,name)",
+    pageSize: 20,
+  });
+  return (res.data.files ?? []).map((f) => ({ id: f.id!, name: f.name! }));
+}
+
 export async function downloadDriveFile(
   accessToken: string,
   fileId: string,
