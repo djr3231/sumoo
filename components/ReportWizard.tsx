@@ -42,6 +42,7 @@ import {
 import { useIsMobile } from "@/lib/use-is-mobile";
 import {
   DEFAULT_HOUSEHOLD_SIZE,
+  HEBREW_MONTHS,
   GOV_EXPENSE_CATEGORIES,
   GOV_EXPENSE_CATEGORY,
   GOV_INCOME_CATEGORIES,
@@ -2367,8 +2368,8 @@ export function ReportWizard() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>הכנסות</TableHead>
-                        <TableHead>{`חודש ${rollup.months[0]}`}</TableHead>
-                        <TableHead>{`חודש ${rollup.months[1]}`}</TableHead>
+                        <TableHead>{`חודש ${HEBREW_MONTHS[rollup.months[0] - 1]}`}</TableHead>
+                        <TableHead>{`חודש ${HEBREW_MONTHS[rollup.months[1] - 1]}`}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -2417,8 +2418,8 @@ export function ReportWizard() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>הוצאות</TableHead>
-                        <TableHead>{`חודש ${rollup.months[0]}`}</TableHead>
-                        <TableHead>{`חודש ${rollup.months[1]}`}</TableHead>
+                        <TableHead>{`חודש ${HEBREW_MONTHS[rollup.months[0] - 1]}`}</TableHead>
+                        <TableHead>{`חודש ${HEBREW_MONTHS[rollup.months[1] - 1]}`}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
