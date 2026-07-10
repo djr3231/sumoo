@@ -355,9 +355,13 @@ async function generateGovReport(
 }
 
 // ---------------------------------------------------------------------------
-// פירוטים tab (spec step 5): food-line detail per month, anchored on the row
-// containing "תאריך" headers (2 occurrences — one per month block); columns
-// are derived from those header cells' positions, never hardcoded.
+// פירוטים tab (spec step 5): two per-month food tables side by side — month 1
+// in columns B/C, month 2 in columns E/F. Rows 1-4 hold, per month, a merged
+// "חודש <name>" label directly above a "סה"כ כלכלה" summary row; row 5 is the
+// תאריך/סכום header (2 occurrences — one per month block); data starts on the
+// row right below it. All rows/cols are derived by scanning — never
+// hardcoded — and the clear-before-write starts at the scanned data row so
+// rows 1-5 (labels, summary, header) are preserved.
 // ---------------------------------------------------------------------------
 async function fillDetailsTab(token: string, id: string, rollup: ReportRollup): Promise<void> {
   const grid = await getSheetGrid(token, id, DETAILS_TAB);
@@ -373,7 +377,17 @@ async function fillDetailsTab(token: string, id: string, rollup: ReportRollup): 
   const sumCols = colsWhere(grid[sumRow], 'סה"כ כלכלה', 1);
   if (sumCols.length < 2) throw new Error(`Missing anchor: "סה"כ כלכלה" sum cells in ${DETAILS_TAB}`);
 
-  await clearSheetRange(token, id, `'${DETAILS_TAB}'!A3:F`);
+  // Month-name label row: directly above the summary row (0-indexed grid row
+  // sumRow - 1, which rangeFor turns into 1-indexed sheet row sumRow — one
+  // row above the summary's own sheet row of sumRow + 1).
+  const [month1, month2] = rollup.months;
+  const labelRow = sumRow - 1;
+  await batchWriteCells(token, id, [
+    { range: rangeFor(DETAILS_TAB, labelRow, month1Col), values: [[`חודש ${HEBREW_MONTHS[month1 - 1]}`]] },
+    { range: rangeFor(DETAILS_TAB, labelRow, month2Col), values: [[`חודש ${HEBREW_MONTHS[month2 - 1]}`]] },
+  ]);
+
+  await clearSheetRange(token, id, `'${DETAILS_TAB}'!A${dataStartSheetRow}:F`);
 
   const [m1Lines, m2Lines] = rollup.foodBreakdown;
   const data: Array<{ range: string; values: (string | number)[][] }> = [];
