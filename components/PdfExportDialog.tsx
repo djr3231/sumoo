@@ -21,7 +21,11 @@ export interface PdfExportDialogProps {
   onOpenChange: (open: boolean) => void;
   busy: boolean;
   progress: PdfProgress | null;
-  onSubmit: (payload: { personal: PersonalDetails; signaturePngBase64: string }) => void;
+  onSubmit: (payload: {
+    personal: PersonalDetails;
+    signaturePngBase64: string;
+    previewOnly?: boolean;
+  }) => void;
 }
 
 // DD/MM/YYYY, zero-padded — same convention as the /api/report/pdf route.
@@ -63,7 +67,11 @@ function PdfExportForm({
 }: {
   busy: boolean;
   progress: PdfProgress | null;
-  onSubmit: (payload: { personal: PersonalDetails; signaturePngBase64: string }) => void;
+  onSubmit: (payload: {
+    personal: PersonalDetails;
+    signaturePngBase64: string;
+    previewOnly?: boolean;
+  }) => void;
 }) {
   const [name, setName] = useState("");
   const [caseNumber, setCaseNumber] = useState("");
@@ -136,6 +144,20 @@ function PdfExportForm({
             ביטול
           </Button>
         </DialogClose>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={busy || !name.trim() || !sig}
+          onClick={() =>
+            onSubmit({
+              personal: { name, caseNumber, address, phone, date },
+              signaturePngBase64: sig as string,
+              previewOnly: true,
+            })
+          }
+        >
+          תצוגה מקדימה
+        </Button>
         <Button
           type="button"
           disabled={busy || !name.trim() || !sig}

@@ -15,6 +15,7 @@ interface PdfBody {
   personal: PersonalDetails;
   signaturePngBase64: string;
   attachedReceiptFileNames: string[];
+  previewOnly?: boolean;
 }
 
 // Today formatted DD/MM/YYYY (zero-padded), used only when the client sends
@@ -70,6 +71,7 @@ export async function POST(req: Request) {
           personal: { ...personal, date },
           signaturePngBase64,
           attachedReceiptFileNames,
+          previewOnly: body.previewOnly === true,
         };
         const result = await buildReportPdfBundle(token, args, (p: PdfProgress) =>
           send({ progress: p }),

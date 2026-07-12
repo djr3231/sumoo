@@ -1028,7 +1028,11 @@ export function ReportWizard() {
   // Step 6: issue the signed PDF bundle. `personal`/`signaturePngBase64` come
   // from the dialog's own state and are forwarded straight to the API —
   // never stored in wizard state or logged (see PRIVACY note in lib/report/pdf.ts).
-  async function handlePdfExport(payload: { personal: PersonalDetails; signaturePngBase64: string }) {
+  async function handlePdfExport(payload: {
+    personal: PersonalDetails;
+    signaturePngBase64: string;
+    previewOnly?: boolean;
+  }) {
     if (!pair || !created || !generated) return;
     setPdfBusy(true);
     setPdfError(null);
@@ -1051,6 +1055,7 @@ export function ReportWizard() {
           personal: payload.personal,
           signaturePngBase64: payload.signaturePngBase64,
           attachedReceiptFileNames,
+          previewOnly: payload.previewOnly === true,
         }),
       });
       const contentType = res.headers.get("Content-Type") ?? "";
@@ -1064,7 +1069,13 @@ export function ReportWizard() {
       const decoder = new TextDecoder();
       let buffered = "";
       let final:
-        | { ok?: boolean; pdf?: { id: string; url: string }; skippedFiles?: string[]; error?: string }
+        | {
+            ok?: boolean;
+            pdf?: { id: string; url: string } | null;
+            skippedFiles?: string[];
+            previewPdfBase64?: string;
+            error?: string;
+          }
         | null = null;
       for (;;) {
         const { done, value } = await reader.read();
@@ -1086,10 +1097,19 @@ export function ReportWizard() {
           else final = evt;
         }
       }
-      if (!final || final.error || !final.ok || !final.pdf) {
+      if (!final || final.error || !final.ok) {
         // Stream ended without a success verdict (server error or cut stream).
         throw new Error(final?.error || `HTTP ${res.status}`);
       }
+      if (final.previewPdfBase64) {
+        // Calibration preview: open the stamped page in a new tab and keep the
+        // dialog open (with its filled fields) for the next round.
+        const bytes = Uint8Array.from(atob(final.previewPdfBase64), (c) => c.charCodeAt(0));
+        const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+        window.open(url, "_blank", "noopener");
+        return;
+      }
+      if (!final.pdf) throw new Error(`HTTP ${res.status}`);
       setPdfResult({ url: final.pdf.url, skippedFiles: final.skippedFiles ?? [] });
       setPdfDialogOpen(false);
     } catch (e) {

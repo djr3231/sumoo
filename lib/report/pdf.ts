@@ -46,10 +46,14 @@ export interface PdfExportArgs {
   personal: PersonalDetails;
   signaturePngBase64: string; // data-URL or bare base64 (PNG or JPEG)
   attachedReceiptFileNames: string[]; // ordered; server resolves driveFileIds
+  // Calibration aid: stop after the signature stamp (stages 2-5), skip all
+  // attachments/moves/upload, and return the one-page PDF inline instead.
+  previewOnly?: boolean;
 }
 export interface PdfExportResult {
-  pdf: { id: string; url: string };
+  pdf: { id: string; url: string } | null; // null on previewOnly runs
   skippedFiles: string[]; // names that failed to append (e.g. encrypted PDFs)
+  previewPdfBase64?: string; // previewOnly: the stamped report page, base64
 }
 
 // Progress event for the streaming route: stage + loop counters ONLY —
@@ -324,6 +328,17 @@ export async function buildReportPdfBundle(
       width: fit.w,
       height: fit.h,
     });
+
+    // Preview mode ends here: return the stamped page inline, upload nothing.
+    // The finally below still deletes the temp copy.
+    if (args.previewOnly) {
+      const previewBytes = await doc.save();
+      return {
+        pdf: null,
+        skippedFiles,
+        previewPdfBase64: Buffer.from(previewBytes).toString("base64"),
+      };
+    }
 
     // Stage 6: append source documents (bank statements / salary slips).
     const sourceFiles = await listDriveFolderImages(accessToken, args.folders.sourceId);
