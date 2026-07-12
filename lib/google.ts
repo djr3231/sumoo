@@ -908,6 +908,81 @@ export async function uploadFileToDrive(
   return { id: res.data.id! };
 }
 
+// Permanently deletes a file, bypassing trash (files.delete on an owned file
+// is a hard delete, not a trash move) — used to clean up the temp PDF-export
+// copy so it never lingers in Drive.
+export async function deleteDriveFile(accessToken: string, fileId: string): Promise<void> {
+  const drive = driveClient(accessToken);
+  await drive.files.delete({ fileId });
+}
+
+// Moves a file to a new parent folder. Drive files.update has no "move"
+// verb — parenting is changed via addParents/removeParents on the current
+// parent list (files.get → files.update, 2 calls). No-op if already there.
+export async function moveDriveFile(
+  accessToken: string,
+  fileId: string,
+  targetFolderId: string,
+): Promise<void> {
+  const drive = driveClient(accessToken);
+  const current = await drive.files.get({ fileId, fields: "parents" });
+  const parents = current.data.parents ?? [];
+  if (parents.length === 1 && parents[0] === targetFolderId) return;
+  await drive.files.update({
+    fileId,
+    addParents: targetFolderId,
+    removeParents: parents.join(","),
+    fields: "id",
+  });
+}
+
+const DEFAULT_ROW_PX = 21;
+const DEFAULT_COL_PX = 100;
+
+// Pixel geometry of one tab (row heights + column widths), needed to convert
+// the report's cell-based layout into PDF page coordinates. Missing
+// pixelSize entries fall back to the Sheets UI defaults.
+export async function getSheetTabMetrics(
+  accessToken: string,
+  spreadsheetId: string,
+  tabTitle: string,
+): Promise<{ sheetId: number; rowPx: number[]; colPx: number[] }> {
+  const sheets = sheetsClient(accessToken);
+  const res = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields:
+      "sheets(properties(sheetId,title),data(rowMetadata(pixelSize),columnMetadata(pixelSize)))",
+  });
+  const sheet = (res.data.sheets ?? []).find((s) => s.properties?.title === tabTitle);
+  if (!sheet) throw new Error(`Sheet tab not found: ${tabTitle}`);
+  const data = sheet.data?.[0];
+  const rowPx = (data?.rowMetadata ?? []).map((m) => m.pixelSize ?? DEFAULT_ROW_PX);
+  const colPx = (data?.columnMetadata ?? []).map((m) => m.pixelSize ?? DEFAULT_COL_PX);
+  return { sheetId: sheet.properties!.sheetId!, rowPx, colPx };
+}
+
+// Exports one tab as a PDF via Sheets' export endpoint (not part of the
+// Sheets/Drive API surface — no googleapis method covers it, hence the raw
+// fetch). scale=1 pins 100% zoom so page geometry is deterministic across
+// tabs of different sizes.
+export async function exportSheetTabPdf(
+  accessToken: string,
+  spreadsheetId: string,
+  gid: number,
+): Promise<Buffer> {
+  const url =
+    `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=pdf&gid=${gid}` +
+    `&size=A4&portrait=true&scale=1&sheetnames=false&printtitle=false&pagenum=false&gridlines=false` +
+    `&top_margin=0.25&bottom_margin=0.25&left_margin=0.25&right_margin=0.25`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    throw new Error(`Sheet tab PDF export failed: ${res.status} ${res.statusText}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
 // ============================================================================
 // User settings (stored in הגדרות tab as key/value rows)
 // ============================================================================
