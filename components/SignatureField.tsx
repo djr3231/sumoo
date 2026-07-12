@@ -19,6 +19,16 @@ const INK_COLOR = "#1e3a8a";
 
 type Mode = "draw" | "upload";
 
+// Paint an image onto the pad fitted (contain, centered) — never stretched.
+// Breaking the uploaded image's aspect ratio distorts the preview; the PDF
+// stamp preserves ratio too (fitCentered in lib/report/pdf.ts).
+function drawFitted(ctx: CanvasRenderingContext2D, img: HTMLImageElement) {
+  const scale = Math.min(CANVAS_WIDTH / img.width, CANVAS_HEIGHT / img.height);
+  const w = img.width * scale;
+  const h = img.height * scale;
+  ctx.drawImage(img, (CANVAS_WIDTH - w) / 2, (CANVAS_HEIGHT - h) / 2, w, h);
+}
+
 export interface SignatureFieldProps {
   /** PNG (or JPEG) data-URL, or null when no signature is set. Controlled — this component keeps no persistence beyond the canvas's own drawing scratch. */
   value: string | null;
@@ -71,7 +81,7 @@ export function SignatureField({ value, onChange }: SignatureFieldProps) {
       const liveCtx = ctxRef.current;
       if (!liveCtx) return;
       liveCtx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-      liveCtx.drawImage(img, 0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+      drawFitted(liveCtx, img);
     };
     img.src = value;
   }, [value]);
@@ -150,7 +160,7 @@ export function SignatureField({ value, onChange }: SignatureFieldProps) {
           const liveCtx = ctxRef.current;
           if (!liveCtx) return;
           liveCtx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-          liveCtx.drawImage(img, 0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+          drawFitted(liveCtx, img);
         };
         img.src = dataUrl;
       }

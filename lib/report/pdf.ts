@@ -285,7 +285,7 @@ export async function buildReportPdfBundle(
     // Slack-axis alignment (does Sheets center the axis that doesn't bind?) is
     // undocumented. These are the E2E calibration constants — if the stamp
     // shows a uniform offset, adjust ONLY these two (default 0 = top-left).
-    const ALIGN_X_PT = 0;
+    const ALIGN_X_PT = 12; // E2E round 2 (2026-07-13): nudge the stamp a bit right
     const ALIGN_Y_PT = 0;
     const boxXPt = PAGE_MARGIN_PT + ALIGN_X_PT + xPx * PX_TO_PT * s;
     const boxYTopPt = PAGE_MARGIN_PT + ALIGN_Y_PT + yPx * PX_TO_PT * s;
@@ -304,15 +304,22 @@ export async function buildReportPdfBundle(
     // microscopic squiggle (E2E 2026-07-13). Give it three row-heights of
     // vertical room, bottom-anchored to the cell bottom so the strokes sit ON
     // the signature line and rise above it.
-    const SIG_ROWS = 3;
+    // Size calibration (E2E round 2: "a bit bigger"). The stamp may overflow
+    // the G:H cell slightly: the fit box is widened by SIG_WIDTH_SCALE
+    // (kept centered) and raised to SIG_ROWS row-heights. fitCentered ALWAYS
+    // preserves the image's aspect ratio — these knobs only resize the box.
+    const SIG_ROWS = 4;
+    const SIG_WIDTH_SCALE = 1.25;
+    const sigBoxWPt = boxWPt * SIG_WIDTH_SCALE;
+    const sigBoxXPt = boxXPt - (sigBoxWPt - boxWPt) / 2;
     const sigBoxHPt = boxHPt * SIG_ROWS;
     const sigBoxYTopPt = boxYTopPt + boxHPt - sigBoxHPt;
-    const fit = fitCentered(sigImage.width, sigImage.height, boxWPt, sigBoxHPt);
+    const fit = fitCentered(sigImage.width, sigImage.height, sigBoxWPt, sigBoxHPt);
     // pdf-lib's origin is bottom-left; sigBoxYTopPt is measured from the page
     // TOP, so convert: y = pageHeight - top - height (+ centering offset).
     const pageY = page.getHeight() - sigBoxYTopPt - sigBoxHPt + fit.dy;
     page.drawImage(sigImage, {
-      x: boxXPt + fit.dx,
+      x: sigBoxXPt + fit.dx,
       y: pageY,
       width: fit.w,
       height: fit.h,
