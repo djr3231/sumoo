@@ -33,7 +33,7 @@ import {
 } from "@/components/ui/select";
 import { MatchWorkbench } from "@/components/report/MatchWorkbench";
 import { PdfExportDialog } from "@/components/PdfExportDialog";
-import type { PersonalDetails } from "@/lib/report/pdf";
+import type { PersonalDetails, PdfProgress } from "@/lib/report/pdf";
 import { Eye } from "lucide-react";
 import {
   Tooltip,
@@ -418,6 +418,8 @@ export function ReportWizard() {
     null,
   );
   const [pdfError, setPdfError] = useState<string | null>(null);
+  // Live stage of a running PDF export (transient, from the NDJSON stream).
+  const [pdfProgress, setPdfProgress] = useState<PdfProgress | null>(null);
 
   const canCreate = pair !== null && !creating;
 
@@ -1051,14 +1053,50 @@ export function ReportWizard() {
           attachedReceiptFileNames,
         }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setPdfResult({ url: data.pdf.url, skippedFiles: data.skippedFiles ?? [] });
+      const contentType = res.headers.get("Content-Type") ?? "";
+      if (contentType.includes("application/json")) {
+        // Pre-stream failure (400 guard / early 500) — plain JSON path.
+        const data = await res.json();
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      if (!res.body) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffered = "";
+      let final:
+        | { ok?: boolean; pdf?: { id: string; url: string }; skippedFiles?: string[]; error?: string }
+        | null = null;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffered += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buffered.indexOf("\n")) !== -1) {
+          const line = buffered.slice(0, nl).trim();
+          buffered = buffered.slice(nl + 1);
+          if (!line) continue;
+          const evt = JSON.parse(line) as {
+            progress?: PdfProgress;
+            ok?: boolean;
+            pdf?: { id: string; url: string };
+            skippedFiles?: string[];
+            error?: string;
+          };
+          if (evt.progress) setPdfProgress(evt.progress);
+          else final = evt;
+        }
+      }
+      if (!final || final.error || !final.ok || !final.pdf) {
+        // Stream ended without a success verdict (server error or cut stream).
+        throw new Error(final?.error || `HTTP ${res.status}`);
+      }
+      setPdfResult({ url: final.pdf.url, skippedFiles: final.skippedFiles ?? [] });
       setPdfDialogOpen(false);
     } catch (e) {
       setPdfError((e as Error).message);
     } finally {
       setPdfBusy(false);
+      setPdfProgress(null);
     }
   }
 
@@ -2581,6 +2619,7 @@ export function ReportWizard() {
                   open={pdfDialogOpen}
                   onOpenChange={setPdfDialogOpen}
                   busy={pdfBusy}
+                  progress={pdfProgress}
                   onSubmit={handlePdfExport}
                 />
               </div>

@@ -14,12 +14,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { SignatureField } from "@/components/SignatureField";
-import type { PersonalDetails } from "@/lib/report/pdf";
+import type { PersonalDetails, PdfProgress } from "@/lib/report/pdf";
 
 export interface PdfExportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   busy: boolean;
+  progress: PdfProgress | null;
   onSubmit: (payload: { personal: PersonalDetails; signaturePngBase64: string }) => void;
 }
 
@@ -31,15 +32,37 @@ function todayDDMMYYYY(): string {
   return `${dd}/${mm}/${d.getFullYear()}`;
 }
 
+// Approved stage strings (design spec 2026-07-12). Counter format: (X מתוך Y).
+function progressLabel(p: PdfProgress): string {
+  const count =
+    p.done !== undefined && p.total !== undefined ? ` (${p.done} מתוך ${p.total})` : "";
+  switch (p.stage) {
+    case "prepare":
+      return "מכין את הדוח…";
+    case "export":
+      return "מייצא וחותם…";
+    case "sources":
+      return `מצרף מסמכי מקור…${count}`;
+    case "receipts":
+      return `מצרף קבלות…${count}`;
+    case "move":
+      return `מסדר קבצים בדרייב…${count}`;
+    case "upload":
+      return "שומר את הקובץ…";
+  }
+}
+
 // The form body is only rendered while `open` is true, so each open remounts
 // it fresh and every field's `useState` initial re-runs — this is the reset-
 // on-open mechanism (no `useEffect` + `setState` needed, keeping the repo's
 // `react-hooks/set-state-in-effect` lint rule clean).
 function PdfExportForm({
   busy,
+  progress,
   onSubmit,
 }: {
   busy: boolean;
+  progress: PdfProgress | null;
   onSubmit: (payload: { personal: PersonalDetails; signaturePngBase64: string }) => void;
 }) {
   const [name, setName] = useState("");
@@ -103,6 +126,11 @@ function PdfExportForm({
         </div>
       </div>
       <DialogFooter>
+        {busy && progress ? (
+          <p className="me-auto self-center text-sm text-muted-foreground">
+            {progressLabel(progress)}
+          </p>
+        ) : null}
         <DialogClose asChild>
           <Button variant="outline" type="button">
             ביטול
@@ -125,7 +153,7 @@ function PdfExportForm({
   );
 }
 
-export function PdfExportDialog({ open, onOpenChange, busy, onSubmit }: PdfExportDialogProps) {
+export function PdfExportDialog({ open, onOpenChange, busy, progress, onSubmit }: PdfExportDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -135,7 +163,7 @@ export function PdfExportDialog({ open, onOpenChange, busy, onSubmit }: PdfExpor
             הפרטים ישמשו להנפקה חד-פעמית ולא יישמרו במערכת.
           </DialogDescription>
         </DialogHeader>
-        {open && <PdfExportForm busy={busy} onSubmit={onSubmit} />}
+        {open && <PdfExportForm busy={busy} progress={progress} onSubmit={onSubmit} />}
       </DialogContent>
     </Dialog>
   );
