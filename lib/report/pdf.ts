@@ -10,7 +10,8 @@
 // final PDF. They are never logged (console.*), never included in a thrown
 // error message, and the signature bytes are never uploaded to Drive as a
 // standalone file — only merged into the PDF via pdf-lib.
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, type PDFImage } from "pdf-lib";
+import { Jimp, JimpMime } from "jimp";
 import {
   batchWriteCells,
   copyDriveFileAsSheet,
@@ -81,6 +82,11 @@ const A4_WIDTH_PT = 595.28;
 const A4_HEIGHT_PT = 841.89;
 const PAGE_MARGIN_PT = 18; // 0.25in, matching exportSheetTabPdf's margins
 
+// Bundle-size fix: receipt/statement images are downscaled + re-encoded
+// before embedding (full-resolution photos were bloating the PDF to ~105MB).
+const IMAGE_MAX_DIMENSION_PX = 1500;
+const IMAGE_JPEG_QUALITY = 70;
+
 // Same 0-based A1-range helpers as generate.ts (that file exports only
 // `pickReportTab`, so this is intentionally duplicated per the task brief).
 function colA1(col: number): string {
@@ -145,7 +151,28 @@ async function appendFileAsPages(doc: PDFDocument, buffer: Buffer, mimeType: str
     pages.forEach((p) => doc.addPage(p));
     return;
   }
-  const image = isPng(buffer) ? await doc.embedPng(buffer) : await doc.embedJpg(buffer);
+  let image: PDFImage;
+  try {
+    // Downscale + re-encode as JPEG before embedding — compression always
+    // wins here (a smaller bundle) even for already-small images, so no
+    // "skip if small enough" branch; only the resize step is conditional.
+    const jimpImage = await Jimp.fromBuffer(buffer);
+    const maxSide = Math.max(jimpImage.width, jimpImage.height);
+    if (maxSide > IMAGE_MAX_DIMENSION_PX) {
+      // Resize with a single dimension auto-preserves aspect ratio (jimp v1).
+      if (jimpImage.width >= jimpImage.height) {
+        jimpImage.resize({ w: IMAGE_MAX_DIMENSION_PX });
+      } else {
+        jimpImage.resize({ h: IMAGE_MAX_DIMENSION_PX });
+      }
+    }
+    const compressed = await jimpImage.getBuffer(JimpMime.jpeg, { quality: IMAGE_JPEG_QUALITY });
+    image = await doc.embedJpg(compressed);
+  } catch {
+    // A bad/unsupported image must never lose the receipt — fall back to
+    // embedding the original bytes as-is.
+    image = isPng(buffer) ? await doc.embedPng(buffer) : await doc.embedJpg(buffer);
+  }
   const page = doc.addPage([A4_WIDTH_PT, A4_HEIGHT_PT]);
   const boxW = A4_WIDTH_PT - 2 * PAGE_MARGIN_PT;
   const boxH = A4_HEIGHT_PT - 2 * PAGE_MARGIN_PT;
