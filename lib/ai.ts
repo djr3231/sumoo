@@ -601,8 +601,7 @@ Mapping hints (merchant → category):
 - public transport (רב-קו, אגד, רכבת, מטרונית) → "נסיעות בתחבורה ציבורית"
 - electricity company → "חשמל"; water corporation → "מים"; gas company → "גז"
 - municipality / ארנונה → "מיסי עירייה"
-- mobile carrier (פרטנר, סלקום, פלאפון, הוט מובייל) → "טלפון נייד"
-- internet / TV / landline (בזק, הוט, יס) → "תקשורת ביתית (טלפון, טלוויזיה, אינטרנט)"
+- Israeli comms carriers (פרטנר, סלקום, פלאפון, הוט, בזק, יס) sell BOTH mobile and home services. If the line mentions fiber/internet/TV/landline (סיבים, אינטרנט, טלוויזיה, קו ביתי, bezeq/yes/HOT home plans) → "תקשורת ביתית (טלפון, טלוויזיה, אינטרנט)". Only a plain mobile-carrier charge with no home-service indication → "טלפון נייד".
 - pharmacy / HMO / clinic / doctor → "הוצאות רפואיות חריגות"
 - clothing / footwear → "הלבשה"
 - barber / hair salon → "תספורת"
