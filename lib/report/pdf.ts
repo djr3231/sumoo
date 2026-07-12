@@ -250,11 +250,16 @@ export async function buildReportPdfBundle(
     const gid = metrics.sheetId;
     const sumPx = (arr: number[], count: number) => arr.slice(0, count).reduce((s, n) => s + n, 0);
 
-    // Content extent = the VALUE extent of the already-fetched grid. Trailing
-    // formatting-only rows/cols would extend the real print extent — accepted
-    // risk; calibrated at E2E via the ALIGN_* constants below.
-    const usedRows = grid.length;
-    const usedCols = grid.reduce((m, r) => Math.max(m, r.length), 0);
+    // Content extent = the VALUE extent of the already-fetched grid, extended
+    // through the signature columns/row: merged-cell values live in the top-
+    // left cell, so column H (the merge's right half) can hold no value in any
+    // row and would otherwise be excluded — which broke the RTL mirror once
+    // (x pushed off-page, E2E 2026-07-13).
+    const usedRows = Math.max(grid.length, signatureRow + 1);
+    const usedCols = Math.max(
+      grid.reduce((m, r) => Math.max(m, r.length), 0),
+      COL.signatureRight + 1,
+    );
     const contentWpx = sumPx(metrics.colPx, usedCols);
     const contentHpx = sumPx(metrics.rowPx, usedRows);
 
@@ -263,12 +268,12 @@ export async function buildReportPdfBundle(
     const yPx = sumPx(metrics.rowPx, signatureRow); // Σ rowPx[0..row-1]
     const hPx = metrics.rowPx[signatureRow] ?? 0;
 
-    // RTL mirror REMOVED (E2E 2026-07-13): mirroring pushed x negative when the
-    // value-grid width under-measured the form → signature landed off-page and
-    // vanished. The earlier "looked correct" observation was a manually-embedded
-    // test image in the sheet, not our stamp. x stays measured-from-left (on
-    // page); re-add a mirror only if E2E shows the stamp on the wrong side.
-    // metrics.rightToLeft is still available if that calibration is needed.
+    // The export renders RTL sheets mirrored (column A at the RIGHT edge), so
+    // the from-left x must be mirrored. Verified against a real export
+    // (E2E 2026-07-13): the unmirrored stamp landed at ~75% from left — in the
+    // date area, the exact mirror image of its G:H target. The earlier vanish
+    // was the extent under-measure fixed above, not the mirror direction.
+    if (metrics.rightToLeft) xPx = contentWpx - (xPx + wPx);
 
     // scale=4 (fit-to-page) shrinks content by a computable factor:
     // px→pt is 0.75 at 100% (96dpi→72pt); printable area = A4 − 0.25in margins.
@@ -294,10 +299,18 @@ export async function buildReportPdfBundle(
     const page = doc.getPage(0);
     const sigBuffer = decodeSignature(args.signaturePngBase64);
     const sigImage = isPng(sigBuffer) ? await doc.embedPng(sigBuffer) : await doc.embedJpg(sigBuffer);
-    const fit = fitCentered(sigImage.width, sigImage.height, boxWPt, boxHPt);
-    // pdf-lib's origin is bottom-left; boxYTopPt is measured from the page
-    // TOP, so convert: y = pageHeight - boxYTopPt - boxHeight (+ centering offset).
-    const pageY = page.getHeight() - boxYTopPt - boxHPt + fit.dy;
+    // A signature must straddle its line, not fit inside the one-row cell —
+    // one row is ~10pt after the fit factor, which rendered the stamp as a
+    // microscopic squiggle (E2E 2026-07-13). Give it three row-heights of
+    // vertical room, bottom-anchored to the cell bottom so the strokes sit ON
+    // the signature line and rise above it.
+    const SIG_ROWS = 3;
+    const sigBoxHPt = boxHPt * SIG_ROWS;
+    const sigBoxYTopPt = boxYTopPt + boxHPt - sigBoxHPt;
+    const fit = fitCentered(sigImage.width, sigImage.height, boxWPt, sigBoxHPt);
+    // pdf-lib's origin is bottom-left; sigBoxYTopPt is measured from the page
+    // TOP, so convert: y = pageHeight - top - height (+ centering offset).
+    const pageY = page.getHeight() - sigBoxYTopPt - sigBoxHPt + fit.dy;
     page.drawImage(sigImage, {
       x: boxXPt + fit.dx,
       y: pageY,
