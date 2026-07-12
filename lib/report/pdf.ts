@@ -18,7 +18,6 @@ import {
   downloadDriveFile,
   ensureDriveFolder,
   exportSheetTabPdf,
-  findDriveFileInFolder,
   getAllReceipts,
   getSheetGrid,
   getSheetTabMetrics,
@@ -336,9 +335,11 @@ export async function buildReportPdfBundle(
     emit({ stage: "upload" });
     const pdfBytes = await doc.save();
     const pdfBuffer = Buffer.from(pdfBytes);
-    const pdfName = `${reportName}.pdf`;
-    const existingPdfId = await findDriveFileInFolder(accessToken, args.folders.periodId, pdfName);
-    if (existingPdfId) await deleteDriveFile(accessToken, existingPdfId);
+    // Every issued version is kept (no overwrite): the filename is prefixed with
+    // the filer's name. Strip path separators the name must not contain in a
+    // Drive filename; a same-named file just co-exists as a distinct Drive id.
+    const safeName = args.personal.name.replace(/[\\/]/g, " ").trim();
+    const pdfName = `${safeName}- ${reportName}.pdf`;
     const uploaded = await uploadFileToDrive(
       accessToken,
       args.folders.periodId,
