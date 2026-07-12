@@ -71,7 +71,9 @@ const ANCHOR = {
   name: 'בעניין: היחיד/ה',
   caseNumber: "מס' תיק ממונה",
   address: "כתובת עדכנית",
-  phone: "טלפון",
+  // Exact label (matches PERSONAL_DETAIL_LABELS): bare "טלפון" also matches an
+  // earlier cell higher in the form, so anchor on the specific phone label.
+  phone: "טלפון היחיד/ה",
   signature: "חתימת היחיד/ה",
 } as const;
 const COL = { name: 2, caseNumber: 6, address: 2, phone: 6, date: 2, signatureLeft: 6, signatureRight: 7 } as const; // C/G/C/G/C, G:H
@@ -235,11 +237,12 @@ export async function buildReportPdfBundle(
     const yPx = sumPx(metrics.rowPx, signatureRow); // Σ rowPx[0..row-1]
     const hPx = metrics.rowPx[signatureRow] ?? 0;
 
-    // RTL sheets may export with column A on the RIGHT — mirror the x origin.
-    // CALIBRATION NOTE (user evidence 2026-07-12): at scale=1 the UNMIRRORED x
-    // looked correct, so the export may not mirror at all. If E2E shows the
-    // signature on the wrong side, delete this one line (see design spec).
-    if (metrics.rightToLeft) xPx = contentWpx - (xPx + wPx);
+    // RTL mirror REMOVED (E2E 2026-07-13): mirroring pushed x negative when the
+    // value-grid width under-measured the form → signature landed off-page and
+    // vanished. The earlier "looked correct" observation was a manually-embedded
+    // test image in the sheet, not our stamp. x stays measured-from-left (on
+    // page); re-add a mirror only if E2E shows the stamp on the wrong side.
+    // metrics.rightToLeft is still available if that calibration is needed.
 
     // scale=4 (fit-to-page) shrinks content by a computable factor:
     // px→pt is 0.75 at 100% (96dpi→72pt); printable area = A4 − 0.25in margins.
