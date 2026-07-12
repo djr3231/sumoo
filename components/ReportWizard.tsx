@@ -32,6 +32,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { MatchWorkbench } from "@/components/report/MatchWorkbench";
+import { PdfExportDialog } from "@/components/PdfExportDialog";
+import type { PersonalDetails } from "@/lib/report/pdf";
 import { Eye } from "lucide-react";
 import {
   Tooltip,
@@ -408,6 +410,14 @@ export function ReportWizard() {
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [householdSize, setHouseholdSize] = useState<number | null>(null);
+  // PDF export (transient — deliberately NOT part of WizardProgressState /
+  // serializeProgress: personal details + signature must never be persisted).
+  const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfResult, setPdfResult] = useState<{ url: string; skippedFiles: string[] } | null>(
+    null,
+  );
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   const canCreate = pair !== null && !creating;
 
@@ -1010,6 +1020,45 @@ export function ReportWizard() {
       setGenerateError((e as Error).message);
     } finally {
       setGenerating(false);
+    }
+  }
+
+  // Step 6: issue the signed PDF bundle. `personal`/`signaturePngBase64` come
+  // from the dialog's own state and are forwarded straight to the API —
+  // never stored in wizard state or logged (see PRIVACY note in lib/report/pdf.ts).
+  async function handlePdfExport(payload: { personal: PersonalDetails; signaturePngBase64: string }) {
+    if (!pair || !created || !generated) return;
+    setPdfBusy(true);
+    setPdfError(null);
+    try {
+      const attachedReceiptFileNames = Array.from(
+        new Set(
+          expenses
+            .filter((e) => isExpenseIncluded(e.lineId) && e.receipt)
+            .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""))
+            .map((e) => e.receipt as string),
+        ),
+      );
+      const res = await fetch("/api/report/pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          period: { year, month1: pair.m1, month2: pair.m2, folderName: created.folderName },
+          folders: created.folders,
+          reportId: generated.reportId,
+          personal: payload.personal,
+          signaturePngBase64: payload.signaturePngBase64,
+          attachedReceiptFileNames,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setPdfResult({ url: data.pdf.url, skippedFiles: data.skippedFiles ?? [] });
+      setPdfDialogOpen(false);
+    } catch (e) {
+      setPdfError((e as Error).message);
+    } finally {
+      setPdfBusy(false);
     }
   }
 
@@ -2463,9 +2512,20 @@ export function ReportWizard() {
               </Section>
 
               <div className="space-y-3">
-                <Button onClick={generateReport} disabled={generating}>
-                  {generating ? "מפיק…" : generated !== null ? "הפק מחדש" : "הפק דוח"}
-                </Button>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <Button onClick={generateReport} disabled={generating}>
+                    {generating ? "מפיק…" : generated !== null ? "הפק מחדש" : "הפק דוח"}
+                  </Button>
+                  {generated !== null ? (
+                    <Button
+                      variant="outline"
+                      type="button"
+                      onClick={() => setPdfDialogOpen(true)}
+                    >
+                      נפק PDF
+                    </Button>
+                  ) : null}
+                </div>
 
                 {generated ? (
                   <div className="space-y-1 text-sm">
@@ -2496,6 +2556,33 @@ export function ReportWizard() {
                     הפקת הדוח נכשלה: {generateError}
                   </p>
                 ) : null}
+
+                {pdfResult ? (
+                  <div className="space-y-1 text-sm">
+                    <p>ה-PDF הופק בהצלחה</p>
+                    <a href={pdfResult.url} target="_blank" rel="noreferrer" className="underline">
+                      קובץ ה-PDF
+                    </a>
+                    {pdfResult.skippedFiles.length > 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        קבצים שלא צורפו: {pdfResult.skippedFiles.join(", ")}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {pdfError ? (
+                  <p className="text-sm text-destructive">
+                    הנפקת ה-PDF נכשלה: {pdfError}
+                  </p>
+                ) : null}
+
+                <PdfExportDialog
+                  open={pdfDialogOpen}
+                  onOpenChange={setPdfDialogOpen}
+                  busy={pdfBusy}
+                  onSubmit={handlePdfExport}
+                />
               </div>
             </div>
           )}
