@@ -198,27 +198,47 @@ export async function buildReportPdfBundle(
       "USER_ENTERED",
     );
 
-    // Stage 4: signature box geometry (pixels → PDF points). rowPx/colPx are
-    // 0-based arrays; the scanned row is used directly (no +1 — unlike the
-    // A1 write targets above, this indexes into a plain array, not a sheet
-    // row number).
+    // Stage 4: signature box geometry (pixels → PDF points, under fit-to-page).
+    // rowPx/colPx are 0-based arrays; the scanned row indexes them directly.
     const metrics = await getSheetTabMetrics(accessToken, tempId, reportTab);
     const gid = metrics.sheetId;
     const sumPx = (arr: number[], count: number) => arr.slice(0, count).reduce((s, n) => s + n, 0);
-    const xPx = sumPx(metrics.colPx, COL.signatureLeft); // Σ colPx[0..5]
+
+    // Content extent = the VALUE extent of the already-fetched grid. Trailing
+    // formatting-only rows/cols would extend the real print extent — accepted
+    // risk; calibrated at E2E via the ALIGN_* constants below.
+    const usedRows = grid.length;
+    const usedCols = grid.reduce((m, r) => Math.max(m, r.length), 0);
+    const contentWpx = sumPx(metrics.colPx, usedCols);
+    const contentHpx = sumPx(metrics.rowPx, usedRows);
+
+    let xPx = sumPx(metrics.colPx, COL.signatureLeft); // Σ colPx[0..5]
     const wPx = (metrics.colPx[COL.signatureLeft] ?? 0) + (metrics.colPx[COL.signatureRight] ?? 0);
     const yPx = sumPx(metrics.rowPx, signatureRow); // Σ rowPx[0..row-1]
     const hPx = metrics.rowPx[signatureRow] ?? 0;
 
-    // 96dpi → 72pt at scale=1 (matches exportSheetTabPdf's scale=1 + 0.25in
-    // margins). This is the E2E calibration point: if the rendered PDF shows
-    // an offset, adjust ONLY PAGE_MARGIN_PT (or this 0.75 factor), never the
-    // scan logic above.
+    // RTL sheets may export with column A on the RIGHT — mirror the x origin.
+    // CALIBRATION NOTE (user evidence 2026-07-12): at scale=1 the UNMIRRORED x
+    // looked correct, so the export may not mirror at all. If E2E shows the
+    // signature on the wrong side, delete this one line (see design spec).
+    if (metrics.rightToLeft) xPx = contentWpx - (xPx + wPx);
+
+    // scale=4 (fit-to-page) shrinks content by a computable factor:
+    // px→pt is 0.75 at 100% (96dpi→72pt); printable area = A4 − 0.25in margins.
     const PX_TO_PT = 0.75;
-    const boxXPt = PAGE_MARGIN_PT + xPx * PX_TO_PT;
-    const boxYTopPt = PAGE_MARGIN_PT + yPx * PX_TO_PT;
-    const boxWPt = wPx * PX_TO_PT;
-    const boxHPt = hPx * PX_TO_PT;
+    const printableW = A4_WIDTH_PT - 2 * PAGE_MARGIN_PT;
+    const printableH = A4_HEIGHT_PT - 2 * PAGE_MARGIN_PT;
+    const s = Math.min(printableW / (contentWpx * PX_TO_PT), printableH / (contentHpx * PX_TO_PT));
+
+    // Slack-axis alignment (does Sheets center the axis that doesn't bind?) is
+    // undocumented. These are the E2E calibration constants — if the stamp
+    // shows a uniform offset, adjust ONLY these two (default 0 = top-left).
+    const ALIGN_X_PT = 0;
+    const ALIGN_Y_PT = 0;
+    const boxXPt = PAGE_MARGIN_PT + ALIGN_X_PT + xPx * PX_TO_PT * s;
+    const boxYTopPt = PAGE_MARGIN_PT + ALIGN_Y_PT + yPx * PX_TO_PT * s;
+    const boxWPt = wPx * PX_TO_PT * s;
+    const boxHPt = hPx * PX_TO_PT * s;
 
     // Stage 5: export the temp copy's report tab to PDF and stamp the signature.
     const reportPdfBuffer = await exportSheetTabPdf(accessToken, tempId, gid);

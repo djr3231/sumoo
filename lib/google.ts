@@ -946,25 +946,31 @@ export async function getSheetTabMetrics(
   accessToken: string,
   spreadsheetId: string,
   tabTitle: string,
-): Promise<{ sheetId: number; rowPx: number[]; colPx: number[] }> {
+): Promise<{ sheetId: number; rightToLeft: boolean; rowPx: number[]; colPx: number[] }> {
   const sheets = sheetsClient(accessToken);
   const res = await sheets.spreadsheets.get({
     spreadsheetId,
     fields:
-      "sheets(properties(sheetId,title),data(rowMetadata(pixelSize),columnMetadata(pixelSize)))",
+      "sheets(properties(sheetId,title,rightToLeft),data(rowMetadata(pixelSize),columnMetadata(pixelSize)))",
   });
   const sheet = (res.data.sheets ?? []).find((s) => s.properties?.title === tabTitle);
   if (!sheet) throw new Error(`Sheet tab not found: ${tabTitle}`);
   const data = sheet.data?.[0];
   const rowPx = (data?.rowMetadata ?? []).map((m) => m.pixelSize ?? DEFAULT_ROW_PX);
   const colPx = (data?.columnMetadata ?? []).map((m) => m.pixelSize ?? DEFAULT_COL_PX);
-  return { sheetId: sheet.properties!.sheetId!, rowPx, colPx };
+  return {
+    sheetId: sheet.properties!.sheetId!,
+    rightToLeft: sheet.properties?.rightToLeft ?? false,
+    rowPx,
+    colPx,
+  };
 }
 
 // Exports one tab as a PDF via Sheets' export endpoint (not part of the
 // Sheets/Drive API surface — no googleapis method covers it, hence the raw
-// fetch). scale=1 pins 100% zoom so page geometry is deterministic across
-// tabs of different sizes.
+// fetch). scale=4 = fit-to-page: matches the Sheets print-dialog default the
+// user verified (התאמה לגודל הדף) — the report tab is designed to print as
+// exactly one page. scale=1 (100%) breaks it across ~3 pages.
 export async function exportSheetTabPdf(
   accessToken: string,
   spreadsheetId: string,
@@ -972,7 +978,7 @@ export async function exportSheetTabPdf(
 ): Promise<Buffer> {
   const url =
     `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=pdf&gid=${gid}` +
-    `&size=A4&portrait=true&scale=1&sheetnames=false&printtitle=false&pagenum=false&gridlines=false` +
+    `&size=A4&portrait=true&scale=4&sheetnames=false&printtitle=false&pagenum=false&gridlines=false` +
     `&top_margin=0.25&bottom_margin=0.25&left_margin=0.25&right_margin=0.25`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
