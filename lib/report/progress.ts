@@ -58,6 +58,12 @@ export interface WizardProgressState {
   // here rather than re-derived, since the fileName alone on `.receipt`
   // cannot recover the receipt `id` after the fact.
   attachments: ReceiptAttachment[];
+  // Step-6 output: ids/urls of the generated artifacts (null until first generation).
+  generated: {
+    workingId: string; workingUrl: string;
+    reportId: string; reportUrl: string;
+    generatedAt: string; // ISO
+  } | null;
 }
 
 // ----------------------------------------------------------------------------
@@ -83,6 +89,11 @@ export interface ReportProgress {
   dismissedIds: string[];
   receiptLinks: Record<string, string>;
   attachments: ReceiptAttachment[];
+  generated: {
+    workingId: string; workingUrl: string;
+    reportId: string; reportUrl: string;
+    generatedAt: string; // ISO
+  } | null;
 }
 
 // ----------------------------------------------------------------------------
@@ -109,6 +120,7 @@ export function serializeProgress(state: WizardProgressState): ReportProgress {
     dismissedIds: Array.from(state.dismissedIds),
     receiptLinks: state.receiptLinks,
     attachments: state.attachments,
+    generated: state.generated,
   };
 }
 
@@ -131,5 +143,6 @@ export function hydrateProgress(progress: ReportProgress): WizardProgressState {
     dismissedIds: new Set(progress.dismissedIds),
     receiptLinks: progress.receiptLinks,
     attachments: progress.attachments,
+    generated: progress.generated ?? null,
   };
 }

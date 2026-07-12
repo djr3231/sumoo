@@ -41,13 +41,18 @@ import {
 } from "@/components/ui/tooltip";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import {
+  DEFAULT_HOUSEHOLD_SIZE,
+  HEBREW_MONTHS,
   GOV_EXPENSE_CATEGORIES,
   GOV_EXPENSE_CATEGORY,
+  GOV_INCOME_CATEGORIES,
   PAYMENT_METHOD,
+  formatFoodCategory,
   type GovExpenseCategory,
   type Receipt,
 } from "@/lib/types";
 import { matchReceiptsToLines, receiptLineDistance } from "@/lib/match";
+import { buildReportRollup, OTHER_INCOME_LABEL } from "@/lib/report/rollup";
 import type { ReportFolders } from "@/lib/report/period";
 import type { CategorizedExpense, ProcessResult } from "@/lib/report/process";
 import type { ExpenseSource } from "@/lib/report/reconcile";
@@ -396,6 +401,14 @@ export function ReportWizard() {
     dir: "asc" | "desc";
   }>({ key: "month", dir: "asc" });
 
+  // Step 6 (generate report).
+  const [generated, setGenerated] = useState<WizardProgressState["generated"]>(
+    null,
+  );
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [householdSize, setHouseholdSize] = useState<number | null>(null);
+
   const canCreate = pair !== null && !creating;
 
   async function createPeriod() {
@@ -443,6 +456,7 @@ export function ReportWizard() {
           setDismissedIds(hydrated.dismissedIds);
           setReceiptLinks(hydrated.receiptLinks);
           setAttachments(hydrated.attachments);
+          setGenerated(hydrated.generated);
           setResumedStep(hydrated.step);
           setStep(hydrated.step);
           setMaxStep(hydrated.maxStep);
@@ -884,6 +898,7 @@ export function ReportWizard() {
     dismissedIds,
     receiptLinks,
     attachments,
+    generated,
   };
   const {
     status: progressStatus,
@@ -902,11 +917,101 @@ export function ReportWizard() {
   // guarantees the persisted snapshot reflects the post-update state (e.g.
   // the step actually displayed), not the pre-transition one. `result` is
   // included so the end of processDocs (which flips `enabled` true) also
-  // triggers an immediate save rather than waiting for the debounce.
+  // triggers an immediate save rather than waiting for the debounce. `generated`
+  // is included so a successful report generation is persisted right away —
+  // otherwise a tab closed within the debounce window would lose the record.
   useEffect(() => {
     saveProgressNow();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally only re-fires on step/result/matchRan/matchGeneration; saveProgressNow reads the latest state via its own ref.
-  }, [step, result, matchRan, matchGeneration]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally only re-fires on step/result/matchRan/matchGeneration/generated; saveProgressNow reads the latest state via its own ref.
+  }, [step, result, matchRan, matchGeneration, generated]);
+
+  // Step 6 (generate): fetch the saved household size once on entering the
+  // step, so the preview's Food row and the generate payload can fall back to
+  // it consistently with the server (which reads the same setting).
+  useEffect(() => {
+    if (step !== 5) return;
+    let cancelled = false;
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((json: { householdSize?: number | null }) => {
+        if (!cancelled) setHouseholdSize(json.householdSize ?? DEFAULT_HOUSEHOLD_SIZE);
+      })
+      .catch(() => {
+        if (!cancelled) setHouseholdSize((prev) => prev ?? DEFAULT_HOUSEHOLD_SIZE);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [step]);
+
+  // Preview rollup (Task 3's pure buildReportRollup, used client-side): what
+  // the user sees in step 6 is exactly what /api/report/generate will write,
+  // since both share this function.
+  const rollup = useMemo(() => {
+    if (!result || !pair) return null;
+    return buildReportRollup({
+      months: [pair.m1, pair.m2],
+      expenses,
+      income: result.income,
+      transfers: result.transfers,
+      reviewCredits: result.reviewCredits,
+      expenseIncluded,
+      incomeIncluded,
+      transferInclude,
+      creditRoute,
+      householdSize: householdSize ?? DEFAULT_HOUSEHOLD_SIZE,
+    });
+  }, [
+    result,
+    pair,
+    expenses,
+    expenseIncluded,
+    incomeIncluded,
+    transferInclude,
+    creditRoute,
+    householdSize,
+  ]);
+
+  // Step 6: POST the same rollupInput (minus months/householdSize, which the
+  // server injects from the period + saved settings) to /api/report/generate.
+  async function generateReport() {
+    if (!result || !pair || !created || !rollup) return;
+    setGenerating(true);
+    setGenerateError(null);
+    try {
+      const res = await fetch("/api/report/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          period: { year, month1: pair.m1, month2: pair.m2, folderName: created.folderName },
+          folders: created.folders,
+          rollupInput: {
+            expenses,
+            income: result.income,
+            transfers: result.transfers,
+            reviewCredits: result.reviewCredits,
+            expenseIncluded,
+            incomeIncluded,
+            transferInclude,
+            creditRoute,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setGenerated({
+        workingId: data.working.id,
+        workingUrl: data.working.url,
+        reportId: data.report.id,
+        reportUrl: data.report.url,
+        generatedAt: new Date().toISOString(),
+      });
+    } catch (e) {
+      setGenerateError((e as Error).message);
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   // Absent key = included by default (expense/income lines start included).
   const isExpenseIncluded = (lineId: string) => expenseIncluded[lineId] ?? true;
@@ -2251,10 +2356,147 @@ export function ReportWizard() {
                 עבד/י מסמכים תחילה בשלב פירוק וסיווג.
               </p>
             )
+          ) : !result || !rollup ? (
+            <p className="text-sm text-muted-foreground">
+              יש לעבד מסמכים תחילה בשלב פירוק וסיווג.
+            </p>
           ) : (
-            <div className="space-y-2 text-sm text-muted-foreground">
-              {created ? <p>תיקיית הדו&quot;ח: {created.folderName}</p> : null}
-              <p>שלב זה ייבנה בהמשך.</p>
+            <div className="space-y-6">
+              <Section title="תצוגה מקדימה">
+                <div className="space-y-6">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>הכנסות</TableHead>
+                        <TableHead>{`חודש ${HEBREW_MONTHS[rollup.months[0] - 1]}`}</TableHead>
+                        <TableHead>{`חודש ${HEBREW_MONTHS[rollup.months[1] - 1]}`}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {GOV_INCOME_CATEGORIES.map((c) => {
+                        const [v1, v2] = rollup.incomeByCategory[c];
+                        return (
+                          <TableRow key={c}>
+                            <TableCell>{c}</TableCell>
+                            <TableCell className="tabular-nums">
+                              {v1 === 0 ? "" : formatILS(v1)}
+                            </TableCell>
+                            <TableCell className="tabular-nums">
+                              {v2 === 0 ? "" : formatILS(v2)}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                      {rollup.otherIncome[0] !== 0 || rollup.otherIncome[1] !== 0 ? (
+                        <TableRow>
+                          <TableCell>{OTHER_INCOME_LABEL}</TableCell>
+                          <TableCell className="tabular-nums">
+                            {rollup.otherIncome[0] === 0
+                              ? ""
+                              : formatILS(rollup.otherIncome[0])}
+                          </TableCell>
+                          <TableCell className="tabular-nums">
+                            {rollup.otherIncome[1] === 0
+                              ? ""
+                              : formatILS(rollup.otherIncome[1])}
+                          </TableCell>
+                        </TableRow>
+                      ) : null}
+                      <TableRow className="font-semibold">
+                        <TableCell>{`סה"כ`}</TableCell>
+                        <TableCell className="tabular-nums">
+                          {formatILS(rollup.incomeTotals[0])}
+                        </TableCell>
+                        <TableCell className="tabular-nums">
+                          {formatILS(rollup.incomeTotals[1])}
+                        </TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>הוצאות</TableHead>
+                        <TableHead>{`חודש ${HEBREW_MONTHS[rollup.months[0] - 1]}`}</TableHead>
+                        <TableHead>{`חודש ${HEBREW_MONTHS[rollup.months[1] - 1]}`}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {GOV_EXPENSE_CATEGORIES.map((c) => {
+                        const [v1, v2] = rollup.expenseByCategory[c];
+                        const label =
+                          c === GOV_EXPENSE_CATEGORY.Food
+                            ? formatFoodCategory(householdSize ?? DEFAULT_HOUSEHOLD_SIZE)
+                            : c;
+                        return (
+                          <TableRow key={c}>
+                            <TableCell>{label}</TableCell>
+                            <TableCell className="tabular-nums">
+                              {v1 === 0 ? "" : formatILS(v1)}
+                            </TableCell>
+                            <TableCell className="tabular-nums">
+                              {v2 === 0 ? "" : formatILS(v2)}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                      <TableRow className="font-semibold">
+                        <TableCell>{`סה"כ`}</TableCell>
+                        <TableCell className="tabular-nums">
+                          {formatILS(rollup.expenseTotals[0])}
+                        </TableCell>
+                        <TableCell className="tabular-nums">
+                          {formatILS(rollup.expenseTotals[1])}
+                        </TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </div>
+
+                <p className="text-sm text-muted-foreground">
+                  {`מס' נפשות: ${householdSize ?? DEFAULT_HOUSEHOLD_SIZE}`}{" "}
+                  <Link href="/settings" className="underline">
+                    שינוי בהגדרות
+                  </Link>
+                </p>
+              </Section>
+
+              <div className="space-y-3">
+                <Button onClick={generateReport} disabled={generating}>
+                  {generating ? "מפיק…" : generated !== null ? "הפק מחדש" : "הפק דוח"}
+                </Button>
+
+                {generated ? (
+                  <div className="space-y-1 text-sm">
+                    <p>הדוח הופק בהצלחה</p>
+                    <p className="flex flex-wrap gap-4">
+                      <a
+                        href={generated.workingUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline"
+                      >
+                        גיליון עבודה
+                      </a>
+                      <a
+                        href={generated.reportUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline"
+                      >
+                        דוח דו-חודשי
+                      </a>
+                    </p>
+                  </div>
+                ) : null}
+
+                {generateError ? (
+                  <p className="text-sm text-destructive">
+                    הפקת הדוח נכשלה: {generateError}
+                  </p>
+                ) : null}
+              </div>
             </div>
           )}
         </CardContent>

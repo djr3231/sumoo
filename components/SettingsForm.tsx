@@ -6,18 +6,28 @@ import { Label } from "./ui/label";
 import { Badge } from "./ui/badge";
 import { Skeleton } from "./ui/Skeleton";
 import { Alert, AlertDescription } from "./ui/Alert";
+import { DriveFilePicker, type FileSelection } from "./DriveFilePicker";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 interface SettingsResponse {
   myCardsLast4?: string[];
+  householdSize?: number | null;
+  reportTemplate?: { id: string; name: string } | null;
   error?: string;
+}
+
+function toReportTemplate(t: FileSelection): { id: string; name: string } | null {
+  return t.kind === "drive" ? { id: t.id, name: t.name } : null;
 }
 
 export function SettingsForm() {
   const [cards, setCards] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [draftError, setDraftError] = useState<string | null>(null);
+  const [householdSize, setHouseholdSize] = useState<number | null>(null);
+  const [householdDraft, setHouseholdDraft] = useState("");
+  const [template, setTemplate] = useState<FileSelection>({ kind: "default" });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,6 +41,15 @@ export function SettingsForm() {
         if (!alive) return;
         if (!res.ok) { setError(json.error || `HTTP ${res.status}`); return; }
         setCards(Array.isArray(json.myCardsLast4) ? json.myCardsLast4 : []);
+        const hs = typeof json.householdSize === "number" ? json.householdSize : null;
+        setHouseholdSize(hs);
+        setHouseholdDraft(hs != null ? String(hs) : "");
+        const rt = json.reportTemplate;
+        setTemplate(
+          rt && typeof rt.id === "string" && typeof rt.name === "string"
+            ? { kind: "drive", id: rt.id, name: rt.name }
+            : { kind: "default" },
+        );
       } catch (e) {
         if (!alive) return;
         setError((e as Error).message);
@@ -41,14 +60,28 @@ export function SettingsForm() {
     return () => { alive = false; };
   }, []);
 
-  async function persist(newCards: string[]) {
+  async function persist(overrides?: {
+    cards?: string[];
+    householdSize?: number | null;
+    template?: FileSelection;
+  }) {
+    const nextCards = overrides?.cards ?? cards;
+    const nextHouseholdSize =
+      overrides && "householdSize" in overrides
+        ? (overrides.householdSize ?? null)
+        : householdSize;
+    const nextTemplate = overrides?.template ?? template;
     setSaving(true);
     setError(null);
     try {
       const res = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ myCardsLast4: newCards }),
+        body: JSON.stringify({
+          myCardsLast4: nextCards,
+          householdSize: nextHouseholdSize,
+          reportTemplate: toReportTemplate(nextTemplate),
+        }),
       });
       const json = (await res.json()) as SettingsResponse;
       if (!res.ok) { setError(json.error || `HTTP ${res.status}`); return; }
@@ -68,13 +101,28 @@ export function SettingsForm() {
     setCards(next);
     setDraft("");
     setDraftError(null);
-    await persist(next);
+    await persist({ cards: next });
   }
 
   async function removeAndSave(c: string) {
     const next = cards.filter((x) => x !== c);
     setCards(next);
-    await persist(next);
+    await persist({ cards: next });
+  }
+
+  async function commitHouseholdSize() {
+    const n = Number(householdDraft);
+    const valid = householdDraft !== "" && Number.isInteger(n) && n >= 1 && n <= 20;
+    const next = valid ? n : null;
+    setHouseholdDraft(next != null ? String(next) : "");
+    if (next === householdSize) return;
+    setHouseholdSize(next);
+    await persist({ householdSize: next });
+  }
+
+  async function changeTemplateAndSave(next: FileSelection) {
+    setTemplate(next);
+    await persist({ template: next });
   }
 
   if (loading) {
@@ -153,6 +201,38 @@ export function SettingsForm() {
             הוסף
           </Button>
         </div>
+      </div>
+
+      <div className="space-y-3">
+        <Label htmlFor="household-size-input" className="text-base font-semibold">
+          מס&apos; נפשות בבית
+        </Label>
+        <p className="text-sm text-muted-foreground">
+          מספר הנפשות שיירשם בשורת &quot;כלכלה (מזון)&quot; בדוח.
+        </p>
+        <Input
+          id="household-size-input"
+          value={householdDraft}
+          onChange={(e) => setHouseholdDraft(e.target.value.replace(/\D/g, "").slice(0, 2))}
+          onBlur={commitHouseholdSize}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { e.preventDefault(); commitHouseholdSize(); }
+          }}
+          inputMode="numeric"
+          placeholder="3"
+          disabled={saving}
+          className="w-24 font-mono"
+        />
+      </div>
+
+      <div className="space-y-3">
+        <Label className="text-base font-semibold">
+          תבנית הדוח הדו-חודשי
+        </Label>
+        <p className="text-sm text-muted-foreground">
+          קובץ התבנית שממנו יופק הדוח. ברירת מחדל: התבנית המובנית.
+        </p>
+        <DriveFilePicker value={template} onChange={changeTemplateAndSave} disabled={saving} />
       </div>
 
       {error && (
