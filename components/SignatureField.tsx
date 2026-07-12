@@ -11,6 +11,11 @@ import { cn } from "@/lib/utils";
 const CANVAS_WIDTH = 400;
 const CANVAS_HEIGHT = 150;
 const STROKE_WIDTH = 2;
+// Signature ink. Deliberately a fixed blue (not a theme token): a signature is
+// ink-on-paper and must read the same in light/dark. The canvas PIXELS stay
+// transparent (only the ink is drawn), so the stamped PNG carries just the blue
+// strokes over the report — the light pad below is a CSS-only visual surface.
+const INK_COLOR = "#1e3a8a";
 
 type Mode = "draw" | "upload";
 
@@ -43,8 +48,8 @@ export function SignatureField({ value, onChange }: SignatureFieldProps) {
     ctx.scale(dpr, dpr);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    ctx.strokeStyle = "#000000";
-    ctx.fillStyle = "#000000";
+    ctx.strokeStyle = INK_COLOR;
+    ctx.fillStyle = INK_COLOR;
     ctx.lineWidth = STROKE_WIDTH;
     ctxRef.current = ctx;
   }, []);
@@ -189,7 +194,10 @@ export function SignatureField({ value, onChange }: SignatureFieldProps) {
         width={CANVAS_WIDTH}
         height={CANVAS_HEIGHT}
         className={cn(
-          "border border-border bg-background touch-none",
+          // White "paper" pad so the blue ink is visible in any theme. This is
+          // a CSS-only surface — the canvas pixel buffer stays transparent, so
+          // only the ink lands in the stamped signature PNG.
+          "border border-border bg-white touch-none",
           mode === "draw" ? "cursor-crosshair" : "cursor-default",
         )}
         style={{ width: CANVAS_WIDTH, height: CANVAS_HEIGHT }}
