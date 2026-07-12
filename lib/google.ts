@@ -2,9 +2,9 @@ import { getServerSession } from "next-auth";
 import { google, type sheets_v4, type drive_v3 } from "googleapis";
 import { authOptions } from "./auth";
 import {
-  DEFAULT_CATEGORY,
   DEFAULT_STORE_NAME,
   DOCUMENT_TYPE,
+  normalizeCategory,
   PAYMENT_METHOD,
   RECEIPT_HEADERS,
   SETTINGS_HEADERS,
@@ -438,7 +438,7 @@ function rowToReceipt(row: any[]): Receipt {
         ? null
         : Number(row[3]),
     date: row[4] ? String(row[4]) : null,
-    category: ((row[5] as any) || DEFAULT_CATEGORY) as Receipt["category"],
+    category: normalizeCategory(row[5] as string | undefined),
     documentType: ((row[6] as any) || DOCUMENT_TYPE.Receipt) as Receipt["documentType"],
     paymentMethod: ((row[7] as any) || PAYMENT_METHOD.Unknown) as Receipt["paymentMethod"],
     totalReceiptAmount:

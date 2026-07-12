@@ -166,10 +166,16 @@ Images may be rotated 90° (CW or CCW) or 180°. Always mentally rotate the imag
 - **Never** return footer text (website URL, phone number, "תודה רבה") as the store name.
 
 ## Categories
-The category list is **fixed**. Pick exactly one from this list — never invent a new one.
+The category list is **fixed** — it is the same 23-category list used by the
+government insolvency report. Pick exactly one from this list — never invent
+a new one. Most of the categories below are rare on photographed receipts
+(e.g. rent/mortgage/trustee payments are normally bank transfers, not
+receipts) — use "שונות" whenever nothing clearly fits.
 
+- "שכר דירה" — rent payment receipts.
+- "משכנתא" — mortgage payment receipts.
 - "מיסי עירייה" — ארנונה, municipal property tax bills.
-- "כלכלה (מזון) - מס' נפשות 3" — all food: supermarkets (שופרסל, רמי לוי, ויקטורי, יוחננוף, AM:PM, טיב טעם, מחסני השוק, יינות ביתן), small grocers, bakeries, neighborhood shops, restaurants, cafes, pizza, fast food.
+- "כלכלה (מזון)" — all food: supermarkets (שופרסל, רמי לוי, ויקטורי, יוחננוף, AM:PM, טיב טעם, מחסני השוק, יינות ביתן), small grocers, bakeries, neighborhood shops, restaurants, cafes, pizza, fast food.
 - "תקשורת ביתית (טלפון, טלוויזיה, אינטרנט)" — landline, internet, TV/cable bills (בזק, HOT, יס, סלקום TV, פרטנר TV).
 - "טלפון נייד" — mobile-phone bills only (פלאפון, סלקום, פרטנר, גולן טלקום, רמי לוי תקשורת, 019 mobile).
 - "גז" — cooking-gas suppliers (פזגז, סופרגז, אמישראגז, דור גז).
@@ -180,12 +186,15 @@ The category list is **fixed**. Pick exactly one from this list — never invent
 - "אחזקת רכב" — car-related: fuel (פז, סונול, דלק, ten, סדש), parking, garage, car wash, repairs, registration.
 - "חינוך ותרבות" — schools, courses, books, movies (סינמה סיטי, יס פלאנט), museums, attractions, theatre, lessons, חוגים.
 - "נסיעות" — travel and vacations (hotels, flights, trips, tour operators) — NOT daily public transport.
+- "תשלום חודשי לממונה" — payment receipts made out to the court-appointed insolvency trustee (כונס נכסים, ממונה).
 - "הוצאות רפואיות חריגות" — pharmacies (סופרפארם, בה"כל, ניו פארם), doctors, clinics, dental, optometrist, medical equipment.
 - "נסיעות בתחבורה ציבורית" — daily public transport: רב-קו, אגד, דן, מטרופולין, רכבת ישראל, מטרו, taxis (גט, יאנגו, מוניות).
 - "הוצאות טיפול בילדים עד גיל 3" — daycare, מעון, צהרון, babysitter, baby formula/diapers when clearly identified.
+- "תשלום מזונות לזכאים" — alimony/child-support payment receipts.
 - "תספורת" — barber, hair salon (מספרה).
-- 'עו"ד מייצג בהליך' — lawyer fees, legal representation invoices.
 - "שונות" — anything that doesn't fit any of the above, **and** anything you cannot confidently categorize. This is the catch-all — use it freely instead of guessing.
+- 'עו"ד' — lawyer fees, legal representation invoices.
+- "כלי בית ותחזוקה" — household goods, cleaning supplies, home-maintenance and repair items.
 
 ## confidence
 - high = all four fields (store, total amount, date, category) are confidently filled.
