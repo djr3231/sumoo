@@ -210,7 +210,11 @@ function scanBlockHeader(
 
 // Build every cell write for the report tab by scanning `grid` for labels.
 // Never hardcodes an A1 address — see module header.
-function buildReportWrites(grid: string[][], period: ReportPeriod, rollup: ReportRollup): { writes: CellWrite[]; totals: TotalsAnchors } {
+function buildReportWrites(
+  grid: string[][],
+  period: ReportPeriod,
+  rollup: ReportRollup,
+): { writes: CellWrite[]; totals: TotalsAnchors; dateWrite: CellWrite | null } {
   const writes: CellWrite[] = [];
   const forbiddenRows = new Set<number>();
   for (let r = 0; r < grid.length; r++) {
@@ -231,11 +235,16 @@ function buildReportWrites(grid: string[][], period: ReportPeriod, rollup: Repor
   set(monthsRow, monthsCol + 2, HEBREW_MONTHS[period.month2 - 1]);
   set(monthsRow, yearCol + 1, period.year);
 
-  // Date footer
+  // Date footer — kept OUT of `writes` (the RAW batch) and returned
+  // separately: generateGovReport writes it in its own tiny USER_ENTERED
+  // batch so it becomes a real date instead of RAW text with a leading
+  // apostrophe. Still honors the anonymity forbidden-row guard.
   const dateAnchor = findCell(grid, "תאריך:");
   if (!dateAnchor) throw new Error('Missing anchor: "תאריך:"');
   const [dateRow, dateCol] = dateAnchor;
-  set(dateRow, dateCol + 1, todayDDMMYYYY());
+  const dateWrite: CellWrite | null = forbiddenRows.has(dateRow)
+    ? null
+    : { row: dateRow, col: dateCol + 1, value: todayDDMMYYYY() };
 
   // Block boundaries: income header → expense header → date row
   const incomeHeaderRow = findRow(grid, "הכנסות היחיד/ה");
@@ -314,6 +323,7 @@ function buildReportWrites(grid: string[][], period: ReportPeriod, rollup: Repor
       expenseRow: expenseTotalsRow,
       expenseCols: expenseAnchors.rightCols,
     },
+    dateWrite,
   };
 }
 
@@ -338,6 +348,18 @@ async function generateGovReport(
     id,
     fill.writes.map((w) => ({ range: rangeFor(reportTab, w.row, w.col), values: [[w.value]] })),
   );
+
+  // Footer generation date, written separately as USER_ENTERED so Sheets
+  // parses the DD/MM/YYYY string as a real date (RAW would store it as text
+  // with a leading text-marker apostrophe). Everything else stays RAW.
+  if (fill.dateWrite) {
+    await batchWriteCells(
+      token,
+      id,
+      [{ range: rangeFor(reportTab, fill.dateWrite.row, fill.dateWrite.col), values: [[fill.dateWrite.value]] }],
+      "USER_ENTERED",
+    );
+  }
 
   // Formula-preserving totals read-back: only overwrite if the template's
   // SUM formula (or lack thereof) didn't already land on the right value.
@@ -397,7 +419,10 @@ async function fillDetailsTab(token: string, id: string, rollup: ReportRollup): 
   if (m2Lines.length > 0) {
     data.push({ range: `'${DETAILS_TAB}'!${colA1(month2Col)}${dataStartSheetRow}`, values: m2Lines.map((l) => [l.date, l.amount]) });
   }
-  if (data.length > 0) await batchWriteCells(token, id, data);
+  // USER_ENTERED so the DD/MM/YYYY date column becomes a real date (RAW
+  // would store it as text with a leading text-marker apostrophe); amounts
+  // are JS numbers and land as numbers either way, template ₪ format applies.
+  if (data.length > 0) await batchWriteCells(token, id, data, "USER_ENTERED");
 
   const grid2 = await getSheetGrid(token, id, DETAILS_TAB, true);
   const expected1 = r2(m1Lines.reduce((s, l) => s + l.amount, 0));

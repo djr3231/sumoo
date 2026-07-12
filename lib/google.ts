@@ -857,17 +857,22 @@ export async function getSheetGrid(
 }
 
 // Write many discrete ranges in ONE API call (quota-frugal; the report fill
-// is a single batch). RAW: numbers stay numbers (template cell formats apply
-// the ₪), strings are never reinterpreted (ARCHITECTURE.md §8.3).
+// is a single batch). RAW (default): numbers stay numbers (template cell
+// formats apply the ₪), strings are never reinterpreted (ARCHITECTURE.md
+// §8.3). Pass "USER_ENTERED" only for cells that must be parsed as real
+// values by Sheets — e.g. DD/MM/YYYY strings that should become real dates
+// instead of RAW-written text (which Sheets prefixes with a text-marker
+// apostrophe since it looks like a date).
 export async function batchWriteCells(
   accessToken: string,
   spreadsheetId: string,
   data: Array<{ range: string; values: (string | number)[][] }>,
+  valueInputOption: "RAW" | "USER_ENTERED" = "RAW",
 ): Promise<void> {
   const sheets = sheetsClient(accessToken);
   await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId,
-    requestBody: { valueInputOption: "RAW", data },
+    requestBody: { valueInputOption, data },
   });
 }
 
