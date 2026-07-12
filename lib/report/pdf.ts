@@ -52,6 +52,14 @@ export interface PdfExportResult {
   skippedFiles: string[]; // names that failed to append (e.g. encrypted PDFs)
 }
 
+// Progress event for the streaming route: stage + loop counters ONLY —
+// never file names, never personal values (privacy hard rule).
+export interface PdfProgress {
+  stage: "prepare" | "export" | "sources" | "receipts" | "move" | "upload";
+  done?: number; // 1-based, present inside the three file loops
+  total?: number;
+}
+
 // Approved Hebrew strings (reconstructed locally — see task brief "Names").
 const REPORT_FILE_PREFIX = "דוח דו-חודשי";
 const DOCS_SUBFOLDER = "מסמכים";
@@ -152,13 +160,23 @@ async function appendFileAsPages(doc: PDFDocument, buffer: Buffer, mimeType: str
 export async function buildReportPdfBundle(
   accessToken: string,
   args: PdfExportArgs,
+  onProgress?: (p: PdfProgress) => void,
 ): Promise<PdfExportResult> {
+  // A throwing progress listener must never break the bundle.
+  const emit = (p: PdfProgress) => {
+    try {
+      onProgress?.(p);
+    } catch {
+      /* ignore */
+    }
+  };
   const skippedFiles: string[] = [];
 
   // Stage 2: temp copy of the generated report Sheet — everything below runs
   // in try/finally so the temp copy is always cleaned up, even on failure.
   const reportName = `${REPORT_FILE_PREFIX} ${args.period.folderName}`;
   const tempName = `${reportName} (זמני)`;
+  emit({ stage: "prepare" });
   const tempId = await copyDriveFileAsSheet(accessToken, args.reportId, tempName, args.folders.periodId);
 
   try {
@@ -241,6 +259,7 @@ export async function buildReportPdfBundle(
     const boxHPt = hPx * PX_TO_PT * s;
 
     // Stage 5: export the temp copy's report tab to PDF and stamp the signature.
+    emit({ stage: "export" });
     const reportPdfBuffer = await exportSheetTabPdf(accessToken, tempId, gid);
     const doc = await PDFDocument.load(reportPdfBuffer);
     const page = doc.getPage(0);
@@ -259,7 +278,10 @@ export async function buildReportPdfBundle(
 
     // Stage 6: append source documents (bank statements / salary slips).
     const sourceFiles = await listDriveFolderImages(accessToken, args.folders.sourceId);
-    for (const f of sourceFiles) {
+    emit({ stage: "sources", total: sourceFiles.length });
+    for (let i = 0; i < sourceFiles.length; i++) {
+      const f = sourceFiles[i];
+      emit({ stage: "sources", done: i + 1, total: sourceFiles.length });
       try {
         const { buffer, mimeType } = await downloadDriveFile(accessToken, f.id);
         await appendFileAsPages(doc, buffer, mimeType);
@@ -280,7 +302,10 @@ export async function buildReportPdfBundle(
       }
       resolvedReceipts.push({ fileName, driveFileId });
     }
-    for (const r of resolvedReceipts) {
+    emit({ stage: "receipts", total: resolvedReceipts.length });
+    for (let i = 0; i < resolvedReceipts.length; i++) {
+      const r = resolvedReceipts[i];
+      emit({ stage: "receipts", done: i + 1, total: resolvedReceipts.length });
       try {
         const { buffer, mimeType } = await downloadDriveFile(accessToken, r.driveFileId);
         await appendFileAsPages(doc, buffer, mimeType);
@@ -293,7 +318,10 @@ export async function buildReportPdfBundle(
     // Runs AFTER the PDF bytes are assembled; per-file try/catch (a failed
     // move must not fail the bundle).
     const docsFolderId = await ensureDriveFolder(accessToken, DOCS_SUBFOLDER, args.folders.periodId);
-    for (const r of resolvedReceipts) {
+    emit({ stage: "move", total: resolvedReceipts.length });
+    for (let i = 0; i < resolvedReceipts.length; i++) {
+      const r = resolvedReceipts[i];
+      emit({ stage: "move", done: i + 1, total: resolvedReceipts.length });
       try {
         await moveDriveFile(accessToken, r.driveFileId, docsFolderId);
       } catch {
@@ -302,6 +330,7 @@ export async function buildReportPdfBundle(
     }
 
     // Stage 9: save + upload (overwrite semantics).
+    emit({ stage: "upload" });
     const pdfBytes = await doc.save();
     const pdfBuffer = Buffer.from(pdfBytes);
     const pdfName = `${reportName}.pdf`;
