@@ -121,7 +121,7 @@ async function generateWorkingSheet(
 // ---------------------------------------------------------------------------
 // Government report (spec steps 3-5)
 // ---------------------------------------------------------------------------
-function pickReportTab(tabs: Array<{ sheetId: number; title: string }>): string {
+export function pickReportTab(tabs: Array<{ sheetId: number; title: string }>): string {
   const byTitle = tabs.filter((t) => t.title.includes('דו"ח'));
   if (byTitle.length === 1) return byTitle[0].title;
   const nonDetails = tabs.filter((t) => t.title !== DETAILS_TAB);

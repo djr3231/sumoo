@@ -32,6 +32,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { MatchWorkbench } from "@/components/report/MatchWorkbench";
+import { PdfExportDialog } from "@/components/PdfExportDialog";
+import type { PersonalDetails, PdfProgress } from "@/lib/report/pdf";
 import { Eye } from "lucide-react";
 import {
   Tooltip,
@@ -408,6 +410,16 @@ export function ReportWizard() {
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [householdSize, setHouseholdSize] = useState<number | null>(null);
+  // PDF export (transient — deliberately NOT part of WizardProgressState /
+  // serializeProgress: personal details + signature must never be persisted).
+  const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfResult, setPdfResult] = useState<{ url: string; skippedFiles: string[] } | null>(
+    null,
+  );
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  // Live stage of a running PDF export (transient, from the NDJSON stream).
+  const [pdfProgress, setPdfProgress] = useState<PdfProgress | null>(null);
 
   const canCreate = pair !== null && !creating;
 
@@ -1010,6 +1022,101 @@ export function ReportWizard() {
       setGenerateError((e as Error).message);
     } finally {
       setGenerating(false);
+    }
+  }
+
+  // Step 6: issue the signed PDF bundle. `personal`/`signaturePngBase64` come
+  // from the dialog's own state and are forwarded straight to the API —
+  // never stored in wizard state or logged (see PRIVACY note in lib/report/pdf.ts).
+  async function handlePdfExport(payload: {
+    personal: PersonalDetails;
+    signaturePngBase64: string;
+    previewOnly?: boolean;
+  }) {
+    if (!pair || !created || !generated) return;
+    setPdfBusy(true);
+    setPdfError(null);
+    try {
+      const attachedReceiptFileNames = Array.from(
+        new Set(
+          expenses
+            .filter((e) => isExpenseIncluded(e.lineId) && e.receipt)
+            .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""))
+            .map((e) => e.receipt as string),
+        ),
+      );
+      const res = await fetch("/api/report/pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          period: { year, month1: pair.m1, month2: pair.m2, folderName: created.folderName },
+          folders: created.folders,
+          reportId: generated.reportId,
+          personal: payload.personal,
+          signaturePngBase64: payload.signaturePngBase64,
+          attachedReceiptFileNames,
+          previewOnly: payload.previewOnly === true,
+        }),
+      });
+      const contentType = res.headers.get("Content-Type") ?? "";
+      if (contentType.includes("application/json")) {
+        // Pre-stream failure (400 guard / early 500) — plain JSON path.
+        const data = await res.json();
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      if (!res.body) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffered = "";
+      let final:
+        | {
+            ok?: boolean;
+            pdf?: { id: string; url: string } | null;
+            skippedFiles?: string[];
+            previewPdfBase64?: string;
+            error?: string;
+          }
+        | null = null;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffered += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buffered.indexOf("\n")) !== -1) {
+          const line = buffered.slice(0, nl).trim();
+          buffered = buffered.slice(nl + 1);
+          if (!line) continue;
+          const evt = JSON.parse(line) as {
+            progress?: PdfProgress;
+            ok?: boolean;
+            pdf?: { id: string; url: string };
+            skippedFiles?: string[];
+            error?: string;
+          };
+          if (evt.progress) setPdfProgress(evt.progress);
+          else final = evt;
+        }
+      }
+      if (!final || final.error || !final.ok) {
+        // Stream ended without a success verdict (server error or cut stream).
+        throw new Error(final?.error || `HTTP ${res.status}`);
+      }
+      if (final.previewPdfBase64) {
+        // Calibration preview: open the stamped page in a new tab and keep the
+        // dialog open (with its filled fields) for the next round.
+        const bytes = Uint8Array.from(atob(final.previewPdfBase64), (c) => c.charCodeAt(0));
+        const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+        window.open(url, "_blank", "noopener");
+        return;
+      }
+      if (!final.pdf) throw new Error(`HTTP ${res.status}`);
+      setPdfResult({ url: final.pdf.url, skippedFiles: final.skippedFiles ?? [] });
+      setPdfDialogOpen(false);
+    } catch (e) {
+      setPdfError((e as Error).message);
+    } finally {
+      setPdfBusy(false);
+      setPdfProgress(null);
     }
   }
 
@@ -2463,9 +2570,20 @@ export function ReportWizard() {
               </Section>
 
               <div className="space-y-3">
-                <Button onClick={generateReport} disabled={generating}>
-                  {generating ? "מפיק…" : generated !== null ? "הפק מחדש" : "הפק דוח"}
-                </Button>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <Button onClick={generateReport} disabled={generating}>
+                    {generating ? "מפיק…" : generated !== null ? "הפק מחדש" : "הפק דוח"}
+                  </Button>
+                  {generated !== null ? (
+                    <Button
+                      variant="outline"
+                      type="button"
+                      onClick={() => setPdfDialogOpen(true)}
+                    >
+                      נפק PDF
+                    </Button>
+                  ) : null}
+                </div>
 
                 {generated ? (
                   <div className="space-y-1 text-sm">
@@ -2496,6 +2614,34 @@ export function ReportWizard() {
                     הפקת הדוח נכשלה: {generateError}
                   </p>
                 ) : null}
+
+                {pdfResult ? (
+                  <div className="space-y-1 text-sm">
+                    <p>ה-PDF הופק בהצלחה</p>
+                    <a href={pdfResult.url} target="_blank" rel="noreferrer" className="underline">
+                      קובץ ה-PDF
+                    </a>
+                    {pdfResult.skippedFiles.length > 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        קבצים שלא צורפו: {pdfResult.skippedFiles.join(", ")}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {pdfError ? (
+                  <p className="text-sm text-destructive">
+                    הנפקת ה-PDF נכשלה: {pdfError}
+                  </p>
+                ) : null}
+
+                <PdfExportDialog
+                  open={pdfDialogOpen}
+                  onOpenChange={setPdfDialogOpen}
+                  busy={pdfBusy}
+                  progress={pdfProgress}
+                  onSubmit={handlePdfExport}
+                />
               </div>
             </div>
           )}
