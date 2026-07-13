@@ -155,6 +155,36 @@ Stored at `myCardsLast4` key in the `הגדרות` tab as a single cell of comma
 
 ## Recent decisions and lessons learned (chronological — most recent at top)
 
+### ✅ Bi-monthly insolvency report wizard — COMPLETE, in production (2026-07-13)
+
+The project's biggest feature arc is finished: the six-step **הכנת דוח דו-חודשי**
+wizard at `/report` (period folders → statement parsing/reconciliation → receipt
+matching → cash → classification → step 6). Step 6 produces:
+- **הפק דוח** — a working sheet + the anonymous government report filled from the
+  clean template (label-anchored writes, anonymity guard, `lib/report/generate.ts`).
+- **נפק PDF** — a signed PDF bundle (`lib/report/pdf.ts`): personal details are
+  collected one-time in a dialog, written to a **temp Sheet copy deleted in
+  `finally`**, the report tab is exported fit-to-page (`scale=4`), the signature is
+  stamped via pdf-lib (RTL-mirrored geometry, Illustrator-calibrated constants),
+  source documents + attached receipts are appended (jimp-compressed), progress is
+  streamed as NDJSON to the dialog, and a **תצוגה מקדימה** mode returns just the
+  stamped page with zero Drive writes.
+
+**Rules that outlive the feature:** personal details exist ONLY in the output PDF
+(name-prefixed filename, every version kept) — never in code/Sheets/progress/logs;
+Hebrew UI strings come from per-plan approved lists (STOP-and-ASK otherwise).
+Feature docs: `INSOLVENCY-REPORT-PLAN.md` (historical spec) +
+`docs/superpowers/specs/` + `docs/superpowers/plans/`. Known deferred perf item:
+Drive downloads/moves in the PDF bundle are sequential (progress makes the wait
+transparent; parallelizing is a future step).
+
+**How it was built (the repo's standing workflow, see CLAUDE.md "Planning &
+Execution Workflow"):** a chain of handoff plans — Fable brainstorms/writes each
+spec+plan, an Opus session orchestrates `superpowers:subagent-driven-development`
+with cheap Sonnet implementer subagents (no-commit; orchestrator reviews every
+report+diff, runs typecheck, commits), E2E findings roll into the next plan in the
+chain, and `.superpowers/sdd/progress.md` carries cross-session state.
+
 ### Card-list serialization: USER_ENTERED → RAW (commit `aaedb99`)
 
 `writeUserSettings` was using `valueInputOption: "USER_ENTERED"`, which made Google Sheets parse `"6021,8780,5323"` as a number with thousands separators (storing it as 6,021,878,805,323). Switched to `RAW`. Users with corrupted data must re-save once via `/settings`.
@@ -321,10 +351,12 @@ Requires `.env.local` with all the keys from `.env.local.example` plus your own 
 
 ## Branch state at handoff
 
-- **Branch:** `claude/receipt-scanner-app-3dVpc`
-- **Latest commit:** `aaedb99` (fix: use RAW value input option to prevent Sheets number coercion)
-- **Working tree:** clean.
-- **Deployed:** Yes, at https://www.chewie.ceo (auto-deploy from this branch via Vercel).
+- **Workflow:** `main` (production, Vercel auto-deploy) ← `dev` (integration) ←
+  `feat/<name>` branches. Never commit to `main`/`dev` directly; the owner opens
+  and merges PRs himself.
+- **As of 2026-07-13:** the report-wizard arc is fully merged — `feat/report-pdf`
+  → `dev` (PR #32) → `main`. No feature work in flight.
+- **Deployed:** https://www.chewie.ceo (auto-deploy from `main` via Vercel).
 
 ---
 
@@ -352,4 +384,9 @@ Requires `.env.local` with all the keys from `.env.local.example` plus your own 
 
 ## Suggested first prompt for a new session
 
-> "Read SESSION-CONTEXT.md for project context. We're on branch `claude/receipt-scanner-app-3dVpc`. The latest work was implementing a user-configurable card-list at /settings (chip UI, stored in a new הגדרות tab in the user's spreadsheet) and adding the הוראת קבע payment method. Most recent fix was switching `valueInputOption` from USER_ENTERED to RAW to stop Sheets from parsing the comma-separated card list as a number. Next thing I want to work on is: [YOUR NEXT TASK]."
+> "Read SESSION-CONTEXT.md and CLAUDE.md for project context. The bi-monthly
+> report wizard (including the signed-PDF export) is complete and in production;
+> there is no feature work in flight. For any sizable feature, follow CLAUDE.md's
+> 'Planning & Execution Workflow' (spec+plan chain, Sonnet implementer subagents,
+> orchestrator reviews+commits). Open items live in DOTO.md. Next thing I want to
+> work on is: [YOUR NEXT TASK]."
