@@ -672,7 +672,7 @@ export function ReportWizard() {
     setExpenses((prev) =>
       prev.map((e) =>
         applied.has(e.lineId) && !e.receipt
-          ? { ...e, receipt: applied.get(e.lineId)!.fileName }
+          ? { ...e, receipt: applied.get(e.lineId)!.fileName, noReceipt: undefined }
           : e,
       ),
     );
@@ -798,7 +798,9 @@ export function ReportWizard() {
   // the workbench stays open, so the next charge can be attached to it too.
   function attachReceipt(r: Receipt, lineId: string, keepAvailable = false) {
     const nextExpenses = expenses.map((e) =>
-      e.lineId === lineId ? { ...e, receipt: r.fileName } : e,
+      e.lineId === lineId
+        ? { ...e, receipt: r.fileName, noReceipt: undefined }
+        : e,
     );
     const prevFile = expenses.find((e) => e.lineId === lineId)?.receipt;
     if (prevFile) {
@@ -972,6 +974,7 @@ export function ReportWizard() {
       transferInclude,
       creditRoute,
       householdSize: householdSize ?? DEFAULT_HOUSEHOLD_SIZE,
+      receiptLinks,
     });
   }, [
     result,
@@ -982,6 +985,7 @@ export function ReportWizard() {
     transferInclude,
     creditRoute,
     householdSize,
+    receiptLinks,
   ]);
 
   // Step 6: POST the same rollupInput (minus months/householdSize, which the
@@ -1006,6 +1010,7 @@ export function ReportWizard() {
             incomeIncluded,
             transferInclude,
             creditRoute,
+            receiptLinks,
           },
         }),
       });
