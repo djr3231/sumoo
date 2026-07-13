@@ -72,7 +72,7 @@ const DOCS_SUBFOLDER = "מסמכים";
 // generate.ts block-list). Write columns are fixed constants per the task's
 // anchor table; rows are scanned per-report since layout may shift.
 const ANCHOR = {
-  name: 'בעניין: היחיד/ה',
+  name: "בעניין: היחיד/ה",
   caseNumber: "מס' תיק ממונה",
   address: "כתובת עדכנית",
   // Exact label (matches PERSONAL_DETAIL_LABELS): bare "טלפון" also matches an
@@ -80,7 +80,15 @@ const ANCHOR = {
   phone: "טלפון היחיד/ה",
   signature: "חתימת היחיד/ה",
 } as const;
-const COL = { name: 2, caseNumber: 6, address: 2, phone: 6, date: 2, signatureLeft: 6, signatureRight: 7 } as const; // C/G/C/G/C, G:H
+const COL = {
+  name: 2,
+  caseNumber: 6,
+  address: 2,
+  phone: 6,
+  date: 2,
+  signatureLeft: 6,
+  signatureRight: 7,
+} as const; // C/G/C/G/C, G:H
 
 const A4_WIDTH_PT = 595.28;
 const A4_HEIGHT_PT = 841.89;
@@ -103,7 +111,8 @@ function colA1(col: number): string {
   }
   return s;
 }
-const rangeFor = (tab: string, row0: number, col0: number) => `'${tab}'!${colA1(col0)}${row0 + 1}`;
+const rangeFor = (tab: string, row0: number, col0: number) =>
+  `'${tab}'!${colA1(col0)}${row0 + 1}`;
 
 // Find the row of the first cell (top-down) whose trimmed text includes
 // `needle`, optionally starting the scan at `from`. Returns -1 if not found.
@@ -148,7 +157,11 @@ function decodeSignature(base64OrDataUrl: string): Buffer {
 // Append one source/receipt file (image or PDF) to `doc` as new page(s).
 // Per the brief, callers wrap this in a try/catch so one bad file (e.g. an
 // encrypted PDF) never fails the whole bundle.
-async function appendFileAsPages(doc: PDFDocument, buffer: Buffer, mimeType: string): Promise<void> {
+async function appendFileAsPages(
+  doc: PDFDocument,
+  buffer: Buffer,
+  mimeType: string,
+): Promise<void> {
   if (mimeType === "application/pdf") {
     const src = await PDFDocument.load(buffer);
     const pages = await doc.copyPages(src, src.getPageIndices());
@@ -170,12 +183,16 @@ async function appendFileAsPages(doc: PDFDocument, buffer: Buffer, mimeType: str
         jimpImage.resize({ h: IMAGE_MAX_DIMENSION_PX });
       }
     }
-    const compressed = await jimpImage.getBuffer(JimpMime.jpeg, { quality: IMAGE_JPEG_QUALITY });
+    const compressed = await jimpImage.getBuffer(JimpMime.jpeg, {
+      quality: IMAGE_JPEG_QUALITY,
+    });
     image = await doc.embedJpg(compressed);
   } catch {
     // A bad/unsupported image must never lose the receipt — fall back to
     // embedding the original bytes as-is.
-    image = isPng(buffer) ? await doc.embedPng(buffer) : await doc.embedJpg(buffer);
+    image = isPng(buffer)
+      ? await doc.embedPng(buffer)
+      : await doc.embedJpg(buffer);
   }
   const page = doc.addPage([A4_WIDTH_PT, A4_HEIGHT_PT]);
   const boxW = A4_WIDTH_PT - 2 * PAGE_MARGIN_PT;
@@ -209,7 +226,12 @@ export async function buildReportPdfBundle(
   const reportName = `${REPORT_FILE_PREFIX} ${args.period.folderName}`;
   const tempName = `${reportName} (זמני)`;
   emit({ stage: "prepare" });
-  const tempId = await copyDriveFileAsSheet(accessToken, args.reportId, tempName, args.folders.periodId);
+  const tempId = await copyDriveFileAsSheet(
+    accessToken,
+    args.reportId,
+    tempName,
+    args.folders.periodId,
+  );
 
   try {
     // Stage 3: fill personal fields on the TEMP copy only.
@@ -220,9 +242,11 @@ export async function buildReportPdfBundle(
     const nameRow = findAnchorRow(grid, ANCHOR.name);
     if (nameRow === -1) throw new Error(`Missing anchor: "${ANCHOR.name}"`);
     const caseNumberRow = findAnchorRow(grid, ANCHOR.caseNumber);
-    if (caseNumberRow === -1) throw new Error(`Missing anchor: "${ANCHOR.caseNumber}"`);
+    if (caseNumberRow === -1)
+      throw new Error(`Missing anchor: "${ANCHOR.caseNumber}"`);
     const addressRow = findAnchorRow(grid, ANCHOR.address);
-    if (addressRow === -1) throw new Error(`Missing anchor: "${ANCHOR.address}"`);
+    if (addressRow === -1)
+      throw new Error(`Missing anchor: "${ANCHOR.address}"`);
     const phoneRow = findAnchorRow(grid, ANCHOR.phone);
     if (phoneRow === -1) throw new Error(`Missing anchor: "${ANCHOR.phone}"`);
     // Signature row anchors the footer; date shares that footer row. Scanning
@@ -230,21 +254,39 @@ export async function buildReportPdfBundle(
     // robust against any earlier, unrelated "תאריך" cell higher in the sheet
     // (kept simple per the brief — do not change the written value/column).
     const signatureRow = findAnchorRow(grid, ANCHOR.signature);
-    if (signatureRow === -1) throw new Error(`Missing anchor: "${ANCHOR.signature}"`);
+    if (signatureRow === -1)
+      throw new Error(`Missing anchor: "${ANCHOR.signature}"`);
     const dateRow = findAnchorRow(grid, "תאריך:", signatureRow);
     if (dateRow === -1) throw new Error('Missing anchor: "תאריך:"');
 
     await batchWriteCells(accessToken, tempId, [
-      { range: rangeFor(reportTab, nameRow, COL.name), values: [[args.personal.name]] },
-      { range: rangeFor(reportTab, caseNumberRow, COL.caseNumber), values: [[args.personal.caseNumber]] },
-      { range: rangeFor(reportTab, addressRow, COL.address), values: [[args.personal.address]] },
-      { range: rangeFor(reportTab, phoneRow, COL.phone), values: [[args.personal.phone]] }, // RAW preserves leading 0
+      {
+        range: rangeFor(reportTab, nameRow, COL.name),
+        values: [[args.personal.name]],
+      },
+      {
+        range: rangeFor(reportTab, caseNumberRow, COL.caseNumber),
+        values: [[args.personal.caseNumber]],
+      },
+      {
+        range: rangeFor(reportTab, addressRow, COL.address),
+        values: [[args.personal.address]],
+      },
+      {
+        range: rangeFor(reportTab, phoneRow, COL.phone),
+        values: [[args.personal.phone]],
+      }, // RAW preserves leading 0
     ]);
     // Real date value (USER_ENTERED), not RAW text — matches the b7ea971 convention.
     await batchWriteCells(
       accessToken,
       tempId,
-      [{ range: rangeFor(reportTab, dateRow, COL.date), values: [[args.personal.date]] }],
+      [
+        {
+          range: rangeFor(reportTab, dateRow, COL.date),
+          values: [[args.personal.date]],
+        },
+      ],
       "USER_ENTERED",
     );
 
@@ -252,7 +294,8 @@ export async function buildReportPdfBundle(
     // rowPx/colPx are 0-based arrays; the scanned row indexes them directly.
     const metrics = await getSheetTabMetrics(accessToken, tempId, reportTab);
     const gid = metrics.sheetId;
-    const sumPx = (arr: number[], count: number) => arr.slice(0, count).reduce((s, n) => s + n, 0);
+    const sumPx = (arr: number[], count: number) =>
+      arr.slice(0, count).reduce((s, n) => s + n, 0);
 
     // Content extent = the VALUE extent of the already-fetched grid, extended
     // through the signature columns/row: merged-cell values live in the top-
@@ -268,7 +311,9 @@ export async function buildReportPdfBundle(
     const contentHpx = sumPx(metrics.rowPx, usedRows);
 
     let xPx = sumPx(metrics.colPx, COL.signatureLeft); // Σ colPx[0..5]
-    const wPx = (metrics.colPx[COL.signatureLeft] ?? 0) + (metrics.colPx[COL.signatureRight] ?? 0);
+    const wPx =
+      (metrics.colPx[COL.signatureLeft] ?? 0) +
+      (metrics.colPx[COL.signatureRight] ?? 0);
     const yPx = sumPx(metrics.rowPx, signatureRow); // Σ rowPx[0..row-1]
     const hPx = metrics.rowPx[signatureRow] ?? 0;
 
@@ -284,7 +329,10 @@ export async function buildReportPdfBundle(
     const PX_TO_PT = 0.75;
     const printableW = A4_WIDTH_PT - 2 * PAGE_MARGIN_PT;
     const printableH = A4_HEIGHT_PT - 2 * PAGE_MARGIN_PT;
-    const s = Math.min(printableW / (contentWpx * PX_TO_PT), printableH / (contentHpx * PX_TO_PT));
+    const s = Math.min(
+      printableW / (contentWpx * PX_TO_PT),
+      printableH / (contentHpx * PX_TO_PT),
+    );
 
     // Slack-axis alignment (does Sheets center the axis that doesn't bind?) is
     // undocumented. These are the E2E calibration constants — if the stamp
@@ -292,7 +340,7 @@ export async function buildReportPdfBundle(
     // E2E round 3 (2026-07-13): user measured the exact correction in
     // Illustrator from the round-2 render: +60pt right, +7pt down.
     const ALIGN_X_PT = 72;
-    const ALIGN_Y_PT = 7;
+    const ALIGN_Y_PT = 12;
     const boxXPt = PAGE_MARGIN_PT + ALIGN_X_PT + xPx * PX_TO_PT * s;
     const boxYTopPt = PAGE_MARGIN_PT + ALIGN_Y_PT + yPx * PX_TO_PT * s;
     const boxWPt = wPx * PX_TO_PT * s;
@@ -304,7 +352,9 @@ export async function buildReportPdfBundle(
     const doc = await PDFDocument.load(reportPdfBuffer);
     const page = doc.getPage(0);
     const sigBuffer = decodeSignature(args.signaturePngBase64);
-    const sigImage = isPng(sigBuffer) ? await doc.embedPng(sigBuffer) : await doc.embedJpg(sigBuffer);
+    const sigImage = isPng(sigBuffer)
+      ? await doc.embedPng(sigBuffer)
+      : await doc.embedJpg(sigBuffer);
     // A signature must straddle its line, not fit inside the one-row cell —
     // one row is ~10pt after the fit factor, which rendered the stamp as a
     // microscopic squiggle (E2E 2026-07-13). Give it three row-heights of
@@ -340,7 +390,10 @@ export async function buildReportPdfBundle(
     }
 
     // Stage 6: append source documents (bank statements / salary slips).
-    const sourceFiles = await listDriveFolderImages(accessToken, args.folders.sourceId);
+    const sourceFiles = await listDriveFolderImages(
+      accessToken,
+      args.folders.sourceId,
+    );
     emit({ stage: "sources", total: sourceFiles.length });
     for (let i = 0; i < sourceFiles.length; i++) {
       const f = sourceFiles[i];
@@ -355,8 +408,11 @@ export async function buildReportPdfBundle(
 
     // Stage 7: append attached receipts, preserving the given order.
     const allReceipts = await getAllReceipts(accessToken, args.spreadsheetId);
-    const byFileName = new Map(allReceipts.map((r) => [r.fileName, r.driveFileId ?? null] as const));
-    const resolvedReceipts: Array<{ fileName: string; driveFileId: string }> = [];
+    const byFileName = new Map(
+      allReceipts.map((r) => [r.fileName, r.driveFileId ?? null] as const),
+    );
+    const resolvedReceipts: Array<{ fileName: string; driveFileId: string }> =
+      [];
     for (const fileName of args.attachedReceiptFileNames) {
       const driveFileId = byFileName.get(fileName);
       if (!driveFileId) {
@@ -370,7 +426,10 @@ export async function buildReportPdfBundle(
       const r = resolvedReceipts[i];
       emit({ stage: "receipts", done: i + 1, total: resolvedReceipts.length });
       try {
-        const { buffer, mimeType } = await downloadDriveFile(accessToken, r.driveFileId);
+        const { buffer, mimeType } = await downloadDriveFile(
+          accessToken,
+          r.driveFileId,
+        );
         await appendFileAsPages(doc, buffer, mimeType);
       } catch {
         skippedFiles.push(r.fileName);
@@ -380,7 +439,11 @@ export async function buildReportPdfBundle(
     // Stage 8: move successfully-attached receipts to the docs subfolder.
     // Runs AFTER the PDF bytes are assembled; per-file try/catch (a failed
     // move must not fail the bundle).
-    const docsFolderId = await ensureDriveFolder(accessToken, DOCS_SUBFOLDER, args.folders.periodId);
+    const docsFolderId = await ensureDriveFolder(
+      accessToken,
+      DOCS_SUBFOLDER,
+      args.folders.periodId,
+    );
     emit({ stage: "move", total: resolvedReceipts.length });
     for (let i = 0; i < resolvedReceipts.length; i++) {
       const r = resolvedReceipts[i];
@@ -410,7 +473,10 @@ export async function buildReportPdfBundle(
     );
 
     return {
-      pdf: { id: uploaded.id, url: `https://drive.google.com/file/d/${uploaded.id}/view` },
+      pdf: {
+        id: uploaded.id,
+        url: `https://drive.google.com/file/d/${uploaded.id}/view`,
+      },
       skippedFiles,
     };
   } finally {
