@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-07-13-mark-no-receipt-expenses-design.md` (approved 2026-07-13; committed on this branch).
 
+**Execution protocol (model-split, user-chosen):** this document was authored by Fable 5 (planning). A **fresh session on Opus 4.8** orchestrates via `superpowers:subagent-driven-development`: one task per **Sonnet 5 subagent** (Agent tool, `model: "sonnet"`); the orchestrator reviews each task report AND its diff, runs `npm run typecheck` itself before accepting, commits are made per the task's own steps, then proceeds. Any ambiguity, unexpected code drift from the "Verified ground truth" line numbers, or a new Hebrew string not in the approved list → **STOP-and-ASK the user.**
+
 ## Global Constraints
 
 - Branch `feat/mark-unmatched-expenses` off `dev`, worktree `C:\Development\sumoo-feat-mark-unmatched-expenses` — **already created; the spec is committed on it.** All work happens in that worktree. Never touch `main` or `dev`.
