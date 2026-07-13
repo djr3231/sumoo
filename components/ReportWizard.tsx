@@ -389,7 +389,7 @@ export function ReportWizard() {
     "all" | "direct" | "checking" | "cash" | "manual"
   >("all");
   const [receiptMatchFilter, setReceiptMatchFilter] = useState<
-    "all" | "matched" | "unmatched"
+    "all" | "matched" | "awaiting" | "irrelevant"
   >("all");
   const [expenseSort, setExpenseSort] = useState<{
     key:
@@ -1200,9 +1200,28 @@ export function ReportWizard() {
         ? true
         : receiptMatchFilter === "matched"
           ? Boolean(e.receipt)
-          : !e.receipt,
+          : receiptMatchFilter === "awaiting"
+            ? !e.receipt && !e.noReceipt
+            : !e.receipt && Boolean(e.noReceipt),
     )
     .sort(compareExpense);
+
+  // "לא רלוונטי" select-all: acts only on rows visible under the current
+  // filter that have no receipt. Rows carrying a receipt are never touched.
+  const markableVisible = receiptView.filter(({ e }) => !e.receipt);
+  const allVisibleMarked =
+    markableVisible.length > 0 &&
+    markableVisible.every(({ e }) => e.noReceipt);
+  function setMarkAllVisible(checked: boolean) {
+    const ids = new Set(markableVisible.map(({ e }) => e.lineId));
+    setExpenses((prev) =>
+      prev.map((e) =>
+        ids.has(e.lineId)
+          ? { ...e, noReceipt: checked ? true : undefined }
+          : e,
+      ),
+    );
+  }
 
   // Receipts that matched no charge: cash ones dated in-period become expense
   // candidates; the rest are surfaced for manual review (never auto-added).
@@ -1924,6 +1943,10 @@ export function ReportWizard() {
                     <span className="text-sm text-muted-foreground">
                       {expenses.filter((e) => e.receipt).length} מתוך{" "}
                       {expenses.length} חיובים עם קבלה
+                      {expenses.filter((e) => !e.receipt && e.noReceipt).length > 0
+                        ? ` · ${expenses.filter((e) => !e.receipt && e.noReceipt).length} לא רלוונטי`
+                        : ""}
+                      {` · ${expenses.filter((e) => !e.receipt && !e.noReceipt).length} ממתינים לקבלה`}
                       {unmatchedReceipts.length > 0
                         ? ` · ${unmatchedReceipts.length} קבלות ללא התאמה`
                         : ""}
@@ -1939,7 +1962,7 @@ export function ReportWizard() {
                       value={receiptMatchFilter}
                       onValueChange={(v) =>
                         setReceiptMatchFilter(
-                          v as "all" | "matched" | "unmatched",
+                          v as "all" | "matched" | "awaiting" | "irrelevant",
                         )
                       }
                     >
@@ -1949,7 +1972,8 @@ export function ReportWizard() {
                       <SelectContent>
                         <SelectItem value="all">הכל</SelectItem>
                         <SelectItem value="matched">עם קבלה</SelectItem>
-                        <SelectItem value="unmatched">ללא קבלה</SelectItem>
+                        <SelectItem value="awaiting">ממתין לקבלה</SelectItem>
+                        <SelectItem value="irrelevant">לא רלוונטי</SelectItem>
                       </SelectContent>
                     </Select>
                     <Table>
@@ -1985,11 +2009,29 @@ export function ReportWizard() {
                           >
                             {sortArrow("receipt")}קבלה
                           </TableHead>
+                          <TableHead>
+                            <span className="flex items-center gap-1">
+                              לא רלוונטי
+                              <Checkbox
+                                checked={allVisibleMarked}
+                                disabled={markableVisible.length === 0}
+                                onCheckedChange={(v) =>
+                                  setMarkAllVisible(v === true)
+                                }
+                                aria-label="לא רלוונטי"
+                              />
+                            </span>
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {receiptView.map(({ e }) => (
-                          <TableRow key={e.lineId}>
+                          <TableRow
+                            key={e.lineId}
+                            className={
+                              e.noReceipt ? "text-muted-foreground" : undefined
+                            }
+                          >
                             <TableCell>{e.month}</TableCell>
                             <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
                               {fmtDate(e.date)}
@@ -2025,12 +2067,24 @@ export function ReportWizard() {
                                     className="shrink-0 max-h-fit"
                                     onClick={() => detachReceipt(e.lineId)}
                                   >
-                                    בטל
+                                    בטל התאמה
                                   </Button>
                                 </span>
                               ) : (
                                 <span className="text-muted-foreground">—</span>
                               )}
+                            </TableCell>
+                            <TableCell>
+                              <Checkbox
+                                checked={Boolean(e.noReceipt)}
+                                disabled={Boolean(e.receipt)}
+                                onCheckedChange={(v) =>
+                                  patchExpense(e.lineId, {
+                                    noReceipt: v === true ? true : undefined,
+                                  })
+                                }
+                                aria-label="לא רלוונטי"
+                              />
                             </TableCell>
                           </TableRow>
                         ))}
