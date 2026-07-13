@@ -69,7 +69,10 @@ a summary counter line. Changes:
 2. **Header select-all checkbox** — applies only to the rows **currently
    visible under the active filter** that have no receipt. (Fixes the
    prototype's semantic bug of comparing against all rows including
-   receipted ones.)
+   receipted ones.) Checked state = every visible receipt-less row is
+   marked; checking marks all of them, unchecking unmarks all of them.
+   Rows with receipts are never affected. Disabled when no receipt-less
+   rows are visible.
 3. **Marked rows are visually muted** — `text-muted-foreground` on the whole
    `TableRow`.
 4. **Filter grows 3 → 4 options:** `הכל` / `עם קבלה` / **`ממתין לקבלה`**
