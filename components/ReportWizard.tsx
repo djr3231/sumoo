@@ -1300,6 +1300,15 @@ export function ReportWizard() {
     cashRows.some((r) => Math.abs(r.residual) > CARD_GAP_TOLERANCE) &&
     !cashGapAck;
 
+  // Cash lines actually included in the report — the detail behind cashRows'
+  // "covered" numbers, listed in the cash step with their receipt links.
+  const includedCashLines = expenses
+    .filter((e) => e.source === "cash" && isExpenseIncluded(e.lineId))
+    .sort(
+      (a, b) =>
+        a.month - b.month || (a.date ?? "").localeCompare(b.date ?? ""),
+    );
+
   function toggleSort(key: typeof expenseSort.key) {
     setExpenseSort((s) =>
       s.key === key
@@ -2516,6 +2525,54 @@ export function ReportWizard() {
                     כל המשיכות מכוסות בקבלות ✓
                   </p>
                 )}
+                {includedCashLines.length > 0 ? (
+                  <Section title="שורות מזומן בדוח">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>חודש</TableHead>
+                          <TableHead>תאריך</TableHead>
+                          <TableHead>תיאור</TableHead>
+                          <TableHead>סכום</TableHead>
+                          <TableHead>קבלה</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {includedCashLines.map((e) => (
+                          <TableRow key={e.lineId}>
+                            <TableCell>{e.month}</TableCell>
+                            <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
+                              {fmtDate(e.date)}
+                            </TableCell>
+                            <TableCell>{e.description}</TableCell>
+                            <TableCell className="tabular-nums">
+                              {formatILS(e.amount)}
+                            </TableCell>
+                            <TableCell>
+                              {e.receipt && receiptLinks[e.receipt] ? (
+                                <Link
+                                  href={receiptLinks[e.receipt]}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title={e.receipt}
+                                  className="underline truncate min-w-0 max-w-70"
+                                >
+                                  {e.receipt}
+                                </Link>
+                              ) : e.receipt ? (
+                                <span className="truncate min-w-0" title={e.receipt}>
+                                  {e.receipt}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </Section>
+                ) : null}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
