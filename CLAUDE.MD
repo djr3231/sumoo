@@ -12,10 +12,38 @@ a new color, font, radius, or custom CSS without checking DESIGN-SYSTEM.md first
 For the ongoing redesign, **REDESIGN-PLAN.md** defines the execution order and
 per-page acceptance criteria. Follow its STOP-and-ASK protocol exactly.
 
-For the bi-monthly insolvency report feature, **INSOLVENCY-REPORT-PLAN.md** is the
-feature spec. The report-generation step (wizard step 6) is executed per
-**docs/superpowers/plans/2026-07-09-insolvency-report-step6.md** — follow its
-model-split protocol and approved-strings list exactly.
+The bi-monthly insolvency report wizard (**הכנת דוח דו-חודשי**, six steps ending in
+הפק דוח + נפק PDF) is **COMPLETE and in production** (2026-07-13). **INSOLVENCY-REPORT-PLAN.md**
+is retained as the historical feature spec; the step-6 and PDF-export execution
+specs/plans live under **docs/superpowers/plans/** and **docs/superpowers/specs/**.
+Hard rules that OUTLIVE the feature: report anonymity (personal details only in the
+user-initiated PDF output file, never in code/Sheets/progress/logs), the approved-
+Hebrew-strings discipline, and the temp-copy-deleted-in-`finally` pattern in
+`lib/report/pdf.ts`.
+
+## Planning & Execution Workflow (how big features get built here)
+
+Large features are built as a **chain of handoff plans**, not one mega-plan:
+
+1. **Plan with the strongest model** (Fable): brainstorm → design/spec
+   (`docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`) → implementation plan
+   (`docs/superpowers/plans/YYYY-MM-DD-<topic>.md`), both committed. Plan-authoring is
+   never delegated to agents.
+2. **Execute with cheap subagents**: the orchestrating session (Opus) runs
+   `superpowers:subagent-driven-development` — one **Sonnet** implementer per task,
+   implementers do **NOT commit**; the orchestrator reviews the report AND the diff,
+   runs `npm run typecheck` itself, then commits. Small surgical fixes may be done
+   directly by the orchestrator (diff always shown).
+3. **Follow-up work found during E2E** (bugs, calibration, polish) becomes the next
+   spec+plan in the chain, on the same feature branch when it belongs to the feature.
+4. **Cross-session continuity**: the SDD progress ledger
+   (`.superpowers/sdd/progress.md`, git-ignored) is the recovery map — tasks marked
+   complete there are DONE; resume from the first incomplete task. Plans embed the
+   base commit and branch so a fresh session can pick up mid-chain.
+5. **STOP-and-ASK** on any ambiguity, template surprise, or Hebrew string not in the
+   plan's approved list. Verification gate per task: typecheck + lint (accepted
+   pre-existing: UploadZone.tsx:138) + build at batch end; visual/runtime E2E is
+   always handed to the user.
 
 ## Shadcn Configuration (locked)
 The project's shadcn theme was generated with:

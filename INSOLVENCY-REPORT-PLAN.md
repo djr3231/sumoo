@@ -1,10 +1,18 @@
 # Plan: Bi-Monthly Insolvency Report Generator ("הכנת דוח דו-חודשי")
 
-> Handoff spec for a fresh local CLI session. This document is the source of
-> truth for the feature. The executing session should drill into file-level
-> detail as needed, following the repo's existing conventions (CLAUDE.MD,
-> ARCHITECTURE.md, DESIGN-SYSTEM.md). Build on `dev`, feature branch
-> `feat/insolvency-report`, PR into `dev`. Never touch `main`.
+> **STATUS: ✅ COMPLETE — shipped to production 2026-07-13.** All six wizard steps
+> are live, including step-6 report generation (הפק דוח: working sheet + anonymous
+> government report from the clean template) and the signed-PDF bundle export
+> (נפק PDF: personal details + stamped signature + source documents + attached
+> receipts, streamed progress, preview mode, image compression). This document is
+> retained as the **historical feature spec**; the execution-era specs and plans
+> live under `docs/superpowers/specs/` and `docs/superpowers/plans/`
+> (step-6: `2026-07-09-insolvency-report-step6.md`; PDF export:
+> `2026-07-12-report-pdf-export.md`, `2026-07-12-report-pdf-fit-and-progress.md`).
+
+> Original charter (historical): Handoff spec for a fresh local CLI session.
+> Build on `dev`, feature branch `feat/insolvency-report`, PR into `dev`.
+> Never touch `main`.
 
 ---
 
