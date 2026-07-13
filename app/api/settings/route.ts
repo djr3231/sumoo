@@ -22,14 +22,23 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json() as { myCardsLast4?: unknown };
+    const body = await req.json() as {
+      myCardsLast4?: unknown; householdSize?: unknown; reportTemplate?: unknown;
+    };
     const raw = Array.isArray(body.myCardsLast4) ? body.myCardsLast4 : [];
     const myCardsLast4 = (raw as unknown[])
       .filter((v): v is string => typeof v === "string" && /^\d{4}$/.test(v));
+    const hs = Number(body.householdSize);
+    const householdSize = Number.isInteger(hs) && hs >= 1 && hs <= 20 ? hs : null;
+    const rt = body.reportTemplate as { id?: unknown; name?: unknown } | null | undefined;
+    const reportTemplate =
+      rt && typeof rt.id === "string" && rt.id && typeof rt.name === "string"
+        ? { id: rt.id, name: rt.name }
+        : null;
 
     const token = await requireAccessToken();
     const spreadsheetId = await ensureSpreadsheet(token);
-    await writeUserSettings(token, spreadsheetId, { myCardsLast4 });
+    await writeUserSettings(token, spreadsheetId, { myCardsLast4, householdSize, reportTemplate });
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });

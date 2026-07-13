@@ -1,26 +1,3 @@
-export const CATEGORIES = [
-  "מיסי עירייה",
-  "כלכלה (מזון) - מס' נפשות 3",
-  "תקשורת ביתית (טלפון, טלוויזיה, אינטרנט)",
-  "טלפון נייד",
-  "גז",
-  "וועד בית",
-  "מים",
-  "חשמל",
-  "הלבשה",
-  "אחזקת רכב",
-  "חינוך ותרבות",
-  "נסיעות",
-  "הוצאות רפואיות חריגות",
-  "נסיעות בתחבורה ציבורית",
-  "הוצאות טיפול בילדים עד גיל 3",
-  "תספורת",
-  "שונות",
-  "עו\"ד מייצג בהליך",
-] as const;
-
-export type Category = (typeof CATEGORIES)[number];
-
 // ============================================================================
 // Payment & document type enums (single source of truth — never inline literals)
 // ============================================================================
@@ -70,7 +47,6 @@ export const DOCUMENT_TYPES: DocumentType[] = Object.values(DOCUMENT_TYPE);
 
 // Default fallbacks (kept as named constants so call sites never hardcode)
 export const DEFAULT_STORE_NAME = "לא ידוע";
-export const DEFAULT_CATEGORY: Category = "שונות";
 
 // ============================================================================
 // Government insolvency report — fixed income/expense categories
@@ -79,8 +55,9 @@ export const DEFAULT_CATEGORY: Category = "שונות";
 // set of rows. These are the canonical target enum for the report feature:
 // every parsed transaction/income is mapped INTO one of these. Verbatim Hebrew
 // strings mirror the government template; do not edit without legal reason.
-// (See INSOLVENCY-REPORT-PLAN.md §3.) NOTE: distinct from CATEGORIES above,
-// which is the receipt-scanner's own taxonomy.
+// (See INSOLVENCY-REPORT-PLAN.md §3.) UNIFIED (2026-07): the receipt-scanner's
+// category domain (`CATEGORIES` / `Category`, below) IS this same gov list —
+// there is only one category taxonomy in the app now.
 // ============================================================================
 
 // 6 fixed income rows (template §3.1)
@@ -126,6 +103,27 @@ export const GOV_EXPENSE_CATEGORY = {
 } as const;
 export type GovExpenseCategory = (typeof GOV_EXPENSE_CATEGORY)[keyof typeof GOV_EXPENSE_CATEGORY];
 export const GOV_EXPENSE_CATEGORIES: GovExpenseCategory[] = Object.values(GOV_EXPENSE_CATEGORY);
+
+// The receipt-scanner's category domain IS the gov expense list (unified 2026-07;
+// previously a separate, divergent 18-entry list — see LEGACY_CATEGORY_MAP below
+// for the read-side migration of receipts saved under the old strings).
+export const CATEGORIES = GOV_EXPENSE_CATEGORIES;
+export type Category = GovExpenseCategory;
+
+export const DEFAULT_CATEGORY: Category = GOV_EXPENSE_CATEGORY.Miscellaneous;
+
+// Receipts saved before the category unification (2026-07) carry these
+// retired strings in the Sheets receipts tab; map them on read. Data in
+// Sheets is NOT migrated — rows update only if re-saved.
+export const LEGACY_CATEGORY_MAP: Record<string, GovExpenseCategory> = {
+  "כלכלה (מזון) - מס' נפשות 3": GOV_EXPENSE_CATEGORY.Food,
+  "עו\"ד מייצג בהליך": GOV_EXPENSE_CATEGORY.Lawyer,
+};
+export function normalizeCategory(raw: string | null | undefined): Category {
+  if (!raw) return DEFAULT_CATEGORY;
+  if ((GOV_EXPENSE_CATEGORIES as string[]).includes(raw)) return raw as Category;
+  return LEGACY_CATEGORY_MAP[raw] ?? DEFAULT_CATEGORY;
+}
 
 // ----------------------------------------------------------------------------
 // Retail-pharmacy default: drugstore chains whose spend defaults to
@@ -183,12 +181,31 @@ export interface ReportPeriod {
 
 export const SETTINGS_KEY = {
   MyCardsLast4: "myCardsLast4",
+  HouseholdSize: "householdSize",
+  ReportTemplate: "reportTemplate",
 } as const;
 export type SettingsKey = (typeof SETTINGS_KEY)[keyof typeof SETTINGS_KEY];
 
 export interface UserSettings {
   myCardsLast4: string[]; // exactly 4-digit strings, validated
+  householdSize: number | null; // 1..20; null = unset (fall back to DEFAULT_HOUSEHOLD_SIZE)
+  reportTemplate: { id: string; name: string } | null; // null = built-in default template
 }
+
+// Household-size default for the Food row when the setting is unset (user-confirmed).
+export const DEFAULT_HOUSEHOLD_SIZE = 3;
+
+// The Food row label carries the household size in both the working sheet and
+// the government report (user-confirmed uniformity requirement).
+export function formatFoodCategory(householdSize: number): string {
+  return `${GOV_EXPENSE_CATEGORY.Food}, מס' נפשות ${householdSize}`;
+}
+
+// Hebrew month names for the gov-report header (1-based month → index-1).
+export const HEBREW_MONTHS = [
+  "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני",
+  "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר",
+] as const;
 
 // ============================================================================
 // Receipt + bank txn shapes

@@ -12,6 +12,11 @@ a new color, font, radius, or custom CSS without checking DESIGN-SYSTEM.md first
 For the ongoing redesign, **REDESIGN-PLAN.md** defines the execution order and
 per-page acceptance criteria. Follow its STOP-and-ASK protocol exactly.
 
+For the bi-monthly insolvency report feature, **INSOLVENCY-REPORT-PLAN.md** is the
+feature spec. The report-generation step (wizard step 6) is executed per
+**docs/superpowers/plans/2026-07-09-insolvency-report-step6.md** — follow its
+model-split protocol and approved-strings list exactly.
+
 ## Shadcn Configuration (locked)
 The project's shadcn theme was generated with:
 

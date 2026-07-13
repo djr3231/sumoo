@@ -32,6 +32,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { MatchWorkbench } from "@/components/report/MatchWorkbench";
+import { PdfExportDialog } from "@/components/PdfExportDialog";
+import type { PersonalDetails, PdfProgress } from "@/lib/report/pdf";
 import { Eye } from "lucide-react";
 import {
   Tooltip,
@@ -41,13 +43,18 @@ import {
 } from "@/components/ui/tooltip";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import {
+  DEFAULT_HOUSEHOLD_SIZE,
+  HEBREW_MONTHS,
   GOV_EXPENSE_CATEGORIES,
   GOV_EXPENSE_CATEGORY,
+  GOV_INCOME_CATEGORIES,
   PAYMENT_METHOD,
+  formatFoodCategory,
   type GovExpenseCategory,
   type Receipt,
 } from "@/lib/types";
 import { matchReceiptsToLines, receiptLineDistance } from "@/lib/match";
+import { buildReportRollup, OTHER_INCOME_LABEL } from "@/lib/report/rollup";
 import type { ReportFolders } from "@/lib/report/period";
 import type { CategorizedExpense, ProcessResult } from "@/lib/report/process";
 import type { ExpenseSource } from "@/lib/report/reconcile";
@@ -396,6 +403,24 @@ export function ReportWizard() {
     dir: "asc" | "desc";
   }>({ key: "month", dir: "asc" });
 
+  // Step 6 (generate report).
+  const [generated, setGenerated] = useState<WizardProgressState["generated"]>(
+    null,
+  );
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [householdSize, setHouseholdSize] = useState<number | null>(null);
+  // PDF export (transient — deliberately NOT part of WizardProgressState /
+  // serializeProgress: personal details + signature must never be persisted).
+  const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfResult, setPdfResult] = useState<{ url: string; skippedFiles: string[] } | null>(
+    null,
+  );
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  // Live stage of a running PDF export (transient, from the NDJSON stream).
+  const [pdfProgress, setPdfProgress] = useState<PdfProgress | null>(null);
+
   const canCreate = pair !== null && !creating;
 
   async function createPeriod() {
@@ -443,6 +468,7 @@ export function ReportWizard() {
           setDismissedIds(hydrated.dismissedIds);
           setReceiptLinks(hydrated.receiptLinks);
           setAttachments(hydrated.attachments);
+          setGenerated(hydrated.generated);
           setResumedStep(hydrated.step);
           setStep(hydrated.step);
           setMaxStep(hydrated.maxStep);
@@ -884,6 +910,7 @@ export function ReportWizard() {
     dismissedIds,
     receiptLinks,
     attachments,
+    generated,
   };
   const {
     status: progressStatus,
@@ -902,11 +929,196 @@ export function ReportWizard() {
   // guarantees the persisted snapshot reflects the post-update state (e.g.
   // the step actually displayed), not the pre-transition one. `result` is
   // included so the end of processDocs (which flips `enabled` true) also
-  // triggers an immediate save rather than waiting for the debounce.
+  // triggers an immediate save rather than waiting for the debounce. `generated`
+  // is included so a successful report generation is persisted right away —
+  // otherwise a tab closed within the debounce window would lose the record.
   useEffect(() => {
     saveProgressNow();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally only re-fires on step/result/matchRan/matchGeneration; saveProgressNow reads the latest state via its own ref.
-  }, [step, result, matchRan, matchGeneration]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally only re-fires on step/result/matchRan/matchGeneration/generated; saveProgressNow reads the latest state via its own ref.
+  }, [step, result, matchRan, matchGeneration, generated]);
+
+  // Step 6 (generate): fetch the saved household size once on entering the
+  // step, so the preview's Food row and the generate payload can fall back to
+  // it consistently with the server (which reads the same setting).
+  useEffect(() => {
+    if (step !== 5) return;
+    let cancelled = false;
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((json: { householdSize?: number | null }) => {
+        if (!cancelled) setHouseholdSize(json.householdSize ?? DEFAULT_HOUSEHOLD_SIZE);
+      })
+      .catch(() => {
+        if (!cancelled) setHouseholdSize((prev) => prev ?? DEFAULT_HOUSEHOLD_SIZE);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [step]);
+
+  // Preview rollup (Task 3's pure buildReportRollup, used client-side): what
+  // the user sees in step 6 is exactly what /api/report/generate will write,
+  // since both share this function.
+  const rollup = useMemo(() => {
+    if (!result || !pair) return null;
+    return buildReportRollup({
+      months: [pair.m1, pair.m2],
+      expenses,
+      income: result.income,
+      transfers: result.transfers,
+      reviewCredits: result.reviewCredits,
+      expenseIncluded,
+      incomeIncluded,
+      transferInclude,
+      creditRoute,
+      householdSize: householdSize ?? DEFAULT_HOUSEHOLD_SIZE,
+    });
+  }, [
+    result,
+    pair,
+    expenses,
+    expenseIncluded,
+    incomeIncluded,
+    transferInclude,
+    creditRoute,
+    householdSize,
+  ]);
+
+  // Step 6: POST the same rollupInput (minus months/householdSize, which the
+  // server injects from the period + saved settings) to /api/report/generate.
+  async function generateReport() {
+    if (!result || !pair || !created || !rollup) return;
+    setGenerating(true);
+    setGenerateError(null);
+    try {
+      const res = await fetch("/api/report/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          period: { year, month1: pair.m1, month2: pair.m2, folderName: created.folderName },
+          folders: created.folders,
+          rollupInput: {
+            expenses,
+            income: result.income,
+            transfers: result.transfers,
+            reviewCredits: result.reviewCredits,
+            expenseIncluded,
+            incomeIncluded,
+            transferInclude,
+            creditRoute,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setGenerated({
+        workingId: data.working.id,
+        workingUrl: data.working.url,
+        reportId: data.report.id,
+        reportUrl: data.report.url,
+        generatedAt: new Date().toISOString(),
+      });
+    } catch (e) {
+      setGenerateError((e as Error).message);
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  // Step 6: issue the signed PDF bundle. `personal`/`signaturePngBase64` come
+  // from the dialog's own state and are forwarded straight to the API —
+  // never stored in wizard state or logged (see PRIVACY note in lib/report/pdf.ts).
+  async function handlePdfExport(payload: {
+    personal: PersonalDetails;
+    signaturePngBase64: string;
+    previewOnly?: boolean;
+  }) {
+    if (!pair || !created || !generated) return;
+    setPdfBusy(true);
+    setPdfError(null);
+    try {
+      const attachedReceiptFileNames = Array.from(
+        new Set(
+          expenses
+            .filter((e) => isExpenseIncluded(e.lineId) && e.receipt)
+            .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""))
+            .map((e) => e.receipt as string),
+        ),
+      );
+      const res = await fetch("/api/report/pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          period: { year, month1: pair.m1, month2: pair.m2, folderName: created.folderName },
+          folders: created.folders,
+          reportId: generated.reportId,
+          personal: payload.personal,
+          signaturePngBase64: payload.signaturePngBase64,
+          attachedReceiptFileNames,
+          previewOnly: payload.previewOnly === true,
+        }),
+      });
+      const contentType = res.headers.get("Content-Type") ?? "";
+      if (contentType.includes("application/json")) {
+        // Pre-stream failure (400 guard / early 500) — plain JSON path.
+        const data = await res.json();
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      if (!res.body) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffered = "";
+      let final:
+        | {
+            ok?: boolean;
+            pdf?: { id: string; url: string } | null;
+            skippedFiles?: string[];
+            previewPdfBase64?: string;
+            error?: string;
+          }
+        | null = null;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffered += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buffered.indexOf("\n")) !== -1) {
+          const line = buffered.slice(0, nl).trim();
+          buffered = buffered.slice(nl + 1);
+          if (!line) continue;
+          const evt = JSON.parse(line) as {
+            progress?: PdfProgress;
+            ok?: boolean;
+            pdf?: { id: string; url: string };
+            skippedFiles?: string[];
+            error?: string;
+          };
+          if (evt.progress) setPdfProgress(evt.progress);
+          else final = evt;
+        }
+      }
+      if (!final || final.error || !final.ok) {
+        // Stream ended without a success verdict (server error or cut stream).
+        throw new Error(final?.error || `HTTP ${res.status}`);
+      }
+      if (final.previewPdfBase64) {
+        // Calibration preview: open the stamped page in a new tab and keep the
+        // dialog open (with its filled fields) for the next round.
+        const bytes = Uint8Array.from(atob(final.previewPdfBase64), (c) => c.charCodeAt(0));
+        const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+        window.open(url, "_blank", "noopener");
+        return;
+      }
+      if (!final.pdf) throw new Error(`HTTP ${res.status}`);
+      setPdfResult({ url: final.pdf.url, skippedFiles: final.skippedFiles ?? [] });
+      setPdfDialogOpen(false);
+    } catch (e) {
+      setPdfError((e as Error).message);
+    } finally {
+      setPdfBusy(false);
+      setPdfProgress(null);
+    }
+  }
 
   // Absent key = included by default (expense/income lines start included).
   const isExpenseIncluded = (lineId: string) => expenseIncluded[lineId] ?? true;
@@ -2251,10 +2463,186 @@ export function ReportWizard() {
                 עבד/י מסמכים תחילה בשלב פירוק וסיווג.
               </p>
             )
+          ) : !result || !rollup ? (
+            <p className="text-sm text-muted-foreground">
+              יש לעבד מסמכים תחילה בשלב פירוק וסיווג.
+            </p>
           ) : (
-            <div className="space-y-2 text-sm text-muted-foreground">
-              {created ? <p>תיקיית הדו&quot;ח: {created.folderName}</p> : null}
-              <p>שלב זה ייבנה בהמשך.</p>
+            <div className="space-y-6">
+              <Section title="תצוגה מקדימה">
+                <div className="space-y-6">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>הכנסות</TableHead>
+                        <TableHead>{`חודש ${HEBREW_MONTHS[rollup.months[0] - 1]}`}</TableHead>
+                        <TableHead>{`חודש ${HEBREW_MONTHS[rollup.months[1] - 1]}`}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {GOV_INCOME_CATEGORIES.map((c) => {
+                        const [v1, v2] = rollup.incomeByCategory[c];
+                        return (
+                          <TableRow key={c}>
+                            <TableCell>{c}</TableCell>
+                            <TableCell className="tabular-nums">
+                              {v1 === 0 ? "" : formatILS(v1)}
+                            </TableCell>
+                            <TableCell className="tabular-nums">
+                              {v2 === 0 ? "" : formatILS(v2)}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                      {rollup.otherIncome[0] !== 0 || rollup.otherIncome[1] !== 0 ? (
+                        <TableRow>
+                          <TableCell>{OTHER_INCOME_LABEL}</TableCell>
+                          <TableCell className="tabular-nums">
+                            {rollup.otherIncome[0] === 0
+                              ? ""
+                              : formatILS(rollup.otherIncome[0])}
+                          </TableCell>
+                          <TableCell className="tabular-nums">
+                            {rollup.otherIncome[1] === 0
+                              ? ""
+                              : formatILS(rollup.otherIncome[1])}
+                          </TableCell>
+                        </TableRow>
+                      ) : null}
+                      <TableRow className="font-semibold">
+                        <TableCell>{`סה"כ`}</TableCell>
+                        <TableCell className="tabular-nums">
+                          {formatILS(rollup.incomeTotals[0])}
+                        </TableCell>
+                        <TableCell className="tabular-nums">
+                          {formatILS(rollup.incomeTotals[1])}
+                        </TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>הוצאות</TableHead>
+                        <TableHead>{`חודש ${HEBREW_MONTHS[rollup.months[0] - 1]}`}</TableHead>
+                        <TableHead>{`חודש ${HEBREW_MONTHS[rollup.months[1] - 1]}`}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {GOV_EXPENSE_CATEGORIES.map((c) => {
+                        const [v1, v2] = rollup.expenseByCategory[c];
+                        const label =
+                          c === GOV_EXPENSE_CATEGORY.Food
+                            ? formatFoodCategory(householdSize ?? DEFAULT_HOUSEHOLD_SIZE)
+                            : c;
+                        return (
+                          <TableRow key={c}>
+                            <TableCell>{label}</TableCell>
+                            <TableCell className="tabular-nums">
+                              {v1 === 0 ? "" : formatILS(v1)}
+                            </TableCell>
+                            <TableCell className="tabular-nums">
+                              {v2 === 0 ? "" : formatILS(v2)}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                      <TableRow className="font-semibold">
+                        <TableCell>{`סה"כ`}</TableCell>
+                        <TableCell className="tabular-nums">
+                          {formatILS(rollup.expenseTotals[0])}
+                        </TableCell>
+                        <TableCell className="tabular-nums">
+                          {formatILS(rollup.expenseTotals[1])}
+                        </TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </div>
+
+                <p className="text-sm text-muted-foreground">
+                  {`מס' נפשות: ${householdSize ?? DEFAULT_HOUSEHOLD_SIZE}`}{" "}
+                  <Link href="/settings" className="underline">
+                    שינוי בהגדרות
+                  </Link>
+                </p>
+              </Section>
+
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <Button onClick={generateReport} disabled={generating}>
+                    {generating ? "מפיק…" : generated !== null ? "הפק מחדש" : "הפק דוח"}
+                  </Button>
+                  {generated !== null ? (
+                    <Button
+                      variant="outline"
+                      type="button"
+                      onClick={() => setPdfDialogOpen(true)}
+                    >
+                      נפק PDF
+                    </Button>
+                  ) : null}
+                </div>
+
+                {generated ? (
+                  <div className="space-y-1 text-sm">
+                    <p>הדוח הופק בהצלחה</p>
+                    <p className="flex flex-wrap gap-4">
+                      <a
+                        href={generated.workingUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline"
+                      >
+                        גיליון עבודה
+                      </a>
+                      <a
+                        href={generated.reportUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline"
+                      >
+                        דוח דו-חודשי
+                      </a>
+                    </p>
+                  </div>
+                ) : null}
+
+                {generateError ? (
+                  <p className="text-sm text-destructive">
+                    הפקת הדוח נכשלה: {generateError}
+                  </p>
+                ) : null}
+
+                {pdfResult ? (
+                  <div className="space-y-1 text-sm">
+                    <p>ה-PDF הופק בהצלחה</p>
+                    <a href={pdfResult.url} target="_blank" rel="noreferrer" className="underline">
+                      קובץ ה-PDF
+                    </a>
+                    {pdfResult.skippedFiles.length > 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        קבצים שלא צורפו: {pdfResult.skippedFiles.join(", ")}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {pdfError ? (
+                  <p className="text-sm text-destructive">
+                    הנפקת ה-PDF נכשלה: {pdfError}
+                  </p>
+                ) : null}
+
+                <PdfExportDialog
+                  open={pdfDialogOpen}
+                  onOpenChange={setPdfDialogOpen}
+                  busy={pdfBusy}
+                  progress={pdfProgress}
+                  onSubmit={handlePdfExport}
+                />
+              </div>
             </div>
           )}
         </CardContent>

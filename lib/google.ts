@@ -2,9 +2,9 @@ import { getServerSession } from "next-auth";
 import { google, type sheets_v4, type drive_v3 } from "googleapis";
 import { authOptions } from "./auth";
 import {
-  DEFAULT_CATEGORY,
   DEFAULT_STORE_NAME,
   DOCUMENT_TYPE,
+  normalizeCategory,
   PAYMENT_METHOD,
   RECEIPT_HEADERS,
   SETTINGS_HEADERS,
@@ -438,7 +438,7 @@ function rowToReceipt(row: any[]): Receipt {
         ? null
         : Number(row[3]),
     date: row[4] ? String(row[4]) : null,
-    category: ((row[5] as any) || DEFAULT_CATEGORY) as Receipt["category"],
+    category: normalizeCategory(row[5] as string | undefined),
     documentType: ((row[6] as any) || DOCUMENT_TYPE.Receipt) as Receipt["documentType"],
     paymentMethod: ((row[7] as any) || PAYMENT_METHOD.Unknown) as Receipt["paymentMethod"],
     totalReceiptAmount:
@@ -677,6 +677,21 @@ export async function searchDriveFolders(
   return (res.data.files ?? []).map((f) => ({ id: f.id!, name: f.name! }));
 }
 
+// Name-contains search over spreadsheet-like files (native Sheets + xlsx),
+// used by the report-template picker. Max 20, excludes trashed.
+export async function searchDriveFiles(
+  accessToken: string,
+  query: string,
+): Promise<Array<{ id: string; name: string }>> {
+  const drive = driveClient(accessToken);
+  const res = await drive.files.list({
+    q: `(mimeType='application/vnd.google-apps.spreadsheet' or mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') and name contains '${query.replace(/'/g, "\\'")}' and trashed=false`,
+    fields: "files(id,name)",
+    pageSize: 20,
+  });
+  return (res.data.files ?? []).map((f) => ({ id: f.id!, name: f.name! }));
+}
+
 export async function downloadDriveFile(
   accessToken: string,
   fileId: string,
@@ -762,6 +777,114 @@ export async function findDriveFileInFolder(
   return res.data.files?.[0]?.id ?? null;
 }
 
+// ============================================================================
+// Generic Drive/Sheets helpers (report generator — Task 5 builds on these)
+// ============================================================================
+
+// Copy a Drive file into a folder, converting it to a native Google Sheet
+// (required: the report template is an .xlsx, which Sheets API cannot edit).
+export async function copyDriveFileAsSheet(
+  accessToken: string,
+  fileId: string,
+  name: string,
+  parentId: string,
+): Promise<string> {
+  const drive = driveClient(accessToken);
+  const res = await drive.files.copy({
+    fileId,
+    requestBody: {
+      name,
+      parents: [parentId],
+      mimeType: "application/vnd.google-apps.spreadsheet",
+    },
+    fields: "id",
+  });
+  return res.data.id!;
+}
+
+// Find-or-create a blank native spreadsheet by name inside a folder.
+// (ensureSpreadsheet creates only the main app sheet at Drive root.)
+export async function createSpreadsheetInFolder(
+  accessToken: string,
+  name: string,
+  parentId: string,
+): Promise<string> {
+  const existing = await findDriveFileInFolder(accessToken, parentId, name);
+  if (existing) return existing;
+  const drive = driveClient(accessToken);
+  const res = await drive.files.create({
+    requestBody: {
+      name,
+      mimeType: "application/vnd.google-apps.spreadsheet",
+      parents: [parentId],
+    },
+    fields: "id",
+  });
+  return res.data.id!;
+}
+
+export async function listSheetTabs(
+  accessToken: string,
+  spreadsheetId: string,
+): Promise<Array<{ sheetId: number; title: string }>> {
+  const sheets = sheetsClient(accessToken);
+  const res = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets(properties(sheetId,title))",
+  });
+  return (res.data.sheets ?? []).map((s) => ({
+    sheetId: s.properties!.sheetId!,
+    title: s.properties!.title!,
+  }));
+}
+
+// Whole-tab read as a 2D string grid. `unformatted` returns raw numbers
+// (needed when comparing totals to computed values); default returns the
+// display strings (needed for label anchoring).
+export async function getSheetGrid(
+  accessToken: string,
+  spreadsheetId: string,
+  tabTitle: string,
+  unformatted = false,
+): Promise<string[][]> {
+  const sheets = sheetsClient(accessToken);
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${tabTitle.replace(/'/g, "''")}'`,
+    valueRenderOption: unformatted ? "UNFORMATTED_VALUE" : "FORMATTED_VALUE",
+  });
+  return (res.data.values ?? []).map((row) => row.map((c) => String(c ?? "")));
+}
+
+// Write many discrete ranges in ONE API call (quota-frugal; the report fill
+// is a single batch). RAW (default): numbers stay numbers (template cell
+// formats apply the ₪), strings are never reinterpreted (ARCHITECTURE.md
+// §8.3). Pass "USER_ENTERED" only for cells that must be parsed as real
+// values by Sheets — e.g. DD/MM/YYYY strings that should become real dates
+// instead of RAW-written text (which Sheets prefixes with a text-marker
+// apostrophe since it looks like a date).
+export async function batchWriteCells(
+  accessToken: string,
+  spreadsheetId: string,
+  data: Array<{ range: string; values: (string | number)[][] }>,
+  valueInputOption: "RAW" | "USER_ENTERED" = "RAW",
+): Promise<void> {
+  const sheets = sheetsClient(accessToken);
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: { valueInputOption, data },
+  });
+}
+
+export async function clearSheetRange(
+  accessToken: string,
+  spreadsheetId: string,
+  range: string,
+): Promise<void> {
+  const sheets = sheetsClient(accessToken);
+  await sheets.spreadsheets.values.clear({ spreadsheetId, range });
+}
+
 export async function uploadFileToDrive(
   accessToken: string,
   folderId: string,
@@ -785,6 +908,87 @@ export async function uploadFileToDrive(
   return { id: res.data.id! };
 }
 
+// Permanently deletes a file, bypassing trash (files.delete on an owned file
+// is a hard delete, not a trash move) — used to clean up the temp PDF-export
+// copy so it never lingers in Drive.
+export async function deleteDriveFile(accessToken: string, fileId: string): Promise<void> {
+  const drive = driveClient(accessToken);
+  await drive.files.delete({ fileId });
+}
+
+// Moves a file to a new parent folder. Drive files.update has no "move"
+// verb — parenting is changed via addParents/removeParents on the current
+// parent list (files.get → files.update, 2 calls). No-op if already there.
+export async function moveDriveFile(
+  accessToken: string,
+  fileId: string,
+  targetFolderId: string,
+): Promise<void> {
+  const drive = driveClient(accessToken);
+  const current = await drive.files.get({ fileId, fields: "parents" });
+  const parents = current.data.parents ?? [];
+  if (parents.length === 1 && parents[0] === targetFolderId) return;
+  await drive.files.update({
+    fileId,
+    addParents: targetFolderId,
+    removeParents: parents.join(","),
+    fields: "id",
+  });
+}
+
+const DEFAULT_ROW_PX = 21;
+const DEFAULT_COL_PX = 100;
+
+// Pixel geometry of one tab (row heights + column widths), needed to convert
+// the report's cell-based layout into PDF page coordinates. Missing
+// pixelSize entries fall back to the Sheets UI defaults.
+export async function getSheetTabMetrics(
+  accessToken: string,
+  spreadsheetId: string,
+  tabTitle: string,
+): Promise<{ sheetId: number; rightToLeft: boolean; rowPx: number[]; colPx: number[] }> {
+  const sheets = sheetsClient(accessToken);
+  const res = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields:
+      "sheets(properties(sheetId,title,rightToLeft),data(rowMetadata(pixelSize),columnMetadata(pixelSize)))",
+  });
+  const sheet = (res.data.sheets ?? []).find((s) => s.properties?.title === tabTitle);
+  if (!sheet) throw new Error(`Sheet tab not found: ${tabTitle}`);
+  const data = sheet.data?.[0];
+  const rowPx = (data?.rowMetadata ?? []).map((m) => m.pixelSize ?? DEFAULT_ROW_PX);
+  const colPx = (data?.columnMetadata ?? []).map((m) => m.pixelSize ?? DEFAULT_COL_PX);
+  return {
+    sheetId: sheet.properties!.sheetId!,
+    rightToLeft: sheet.properties?.rightToLeft ?? false,
+    rowPx,
+    colPx,
+  };
+}
+
+// Exports one tab as a PDF via Sheets' export endpoint (not part of the
+// Sheets/Drive API surface — no googleapis method covers it, hence the raw
+// fetch). scale=4 = fit-to-page: matches the Sheets print-dialog default the
+// user verified (התאמה לגודל הדף) — the report tab is designed to print as
+// exactly one page. scale=1 (100%) breaks it across ~3 pages.
+export async function exportSheetTabPdf(
+  accessToken: string,
+  spreadsheetId: string,
+  gid: number,
+): Promise<Buffer> {
+  const url =
+    `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=pdf&gid=${gid}` +
+    `&size=A4&portrait=true&scale=4&sheetnames=false&printtitle=false&pagenum=false&gridlines=false` +
+    `&top_margin=0.25&bottom_margin=0.25&left_margin=0.25&right_margin=0.25`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    throw new Error(`Sheet tab PDF export failed: ${res.status} ${res.statusText}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
 // ============================================================================
 // User settings (stored in הגדרות tab as key/value rows)
 // ============================================================================
@@ -796,7 +1000,7 @@ export async function getUserSettings(
   spreadsheetId: string,
 ): Promise<UserSettings> {
   const sheets = sheetsClient(accessToken);
-  const empty: UserSettings = { myCardsLast4: [] };
+  const empty: UserSettings = { myCardsLast4: [], householdSize: null, reportTemplate: null };
   try {
     const r = await sheets.spreadsheets.values.get({
       spreadsheetId,
@@ -812,6 +1016,18 @@ export async function getUserSettings(
           .split(",")
           .map((s) => s.trim())
           .filter((s) => CARD_LAST4_RE.test(s));
+      }
+      if (key === SETTINGS_KEY.HouseholdSize) {
+        const n = Number(value);
+        out.householdSize = Number.isInteger(n) && n >= 1 && n <= 20 ? n : null;
+      }
+      if (key === SETTINGS_KEY.ReportTemplate) {
+        try {
+          const t = JSON.parse(value) as { id?: unknown; name?: unknown };
+          if (typeof t.id === "string" && t.id && typeof t.name === "string") {
+            out.reportTemplate = { id: t.id, name: t.name };
+          }
+        } catch { /* malformed row — treat as unset */ }
       }
     }
     return out;
@@ -833,12 +1049,15 @@ export async function writeUserSettings(
     spreadsheetId,
     range: `${SHEET_TAB_SETTINGS}!A2:B`,
   });
+  const rows: string[][] = [[SETTINGS_KEY.MyCardsLast4, validCards.join(",")]];
+  if (s.householdSize !== null) rows.push([SETTINGS_KEY.HouseholdSize, String(s.householdSize)]);
+  if (s.reportTemplate !== null) rows.push([SETTINGS_KEY.ReportTemplate, JSON.stringify(s.reportTemplate)]);
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range: `${SHEET_TAB_SETTINGS}!A2`,
     valueInputOption: "RAW",
     requestBody: {
-      values: [[SETTINGS_KEY.MyCardsLast4, validCards.join(",")]],
+      values: rows,
     },
   });
 }
