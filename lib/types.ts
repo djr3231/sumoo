@@ -104,6 +104,11 @@ export const GOV_EXPENSE_CATEGORY = {
 export type GovExpenseCategory = (typeof GOV_EXPENSE_CATEGORY)[keyof typeof GOV_EXPENSE_CATEGORY];
 export const GOV_EXPENSE_CATEGORIES: GovExpenseCategory[] = Object.values(GOV_EXPENSE_CATEGORY);
 
+// Working-sheet receipt-column value for expense lines the user marked as
+// legitimately having no receipt (insurance/savings deposits, social payments,
+// forgotten receipt). A user decision, never auto-set.
+export const NO_RECEIPT_LABEL = "לא רלוונטי";
+
 // The receipt-scanner's category domain IS the gov expense list (unified 2026-07;
 // previously a separate, divergent 18-entry list — see LEGACY_CATEGORY_MAP below
 // for the read-side migration of receipts saved under the old strings).

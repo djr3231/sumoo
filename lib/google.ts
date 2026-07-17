@@ -876,6 +876,43 @@ export async function batchWriteCells(
   });
 }
 
+// Write Google-Drive smart chips ("file chips") into individual cells.
+// Each cell becomes a single chip: userEnteredValue "@" is the placeholder
+// the chipRun replaces (per the Sheets API chips guide). Write support is
+// limited to Drive file URIs. One spreadsheets.batchUpdate call total.
+export async function writeFileChips(
+  accessToken: string,
+  spreadsheetId: string,
+  sheetId: number,
+  cells: Array<{ row: number; col: number; uri: string }>,
+): Promise<void> {
+  if (cells.length === 0) return;
+  const sheets = sheetsClient(accessToken);
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: cells.map(({ row, col, uri }) => ({
+        updateCells: {
+          rows: [
+            {
+              values: [
+                {
+                  userEnteredValue: { stringValue: "@" },
+                  chipRuns: [
+                    { startIndex: 0, chip: { richLinkProperties: { uri } } },
+                  ],
+                },
+              ],
+            },
+          ],
+          fields: "userEnteredValue,chipRuns",
+          start: { sheetId, rowIndex: row, columnIndex: col },
+        },
+      })),
+    },
+  });
+}
+
 export async function clearSheetRange(
   accessToken: string,
   spreadsheetId: string,

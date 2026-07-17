@@ -7,6 +7,7 @@ import {
   GOV_EXPENSE_CATEGORIES,
   GOV_EXPENSE_CATEGORY,
   GOV_INCOME_CATEGORIES,
+  NO_RECEIPT_LABEL,
   formatFoodCategory,
   type GovExpenseCategory,
   type GovIncomeCategory,
@@ -34,6 +35,9 @@ export interface RollupInput {
   incomeIncluded: Record<string, boolean>;
   transferInclude: Record<string, boolean>;
   creditRoute: Record<string, "income" | "expense" | "exclude">;
+  // fileName → Drive URL for attached receipts (wizard's receiptLinks state).
+  // Optional: absent = working-sheet receipt cells stay plain text.
+  receiptLinks?: Record<string, string>;
   householdSize: number;
 }
 
@@ -45,7 +49,8 @@ export interface WorkingRow {
   note: string;
   date: string; // DD/MM/YYYY or ""
   categoryLabel: string; // Food carries the household size
-  receipt: string; // receipt fileName or "-"
+  receipt: string; // receipt fileName, NO_RECEIPT_LABEL, or "-"
+  receiptUrl?: string; // Drive URL when the line has an attached receipt with a known link
 }
 
 export interface ReportRollup {
@@ -156,7 +161,8 @@ export function buildReportRollup(input: RollupInput): ReportRollup {
         e.category === GOV_EXPENSE_CATEGORY.Food
           ? formatFoodCategory(householdSize)
           : e.category,
-      receipt: e.receipt || "-",
+      receipt: e.receipt || (e.noReceipt ? NO_RECEIPT_LABEL : "-"),
+      receiptUrl: e.receipt ? input.receiptLinks?.[e.receipt] : undefined,
     }));
 
   const round2All = (rec: Record<string, [number, number]>) => {

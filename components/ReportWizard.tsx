@@ -118,7 +118,7 @@ const MONTH_PAIRS = [
 ] as const;
 
 const CURRENT_YEAR = new Date().getFullYear();
-const YEAR_OPTIONS = [CURRENT_YEAR, CURRENT_YEAR - 1, CURRENT_YEAR - 2];
+const YEAR_OPTIONS = [CURRENT_YEAR - 1, CURRENT_YEAR, CURRENT_YEAR + 1];
 
 interface CreatedPeriod {
   folderName: string;
@@ -389,7 +389,7 @@ export function ReportWizard() {
     "all" | "direct" | "checking" | "cash" | "manual"
   >("all");
   const [receiptMatchFilter, setReceiptMatchFilter] = useState<
-    "all" | "matched" | "unmatched"
+    "all" | "matched" | "awaiting" | "irrelevant"
   >("all");
   const [expenseSort, setExpenseSort] = useState<{
     key:
@@ -672,7 +672,7 @@ export function ReportWizard() {
     setExpenses((prev) =>
       prev.map((e) =>
         applied.has(e.lineId) && !e.receipt
-          ? { ...e, receipt: applied.get(e.lineId)!.fileName }
+          ? { ...e, receipt: applied.get(e.lineId)!.fileName, noReceipt: undefined }
           : e,
       ),
     );
@@ -798,7 +798,9 @@ export function ReportWizard() {
   // the workbench stays open, so the next charge can be attached to it too.
   function attachReceipt(r: Receipt, lineId: string, keepAvailable = false) {
     const nextExpenses = expenses.map((e) =>
-      e.lineId === lineId ? { ...e, receipt: r.fileName } : e,
+      e.lineId === lineId
+        ? { ...e, receipt: r.fileName, noReceipt: undefined }
+        : e,
     );
     const prevFile = expenses.find((e) => e.lineId === lineId)?.receipt;
     if (prevFile) {
@@ -972,6 +974,7 @@ export function ReportWizard() {
       transferInclude,
       creditRoute,
       householdSize: householdSize ?? DEFAULT_HOUSEHOLD_SIZE,
+      receiptLinks,
     });
   }, [
     result,
@@ -982,6 +985,7 @@ export function ReportWizard() {
     transferInclude,
     creditRoute,
     householdSize,
+    receiptLinks,
   ]);
 
   // Step 6: POST the same rollupInput (minus months/householdSize, which the
@@ -1006,6 +1010,7 @@ export function ReportWizard() {
             incomeIncluded,
             transferInclude,
             creditRoute,
+            receiptLinks,
           },
         }),
       });
@@ -1195,9 +1200,28 @@ export function ReportWizard() {
         ? true
         : receiptMatchFilter === "matched"
           ? Boolean(e.receipt)
-          : !e.receipt,
+          : receiptMatchFilter === "awaiting"
+            ? !e.receipt && !e.noReceipt
+            : !e.receipt && Boolean(e.noReceipt),
     )
     .sort(compareExpense);
+
+  // "לא רלוונטי" select-all: acts only on rows visible under the current
+  // filter that have no receipt. Rows carrying a receipt are never touched.
+  const markableVisible = receiptView.filter(({ e }) => !e.receipt);
+  const allVisibleMarked =
+    markableVisible.length > 0 &&
+    markableVisible.every(({ e }) => e.noReceipt);
+  function setMarkAllVisible(checked: boolean) {
+    const ids = new Set(markableVisible.map(({ e }) => e.lineId));
+    setExpenses((prev) =>
+      prev.map((e) =>
+        ids.has(e.lineId)
+          ? { ...e, noReceipt: checked ? true : undefined }
+          : e,
+      ),
+    );
+  }
 
   // Receipts that matched no charge: cash ones dated in-period become expense
   // candidates; the rest are surfaced for manual review (never auto-added).
@@ -1275,6 +1299,15 @@ export function ReportWizard() {
     result != null &&
     cashRows.some((r) => Math.abs(r.residual) > CARD_GAP_TOLERANCE) &&
     !cashGapAck;
+
+  // Cash lines actually included in the report — the detail behind cashRows'
+  // "covered" numbers, listed in the cash step with their receipt links.
+  const includedCashLines = expenses
+    .filter((e) => e.source === "cash" && isExpenseIncluded(e.lineId))
+    .sort(
+      (a, b) =>
+        a.month - b.month || (a.date ?? "").localeCompare(b.date ?? ""),
+    );
 
   function toggleSort(key: typeof expenseSort.key) {
     setExpenseSort((s) =>
@@ -1919,6 +1952,10 @@ export function ReportWizard() {
                     <span className="text-sm text-muted-foreground">
                       {expenses.filter((e) => e.receipt).length} מתוך{" "}
                       {expenses.length} חיובים עם קבלה
+                      {expenses.filter((e) => !e.receipt && e.noReceipt).length > 0
+                        ? ` · ${expenses.filter((e) => !e.receipt && e.noReceipt).length} לא רלוונטי`
+                        : ""}
+                      {` · ${expenses.filter((e) => !e.receipt && !e.noReceipt).length} ממתינים לקבלה`}
                       {unmatchedReceipts.length > 0
                         ? ` · ${unmatchedReceipts.length} קבלות ללא התאמה`
                         : ""}
@@ -1934,7 +1971,7 @@ export function ReportWizard() {
                       value={receiptMatchFilter}
                       onValueChange={(v) =>
                         setReceiptMatchFilter(
-                          v as "all" | "matched" | "unmatched",
+                          v as "all" | "matched" | "awaiting" | "irrelevant",
                         )
                       }
                     >
@@ -1944,7 +1981,8 @@ export function ReportWizard() {
                       <SelectContent>
                         <SelectItem value="all">הכל</SelectItem>
                         <SelectItem value="matched">עם קבלה</SelectItem>
-                        <SelectItem value="unmatched">ללא קבלה</SelectItem>
+                        <SelectItem value="awaiting">ממתין לקבלה</SelectItem>
+                        <SelectItem value="irrelevant">לא רלוונטי</SelectItem>
                       </SelectContent>
                     </Select>
                     <Table>
@@ -1980,11 +2018,29 @@ export function ReportWizard() {
                           >
                             {sortArrow("receipt")}קבלה
                           </TableHead>
+                          <TableHead>
+                            <span className="flex items-center gap-1">
+                              לא רלוונטי
+                              <Checkbox
+                                checked={allVisibleMarked}
+                                disabled={markableVisible.length === 0}
+                                onCheckedChange={(v) =>
+                                  setMarkAllVisible(v === true)
+                                }
+                                aria-label="לא רלוונטי"
+                              />
+                            </span>
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {receiptView.map(({ e }) => (
-                          <TableRow key={e.lineId}>
+                          <TableRow
+                            key={e.lineId}
+                            className={
+                              e.noReceipt ? "text-muted-foreground" : undefined
+                            }
+                          >
                             <TableCell>{e.month}</TableCell>
                             <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
                               {fmtDate(e.date)}
@@ -2020,12 +2076,24 @@ export function ReportWizard() {
                                     className="shrink-0 max-h-fit"
                                     onClick={() => detachReceipt(e.lineId)}
                                   >
-                                    בטל
+                                    בטל התאמה
                                   </Button>
                                 </span>
                               ) : (
                                 <span className="text-muted-foreground">—</span>
                               )}
+                            </TableCell>
+                            <TableCell>
+                              <Checkbox
+                                checked={Boolean(e.noReceipt)}
+                                disabled={Boolean(e.receipt)}
+                                onCheckedChange={(v) =>
+                                  patchExpense(e.lineId, {
+                                    noReceipt: v === true ? true : undefined,
+                                  })
+                                }
+                                aria-label="לא רלוונטי"
+                              />
                             </TableCell>
                           </TableRow>
                         ))}
@@ -2457,6 +2525,54 @@ export function ReportWizard() {
                     כל המשיכות מכוסות בקבלות ✓
                   </p>
                 )}
+                {includedCashLines.length > 0 ? (
+                  <Section title="שורות מזומן בדוח">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>חודש</TableHead>
+                          <TableHead>תאריך</TableHead>
+                          <TableHead>תיאור</TableHead>
+                          <TableHead>סכום</TableHead>
+                          <TableHead>קבלה</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {includedCashLines.map((e) => (
+                          <TableRow key={e.lineId}>
+                            <TableCell>{e.month}</TableCell>
+                            <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
+                              {fmtDate(e.date)}
+                            </TableCell>
+                            <TableCell>{e.description}</TableCell>
+                            <TableCell className="tabular-nums">
+                              {formatILS(e.amount)}
+                            </TableCell>
+                            <TableCell>
+                              {e.receipt && receiptLinks[e.receipt] ? (
+                                <Link
+                                  href={receiptLinks[e.receipt]}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title={e.receipt}
+                                  className="underline truncate min-w-0 max-w-70"
+                                >
+                                  {e.receipt}
+                                </Link>
+                              ) : e.receipt ? (
+                                <span className="truncate min-w-0" title={e.receipt}>
+                                  {e.receipt}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </Section>
+                ) : null}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
