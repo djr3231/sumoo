@@ -85,11 +85,13 @@ the "remember last choice" mechanism. Cookie payload includes `verifiedAt`; entr
 than ~10 minutes are re-verified against the owner's registry before use (quota-friendly:
 no +1 Sheets read per request against the 60 req/min quota).
 
-## 6. Identity in the session (`lib/auth.ts`)
+## 6. Identity in the session
 
-Persist `email` from the Google profile into the JWT on sign-in and expose it on the
-session next to `accessToken`. This is a prerequisite for everything else — today the
-session carries no identity at all.
+**Correction (found while writing Plan 1):** `session.user.email` is already populated
+server-side — NextAuth's default JWT/session behavior carries the Google profile email,
+and `Header.tsx` already renders it. No `lib/auth.ts` change is needed. A new
+`requireSessionIdentity()` helper (in `lib/accounts.ts`) returns `{ token, email }`
+(email lowercased) for API routes, alongside the existing `requireAccessToken()`.
 
 ## 7. New service module — `lib/accounts.ts`
 
