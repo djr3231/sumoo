@@ -1,4 +1,30 @@
-# Project Rules for Claude Code
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Commands
+
+```bash
+npm run typecheck   # tsc --noEmit — run before every commit
+npm run lint        # eslint . — one accepted pre-existing warning: UploadZone.tsx:138
+npm run build       # next build — gate at the end of a task batch
+npm run dev         # dev server — do NOT run it yourself (see Visual and Runtime Verification below)
+```
+
+There is no test suite. Verification = typecheck + lint + build; visual/runtime E2E is always handed to the user.
+
+## Architecture Snapshot
+
+Full details live in ARCHITECTURE.md — this is the orientation summary. **Caveat:** ARCHITECTURE.md's file map and API list predate the report wizard; `lib/report/`, `app/report/`, `components/report/`, `components/ReportWizard.tsx`, `/api/report`, and `/api/scan-context` exist in code but not in that document. Trust the code for those.
+
+- **Stack:** Next.js (App Router) + React 19, TypeScript strict, Tailwind v4 + shadcn (locked preset, RTL, radius 0), NextAuth Google OAuth, Gemini for OCR/dedup. RTL Hebrew PWA deployed on Vercel; prod deploys from `main`.
+- **No database.** Each user's Google Sheets file is the datastore (tabs: קבלות, תנועות, חנויות, הגדרות). The app holds no state between requests; every mutation writes to Sheets/Drive in the same request. Google API usage must stay frugal (test-account quota: 60 Sheets requests/min).
+- **Three layers, one direction:**
+  1. `lib/types.ts` — every enum, Hebrew domain string, sheet tab name, and column header is declared here once. No I/O, no imports from other lib modules.
+  2. `lib/*.ts` services — one module per integration: `google.ts` is the **only** file that imports `googleapis`; `ai.ts` owns all Gemini prompts/schemas; `parsers.ts`, `match.ts`, `places.ts`, `auth.ts`, `utils.ts`. `lib/report/*` is the bi-monthly insolvency-report pipeline (rollup → reconcile → generate → pdf, plus progress tracking).
+  3. `app/api/*/route.ts` — thin HTTP orchestration: `runtime = "nodejs"`, auth via `requireAccessToken()` (never `getServerSession` directly), try/catch with `{ error }` JSON envelopes. Client components (`components/`) fetch `/api/*` only — Google credentials never reach the browser.
+- **Load-bearing invariants:** no inline Hebrew domain literals outside `lib/types.ts` (exception: `lib/ai.ts` prompts and pure-presentation UI labels); exhaustive `switch` with no `default` over const enums; column A (UUID) always filled (`values.append` is gap-sensitive); `valueInputOption: "RAW"` for settings writes; Gemini response schemas built from `Object.values(ENUM)`; report output is anonymous — personal details only in the user-initiated PDF, never in code/Sheets/logs.
+- **Adding things:** ARCHITECTURE.md §11 has file-by-file recipes (new column, new setting, new tab, new API route, new payment method).
 
 ## Source of Truth
 ARCHITECTURE.md is the authoritative blueprint for this template.
