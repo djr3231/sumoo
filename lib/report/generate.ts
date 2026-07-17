@@ -17,6 +17,7 @@ import {
   findDriveFileInFolder,
   getSheetGrid,
   listSheetTabs,
+  writeFileChips,
 } from "@/lib/google";
 import {
   GOV_EXPENSE_CATEGORIES,
@@ -115,6 +116,38 @@ async function generateWorkingSheet(
     ...rollup.workingRows.map((r) => [r.merchant, r.amount, r.currency, r.note, r.date, r.categoryLabel, r.receipt]),
   ];
   await batchWriteCells(token, id, [{ range: `'${WORKING_TAB}'!A1`, values }]);
+
+  // Receipt cells (col G, zero-based 6; data starts at row index 1) that carry
+  // a Drive URL become smart chips — same look as the user's hand-made sheet.
+  // On any chip-write failure, degrade to a plain HYPERLINK formula: cosmetic
+  // difference only, never fail the generation for it.
+  const chipCells = rollup.workingRows
+    .map((r, i) => ({ row: i + 1, col: 6, uri: r.receiptUrl, name: r.receipt }))
+    .filter((c): c is { row: number; col: number; uri: string; name: string } =>
+      Boolean(c.uri),
+    );
+  if (chipCells.length > 0) {
+    const tabs = await listSheetTabs(token, id);
+    const tab = tabs.find((t) => t.title === WORKING_TAB);
+    if (tab) {
+      try {
+        await writeFileChips(token, id, tab.sheetId, chipCells);
+      } catch {
+        await batchWriteCells(
+          token,
+          id,
+          chipCells.map((c) => ({
+            range: rangeFor(WORKING_TAB, c.row, c.col),
+            values: [
+              [`=HYPERLINK("${c.uri}","${c.name.replace(/"/g, '""')}")`],
+            ],
+          })),
+          "USER_ENTERED",
+        );
+      }
+    }
+  }
+
   return { id, url: sheetUrl(id) };
 }
 

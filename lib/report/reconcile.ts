@@ -26,6 +26,7 @@ export interface ExpenseItem {
   source: ExpenseSource;
   date?: string; // purchase date (card transaction / bank txn) — for receipt matching
   receipt?: string; // attached receipt label (filename), set in the receipts step
+  noReceipt?: boolean; // user marked: this line legitimately has no receipt ("לא רלוונטי")
 }
 
 // Income is determinable by source, so it is categorized here.
