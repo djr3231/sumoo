@@ -34,7 +34,9 @@ export async function POST(req: Request) {
     const { token, spreadsheetId } = await resolveActingContext();
     // The settings form doesn't know about familyMembers — preserve the
     // stored registry across rewrites (writeUserSettings clears A2:B).
-    const current = await getUserSettings(token, spreadsheetId);
+    // strict: a failed read must abort the save, otherwise a transient
+    // Sheets error would silently wipe the registry.
+    const current = await getUserSettings(token, spreadsheetId, { strict: true });
     await writeUserSettings(token, spreadsheetId, {
       myCardsLast4,
       householdSize,

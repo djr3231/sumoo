@@ -7,7 +7,7 @@ import {
   requireSessionIdentity,
   verifyMembership,
 } from "@/lib/accounts";
-import { listSharedSumooFiles } from "@/lib/google";
+import { getDriveFileOwnerEmail } from "@/lib/google";
 
 export const runtime = "nodejs";
 
@@ -30,8 +30,7 @@ export async function POST(req: Request) {
         { status: 403 },
       );
     }
-    const files = await listSharedSumooFiles(token);
-    const ownerEmail = files.find((f) => f.id === target)?.ownerEmail ?? "";
+    const ownerEmail = await getDriveFileOwnerEmail(token, target).catch(() => "");
     store.set(
       ACTIVE_ACCOUNT_COOKIE,
       encodeActiveAccount({

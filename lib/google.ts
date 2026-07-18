@@ -227,6 +227,21 @@ export async function listSharedSumooFiles(
   }));
 }
 
+// Owner email of a single Drive file — targeted lookup for the account
+// switch, where the file id is already membership-verified. Cheaper and more
+// reliable than scanning the (page-capped) shared-file listing.
+export async function getDriveFileOwnerEmail(
+  accessToken: string,
+  fileId: string,
+): Promise<string> {
+  const drive = driveClient(accessToken);
+  const r = await drive.files.get({
+    fileId,
+    fields: "owners(emailAddress)",
+  });
+  return r.data.owners?.[0]?.emailAddress?.toLowerCase() ?? "";
+}
+
 // Generic find-or-create for a single named tab (a title not among the 4
 // known report tabs). Generalizes the `ensureTabs` skeleton below without
 // touching it — used by callers (e.g. the progress store) that manage their
@@ -1056,6 +1071,10 @@ const CARD_LAST4_RE = /^\d{4}$/;
 export async function getUserSettings(
   accessToken: string,
   spreadsheetId: string,
+  // strict: rethrow read failures instead of returning empty defaults.
+  // Callers that WRITE settings back must use strict — treating a transient
+  // read failure as "no settings" would wipe fields they meant to preserve.
+  opts: { strict?: boolean } = {},
 ): Promise<UserSettings> {
   const sheets = sheetsClient(accessToken);
   const empty: UserSettings = {
@@ -1111,7 +1130,8 @@ export async function getUserSettings(
       }
     }
     return out;
-  } catch {
+  } catch (e) {
+    if (opts.strict) throw e;
     return empty;
   }
 }
