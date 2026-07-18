@@ -4,7 +4,7 @@ import Link from "next/link";
 import { List } from "@phosphor-icons/react";
 import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
 import { Button } from "./ui/button";
-import { SignOutButton } from "./SignOutButton";
+import { UserMenu } from "./UserMenu";
 import { ThemeToggle } from "./ThemeToggle";
 
 interface MobileNavProps {
@@ -40,12 +40,12 @@ export function MobileNav({ email }: MobileNavProps) {
           </Link>
         </nav>
         <div className="mt-auto pt-6 flex flex-col gap-3 text-sm border-t border-border">
-          <div className="flex items-center justify-between px-3 pt-3">
+          <div className="flex items-center justify-between px-3 pt-3 pb-3">
             <span className="text-muted-foreground">{email}</span>
-            <ThemeToggle />
-          </div>
-          <div className="px-3 pb-3">
-            <SignOutButton />
+            <div className="flex items-center gap-1">
+              <ThemeToggle />
+              <UserMenu email={email} />
+            </div>
           </div>
         </div>
       </SheetContent>

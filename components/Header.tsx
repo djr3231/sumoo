@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { SignOutButton } from "./SignOutButton";
+import { UserMenu } from "./UserMenu";
 import { SignInButton } from "./SignInButton";
 import { MobileNav } from "./MobileNav";
 import { ThemeToggle } from "./ThemeToggle";
@@ -45,7 +45,7 @@ export default async function Header() {
                 <span className="text-muted-foreground">
                   {session.user.email}
                 </span>
-                <SignOutButton />
+                <UserMenu email={session.user.email ?? ""} />
               </div>
             </div>
           </>
