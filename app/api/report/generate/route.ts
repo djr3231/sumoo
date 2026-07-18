@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server";
-import {
-  getUserSettings,
-  requireAccessToken,
-  resolveSpreadsheetId,
-} from "@/lib/google";
+import { resolveActingContext } from "@/lib/accounts";
+import { getUserSettings } from "@/lib/google";
 import { buildReportRollup } from "@/lib/report/rollup";
 import {
   generateReportArtifacts,
@@ -33,8 +30,7 @@ export async function POST(req: Request) {
     ) {
       return NextResponse.json({ error: "חסרים נתוני תקופה" }, { status: 400 });
     }
-    const token = await requireAccessToken();
-    const spreadsheetId = await resolveSpreadsheetId(token);
+    const { token, spreadsheetId } = await resolveActingContext({ ensure: false });
     const settings = await getUserSettings(token, spreadsheetId);
     const householdSize = settings.householdSize ?? DEFAULT_HOUSEHOLD_SIZE;
     const rollup = buildReportRollup({

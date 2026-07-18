@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { ensureSpreadsheet, getAllReceipts, requireAccessToken } from "@/lib/google";
+import { resolveActingContext } from "@/lib/accounts";
+import { getAllReceipts } from "@/lib/google";
 import { DOCUMENT_TYPE } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -11,8 +12,7 @@ export const maxDuration = 60;
 // not receipts-as-evidence — they must never compete for an expense line.
 export async function GET() {
   try {
-    const token = await requireAccessToken();
-    const spreadsheetId = await ensureSpreadsheet(token);
+    const { token, spreadsheetId } = await resolveActingContext();
     const receipts = (await getAllReceipts(token, spreadsheetId)).filter(
       (r) =>
         r.documentType !== DOCUMENT_TYPE.Duplicate &&

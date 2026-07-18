@@ -1,18 +1,13 @@
 import { NextResponse } from "next/server";
-import {
-  ensureSpreadsheet,
-  getUserSettings,
-  requireAccessToken,
-  writeUserSettings,
-} from "@/lib/google";
+import { resolveActingContext } from "@/lib/accounts";
+import { getUserSettings, writeUserSettings } from "@/lib/google";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
 export async function GET() {
   try {
-    const token = await requireAccessToken();
-    const spreadsheetId = await ensureSpreadsheet(token);
+    const { token, spreadsheetId } = await resolveActingContext();
     const settings = await getUserSettings(token, spreadsheetId);
     return NextResponse.json(settings);
   } catch (err) {
@@ -36,8 +31,7 @@ export async function POST(req: Request) {
         ? { id: rt.id, name: rt.name }
         : null;
 
-    const token = await requireAccessToken();
-    const spreadsheetId = await ensureSpreadsheet(token);
+    const { token, spreadsheetId } = await resolveActingContext();
     // The settings form doesn't know about familyMembers — preserve the
     // stored registry across rewrites (writeUserSettings clears A2:B).
     const current = await getUserSettings(token, spreadsheetId);

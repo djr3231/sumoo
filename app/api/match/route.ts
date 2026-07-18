@@ -1,10 +1,6 @@
 import { NextResponse } from "next/server";
-import {
-  appendTxns,
-  ensureSpreadsheet,
-  getAllReceipts,
-  requireAccessToken,
-} from "@/lib/google";
+import { resolveActingContext } from "@/lib/accounts";
+import { appendTxns, getAllReceipts } from "@/lib/google";
 import { matchTxnsToReceipts } from "@/lib/match";
 import { PAYMENT_METHOD, type BankTxn } from "@/lib/types";
 
@@ -17,8 +13,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "txns required" }, { status: 400 });
     }
 
-    const token = await requireAccessToken();
-    const spreadsheetId = await ensureSpreadsheet(token);
+    const { token, spreadsheetId } = await resolveActingContext();
     const receipts = await getAllReceipts(token, spreadsheetId);
 
     // Foreign-card receipts can't correspond to the user's own bank/card

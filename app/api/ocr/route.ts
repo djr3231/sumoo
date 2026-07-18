@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { v4 as uuidv4 } from "uuid";
+import { resolveActingContext } from "@/lib/accounts";
 import { extractReceipt } from "@/lib/ai";
 import {
   appendOrIncrementStore,
   downloadDriveFile,
-  ensureSpreadsheet,
   ensureUploadFolder,
   getAllStores,
   getUserSettings,
@@ -154,8 +154,7 @@ export async function POST(req: Request) {
     let spreadsheetId: string | null = null;
     let knownStores: string[] = body.knownStores ?? [];
     try {
-      token = await requireAccessToken();
-      spreadsheetId = await ensureSpreadsheet(token);
+      ({ token, spreadsheetId } = await resolveActingContext());
       // Only read the stores tab if the client didn't supply it — cuts one
       // Sheets read per file during a batch.
       if (body.knownStores === undefined) {

@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
+import { resolveActingContext } from "@/lib/accounts";
 import {
   canonicalizeStoreNames,
   detectDuplicatesAndPairs,
 } from "@/lib/ai";
 import {
   bulkUpdateReceipts,
-  ensureSpreadsheet,
   getAllReceipts,
   getAllStores,
-  requireAccessToken,
   writeAllStores,
 } from "@/lib/google";
 import { looksUnresolved, resolveStoreName } from "@/lib/places";
@@ -47,8 +46,7 @@ function isReceiptType(t: Receipt["documentType"]): boolean {
 
 export async function POST() {
   try {
-    const token = await requireAccessToken();
-    const spreadsheetId = await ensureSpreadsheet(token);
+    const { token, spreadsheetId } = await resolveActingContext();
     const receipts = await getAllReceipts(token, spreadsheetId);
 
     if (receipts.length === 0) {

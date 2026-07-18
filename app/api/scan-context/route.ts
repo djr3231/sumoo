@@ -1,10 +1,6 @@
 import { NextResponse } from "next/server";
-import {
-  ensureSpreadsheet,
-  getAllStores,
-  getUserSettings,
-  requireAccessToken,
-} from "@/lib/google";
+import { resolveActingContext } from "@/lib/accounts";
+import { getAllStores, getUserSettings } from "@/lib/google";
 
 export const runtime = "nodejs";
 
@@ -15,8 +11,7 @@ export const runtime = "nodejs";
 // of 49 times — which is what was blowing the 60-reads/min/user quota.
 export async function GET() {
   try {
-    const token = await requireAccessToken();
-    const spreadsheetId = await ensureSpreadsheet(token);
+    const { token, spreadsheetId } = await resolveActingContext();
     const [stores, settings] = await Promise.all([
       getAllStores(token, spreadsheetId).catch(() => []),
       getUserSettings(token, spreadsheetId).catch(

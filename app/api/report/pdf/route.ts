@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAccessToken, resolveSpreadsheetId } from "@/lib/google";
+import { resolveActingContext } from "@/lib/accounts";
 import { buildReportPdfBundle } from "@/lib/report/pdf";
 import type { PersonalDetails, PdfExportArgs, PdfProgress } from "@/lib/report/pdf";
 import type { ReportFolders } from "@/lib/report/period";
@@ -61,8 +61,7 @@ export async function POST(req: Request) {
         }
       };
       try {
-        const token = await requireAccessToken();
-        const spreadsheetId = await resolveSpreadsheetId(token);
+        const { token, spreadsheetId } = await resolveActingContext({ ensure: false });
         const args: PdfExportArgs = {
           period,
           folders,

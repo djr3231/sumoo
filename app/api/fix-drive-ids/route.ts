@@ -1,19 +1,13 @@
 import { NextResponse } from "next/server";
-import {
-  bulkUpdateReceipts,
-  ensureSpreadsheet,
-  getAllReceipts,
-  requireAccessToken,
-  driveClient,
-} from "@/lib/google";
+import { resolveActingContext } from "@/lib/accounts";
+import { bulkUpdateReceipts, getAllReceipts, driveClient } from "@/lib/google";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 export async function POST() {
   try {
-    const token = await requireAccessToken();
-    const spreadsheetId = await ensureSpreadsheet(token);
+    const { token, spreadsheetId } = await resolveActingContext();
     const receipts = await getAllReceipts(token, spreadsheetId);
 
     if (receipts.length === 0) {
