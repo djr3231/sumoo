@@ -208,6 +208,25 @@ export async function resolveSpreadsheetId(accessToken: string): Promise<string>
   return ensureSpreadsheet(accessToken);
 }
 
+// Spreadsheets named like ours that OTHER users shared with the signed-in
+// user — candidates for family-member account discovery. Covered by the
+// drive.readonly scope. The registry check (is my email listed?) happens in
+// lib/accounts.ts; this only surfaces the candidates.
+export async function listSharedSumooFiles(
+  accessToken: string,
+): Promise<Array<{ id: string; ownerEmail: string }>> {
+  const drive = driveClient(accessToken);
+  const r = await drive.files.list({
+    q: `name = '${SHEET_NAME}' and mimeType = 'application/vnd.google-apps.spreadsheet' and sharedWithMe = true and trashed = false`,
+    fields: "files(id,name,owners(emailAddress))",
+    pageSize: 10,
+  });
+  return (r.data.files || []).map((f) => ({
+    id: f.id!,
+    ownerEmail: f.owners?.[0]?.emailAddress?.toLowerCase() ?? "",
+  }));
+}
+
 // Generic find-or-create for a single named tab (a title not among the 4
 // known report tabs). Generalizes the `ensureTabs` skeleton below without
 // touching it — used by callers (e.g. the progress store) that manage their
