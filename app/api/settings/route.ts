@@ -38,7 +38,15 @@ export async function POST(req: Request) {
 
     const token = await requireAccessToken();
     const spreadsheetId = await ensureSpreadsheet(token);
-    await writeUserSettings(token, spreadsheetId, { myCardsLast4, householdSize, reportTemplate });
+    // The settings form doesn't know about familyMembers — preserve the
+    // stored registry across rewrites (writeUserSettings clears A2:B).
+    const current = await getUserSettings(token, spreadsheetId);
+    await writeUserSettings(token, spreadsheetId, {
+      myCardsLast4,
+      householdSize,
+      reportTemplate,
+      familyMembers: current.familyMembers,
+    });
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });

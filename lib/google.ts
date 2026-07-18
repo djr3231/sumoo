@@ -4,6 +4,7 @@ import { authOptions } from "./auth";
 import {
   DEFAULT_STORE_NAME,
   DOCUMENT_TYPE,
+  FAMILY_ROLE_VALUES,
   normalizeCategory,
   PAYMENT_METHOD,
   RECEIPT_HEADERS,
@@ -16,6 +17,7 @@ import {
   STORE_HEADERS,
   TXN_HEADERS,
   type BankTxn,
+  type FamilyMember,
   type Receipt,
   type Store,
   type UserSettings,
@@ -1037,7 +1039,12 @@ export async function getUserSettings(
   spreadsheetId: string,
 ): Promise<UserSettings> {
   const sheets = sheetsClient(accessToken);
-  const empty: UserSettings = { myCardsLast4: [], householdSize: null, reportTemplate: null };
+  const empty: UserSettings = {
+    myCardsLast4: [],
+    householdSize: null,
+    reportTemplate: null,
+    familyMembers: [],
+  };
   try {
     const r = await sheets.spreadsheets.values.get({
       spreadsheetId,
@@ -1066,6 +1073,23 @@ export async function getUserSettings(
           }
         } catch { /* malformed row — treat as unset */ }
       }
+      if (key === SETTINGS_KEY.FamilyMembers) {
+        try {
+          const arr = JSON.parse(value) as unknown;
+          if (Array.isArray(arr)) {
+            out.familyMembers = arr
+              .filter(
+                (m): m is FamilyMember =>
+                  !!m &&
+                  typeof m === "object" &&
+                  typeof (m as FamilyMember).email === "string" &&
+                  (m as FamilyMember).email.includes("@") &&
+                  (FAMILY_ROLE_VALUES as string[]).includes((m as FamilyMember).role),
+              )
+              .map((m) => ({ email: m.email.toLowerCase(), role: m.role }));
+          }
+        } catch { /* malformed row — treat as unset */ }
+      }
     }
     return out;
   } catch {
@@ -1089,6 +1113,9 @@ export async function writeUserSettings(
   const rows: string[][] = [[SETTINGS_KEY.MyCardsLast4, validCards.join(",")]];
   if (s.householdSize !== null) rows.push([SETTINGS_KEY.HouseholdSize, String(s.householdSize)]);
   if (s.reportTemplate !== null) rows.push([SETTINGS_KEY.ReportTemplate, JSON.stringify(s.reportTemplate)]);
+  if (s.familyMembers.length > 0) {
+    rows.push([SETTINGS_KEY.FamilyMembers, JSON.stringify(s.familyMembers)]);
+  }
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range: `${SHEET_TAB_SETTINGS}!A2`,

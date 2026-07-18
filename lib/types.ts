@@ -188,6 +188,7 @@ export const SETTINGS_KEY = {
   MyCardsLast4: "myCardsLast4",
   HouseholdSize: "householdSize",
   ReportTemplate: "reportTemplate",
+  FamilyMembers: "familyMembers",
 } as const;
 export type SettingsKey = (typeof SETTINGS_KEY)[keyof typeof SETTINGS_KEY];
 
@@ -195,6 +196,24 @@ export interface UserSettings {
   myCardsLast4: string[]; // exactly 4-digit strings, validated
   householdSize: number | null; // 1..20; null = unset (fall back to DEFAULT_HOUSEHOLD_SIZE)
   reportTemplate: { id: string; name: string } | null; // null = built-in default template
+  familyMembers: FamilyMember[]; // family-members registry (owner's account only)
+}
+
+// ============================================================================
+// Family members (registry stored as JSON under SETTINGS_KEY.FamilyMembers)
+// ============================================================================
+
+export const FAMILY_ROLE = {
+  UploadView: "upload-view", // upload receipts + view receipts list only
+  Full: "full", // everything the owner can do (except managing members)
+  FullNoReport: "full-no-report", // everything except generating/exporting the report
+} as const;
+export type FamilyRole = (typeof FAMILY_ROLE)[keyof typeof FAMILY_ROLE];
+export const FAMILY_ROLE_VALUES: FamilyRole[] = Object.values(FAMILY_ROLE);
+
+export interface FamilyMember {
+  email: string; // lowercased Google account email
+  role: FamilyRole;
 }
 
 // Household-size default for the Food row when the setting is unset (user-confirmed).
