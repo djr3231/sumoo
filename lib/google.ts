@@ -155,7 +155,7 @@ export async function ensureSpreadsheet(accessToken: string): Promise<string> {
 
   const drive = driveClient(accessToken);
   const found = await drive.files.list({
-    q: `name = '${SHEET_NAME}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+    q: `name = '${SHEET_NAME}' and mimeType = 'application/vnd.google-apps.spreadsheet' and 'me' in owners and trashed = false`,
     fields: "files(id,name)",
     pageSize: 1,
   });
@@ -195,7 +195,7 @@ export async function resolveSpreadsheetId(accessToken: string): Promise<string>
 
   const drive = driveClient(accessToken);
   const found = await drive.files.list({
-    q: `name = '${SHEET_NAME}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+    q: `name = '${SHEET_NAME}' and mimeType = 'application/vnd.google-apps.spreadsheet' and 'me' in owners and trashed = false`,
     fields: "files(id,name)",
     pageSize: 1,
   });
