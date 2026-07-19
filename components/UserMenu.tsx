@@ -14,7 +14,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
-import { FAMILY_ROLE, type FamilyRole } from "@/lib/types";
+import { type FamilyRole } from "@/lib/types";
+import { roleLabel } from "./AccountChip";
 
 interface SharedAccount {
   spreadsheetId: string;
@@ -27,19 +28,6 @@ interface AccountsResponse {
   shared: SharedAccount[];
   active: { kind: "personal" | "shared"; spreadsheetId?: string };
   error?: string;
-}
-
-// Presentation-only role names (not domain values). Exhaustive switch — a
-// new FAMILY_ROLE value must be handled here before this compiles.
-function roleLabel(role: FamilyRole): string {
-  switch (role) {
-    case FAMILY_ROLE.UploadView:
-      return "העלאה וצפייה";
-    case FAMILY_ROLE.Full:
-      return "גישה מלאה";
-    case FAMILY_ROLE.FullNoReport:
-      return "מלאה ללא הפקת דוח";
-  }
 }
 
 export function UserMenu({ email }: { email: string }) {
