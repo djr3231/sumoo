@@ -8,7 +8,13 @@ import {
   listSharedSumooFiles,
   resolveSpreadsheetId,
 } from "./google";
-import { FAMILY_ROLE_VALUES, type FamilyRole } from "./types";
+import {
+  FAMILY_ROLE_VALUES,
+  roleCan,
+  type ActingRole,
+  type Capability,
+  type FamilyRole,
+} from "./types";
 
 // ============================================================================
 // Active-account selection for the family-members feature.
@@ -49,7 +55,7 @@ export interface ActingContext {
   token: string; // the signed-in user's own access token — always
   email: string; // signed-in user's email, lowercased
   spreadsheetId: string;
-  role: "owner" | FamilyRole; // "owner" = acting on their personal account
+  role: ActingRole; // "owner" = acting on their personal account
   ownerEmail: string | null; // null when acting on the personal account
 }
 
@@ -141,9 +147,9 @@ export async function listAvailableAccounts(
 // `ensure: true` (default) mirrors ensureSpreadsheet for personal accounts;
 // pass `ensure: false` on hot paths that used resolveSpreadsheetId.
 export async function resolveActingContext(
-  opts: { ensure?: boolean } = {},
+  opts: { ensure?: boolean; spreadsheet?: boolean } = {},
 ): Promise<ActingContext> {
-  const { ensure = true } = opts;
+  const { ensure = true, spreadsheet = true } = opts;
   const { token, email } = await requireSessionIdentity();
   const store = await cookies();
   const payload = decodeActiveAccount(store.get(ACTIVE_ACCOUNT_COOKIE)?.value);
@@ -182,8 +188,48 @@ export async function resolveActingContext(
     store.delete(ACTIVE_ACCOUNT_COOKIE);
   }
 
-  const spreadsheetId = ensure
-    ? await ensureSpreadsheet(token)
-    : await resolveSpreadsheetId(token);
+  // spreadsheet: false — caller only needs identity + role (token-only
+  // routes). Skips the Drive lookup entirely; spreadsheetId must not be used.
+  const spreadsheetId = !spreadsheet
+    ? ""
+    : ensure
+      ? await ensureSpreadsheet(token)
+      : await resolveSpreadsheetId(token);
   return { token, email, spreadsheetId, role: "owner", ownerEmail: null };
+}
+
+// Thrown when the acting role lacks the required capability. Routes map it
+// to HTTP 403 via errorStatus().
+export class ForbiddenError extends Error {
+  constructor() {
+    super("Forbidden: the active account role does not allow this action");
+    this.name = "ForbiddenError";
+  }
+}
+
+export function errorStatus(err: unknown): number {
+  return err instanceof ForbiddenError ? 403 : 500;
+}
+
+// The standard route front door with authorization: resolves the acting
+// context, then verifies the role holds the capability. Adds zero Google
+// calls beyond what resolveActingContext already does.
+export async function requireCapability(
+  cap: Capability,
+  opts: { ensure?: boolean; spreadsheet?: boolean } = {},
+): Promise<ActingContext> {
+  const ctx = await resolveActingContext(opts);
+  if (!roleCan(ctx.role, cap)) throw new ForbiddenError();
+  return ctx;
+}
+
+// UI-only role peek for server components (page shells, Header): verifies
+// the cookie's HMAC and returns the role WITHOUT any Google call and WITHOUT
+// writing cookies (cookies().set is illegal in server components). A stale
+// cookie may briefly overstate membership — acceptable, because every API
+// route re-enforces via requireCapability.
+export async function peekActingRole(): Promise<ActingRole> {
+  const store = await cookies();
+  const payload = decodeActiveAccount(store.get(ACTIVE_ACCOUNT_COOKIE)?.value);
+  return payload ? payload.role : "owner";
 }
