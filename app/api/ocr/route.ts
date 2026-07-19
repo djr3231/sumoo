@@ -154,11 +154,17 @@ export async function POST(req: Request) {
 
     let token: string | null = null;
     let spreadsheetId: string | null = null;
+    // Shared account => uploads must go to the OWNER's folder, carried in the
+    // acting context. Personal account => ensure our own folder as before.
+    let isSharedAccount = false;
+    let ownerUploadFolderId: string | null = null;
     let knownStores: string[] = body.knownStores ?? [];
     try {
-      ({ token, spreadsheetId } = await requireCapability(
-        CAPABILITY.AppendReceipts,
-      ));
+      const ctx = await requireCapability(CAPABILITY.AppendReceipts);
+      token = ctx.token;
+      spreadsheetId = ctx.spreadsheetId;
+      isSharedAccount = ctx.ownerEmail !== null;
+      ownerUploadFolderId = ctx.uploadFolderId;
       // Only read the stores tab if the client didn't supply it — cuts one
       // Sheets read per file during a batch.
       if (body.knownStores === undefined) {
@@ -177,18 +183,30 @@ export async function POST(req: Request) {
     });
 
     // Auto-upload local files to Drive so they get a permanent link.
-    // Honor a client-supplied folderId; fall back to the default "סומו - העלאות".
+    // Honor a client-supplied folderId; otherwise the owner's folder on a
+    // shared account, or our own "סומו - העלאות" on a personal one.
     if (body.kind === "upload" && token && originalBuffer) {
       try {
-        const folderId = body.folderId ?? (await ensureUploadFolder(token));
-        const uploaded = await uploadFileToDrive(
-          token,
-          folderId,
-          fileName,
-          originalBuffer,
-          body.mediaType || "image/jpeg",
-        );
-        driveFileId = uploaded.id;
+        const folderId =
+          body.folderId ??
+          (isSharedAccount ? ownerUploadFolderId : await ensureUploadFolder(token));
+        if (!folderId) {
+          // Shared account whose owner has no registered upload folder yet.
+          // Deliberately NOT falling back to a name search: a file saved in
+          // the member's own Drive gives the owner a broken link. The row is
+          // still saved, just without an image. The next /api/family write
+          // backfills the id and the next account switch repairs the cookie.
+          console.warn("No upload folder for the active account — skipping Drive upload");
+        } else {
+          const uploaded = await uploadFileToDrive(
+            token,
+            folderId,
+            fileName,
+            originalBuffer,
+            body.mediaType || "image/jpeg",
+          );
+          driveFileId = uploaded.id;
+        }
       } catch (e) {
         console.warn("Drive auto-upload failed", e);
       }
