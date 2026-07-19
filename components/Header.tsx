@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { peekActingRole } from "@/lib/accounts";
+import { roleCan, CAPABILITY } from "@/lib/types";
 import { UserMenu } from "./UserMenu";
 import { SignInButton } from "./SignInButton";
 import { MobileNav } from "./MobileNav";
@@ -8,6 +10,8 @@ import { ThemeToggle } from "./ThemeToggle";
 
 export default async function Header() {
   const session = await getServerSession(authOptions);
+  const role = await peekActingRole();
+  const showFullNav = roleCan(role, CAPABILITY.Maintain);
 
   return (
     <header className="border-b border-border bg-background">
@@ -16,7 +20,7 @@ export default async function Header() {
           <>
             {/* Mobile header — hamburger on start (right in RTL), logo on end (left) */}
             <div className="flex md:hidden items-center justify-between w-full">
-              <MobileNav email={session.user.email ?? ""} />
+              <MobileNav email={session.user.email ?? ""} showFullNav={showFullNav} />
               <Link href="/" className="font-bold text-lg">סומו</Link>
             </div>
 
@@ -30,15 +34,19 @@ export default async function Header() {
                 <Link href="/receipts" className="px-3 py-1.5 hover:bg-accent">
                   קבלות
                 </Link>
-                <Link href="/compare" className="px-3 py-1.5 hover:bg-accent">
-                  השוואה
-                </Link>
-                <Link href="/report" className="px-3 py-1.5 hover:bg-accent">
-                  דוח דו-חודשי
-                </Link>
-                <Link href="/settings" className="px-3 py-1.5 hover:bg-accent">
-                  הגדרות
-                </Link>
+                {showFullNav && (
+                  <>
+                    <Link href="/compare" className="px-3 py-1.5 hover:bg-accent">
+                      השוואה
+                    </Link>
+                    <Link href="/report" className="px-3 py-1.5 hover:bg-accent">
+                      דוח דו-חודשי
+                    </Link>
+                    <Link href="/settings" className="px-3 py-1.5 hover:bg-accent">
+                      הגדרות
+                    </Link>
+                  </>
+                )}
               </nav>
               <div className="text-sm flex items-center gap-3">
                 <ThemeToggle />

@@ -9,9 +9,10 @@ import { ThemeToggle } from "./ThemeToggle";
 
 interface MobileNavProps {
   email: string;
+  showFullNav: boolean;
 }
 
-export function MobileNav({ email }: MobileNavProps) {
+export function MobileNav({ email, showFullNav }: MobileNavProps) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -29,15 +30,19 @@ export function MobileNav({ email }: MobileNavProps) {
           <Link href="/receipts" onClick={() => setOpen(false)} className="px-3 py-3 hover:bg-accent">
             קבלות
           </Link>
-          <Link href="/compare" onClick={() => setOpen(false)} className="px-3 py-3 hover:bg-accent">
-            השוואה
-          </Link>
-          <Link href="/report" onClick={() => setOpen(false)} className="px-3 py-3 hover:bg-accent">
-            דוח דו-חודשי
-          </Link>
-          <Link href="/settings" onClick={() => setOpen(false)} className="px-3 py-3 hover:bg-accent">
-            הגדרות
-          </Link>
+          {showFullNav && (
+            <>
+              <Link href="/compare" onClick={() => setOpen(false)} className="px-3 py-3 hover:bg-accent">
+                השוואה
+              </Link>
+              <Link href="/report" onClick={() => setOpen(false)} className="px-3 py-3 hover:bg-accent">
+                דוח דו-חודשי
+              </Link>
+              <Link href="/settings" onClick={() => setOpen(false)} className="px-3 py-3 hover:bg-accent">
+                הגדרות
+              </Link>
+            </>
+          )}
         </nav>
         <div className="mt-auto pt-6 flex flex-col gap-3 text-sm border-t border-border">
           <div className="flex items-center justify-between px-3 pt-3 pb-3">
