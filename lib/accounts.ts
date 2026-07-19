@@ -43,6 +43,9 @@ export interface ActiveAccountPayload {
   ownerEmail: string;
   role: FamilyRole;
   verifiedAt: number; // epoch ms of the last successful registry check
+  // The OWNER's upload folder id, cached from the same registry read that
+  // verifies membership. null = the owner has not registered one yet.
+  uploadFolderId: string | null;
 }
 
 export interface SharedAccountOption {
@@ -57,6 +60,7 @@ export interface ActingContext {
   spreadsheetId: string;
   role: ActingRole; // "owner" = acting on their personal account
   ownerEmail: string | null; // null when acting on the personal account
+  uploadFolderId: string | null; // owner's upload folder; null on personal accounts
 }
 
 export async function requireSessionIdentity(): Promise<{
@@ -105,23 +109,32 @@ export function decodeActiveAccount(
     if (typeof p.ownerEmail !== "string") return null;
     if (!(FAMILY_ROLE_VALUES as string[]).includes(p.role)) return null;
     if (typeof p.verifiedAt !== "number") return null;
-    return p;
+    // Cookies minted before Plan 3 have no uploadFolderId — normalize to null
+    // instead of rejecting, or every member would be bounced to personal.
+    const folderId = (p as { uploadFolderId?: unknown }).uploadFolderId;
+    return {
+      ...p,
+      uploadFolderId: typeof folderId === "string" && folderId ? folderId : null,
+    };
   } catch {
     return null;
   }
 }
 
 // Is `email` a registered family member of the account whose registry lives
-// in `spreadsheetId`? Costs one Sheets read — callers cache via the cookie.
+// in `spreadsheetId`? Returns the role plus the owner's upload folder id from
+// the SAME settings read — callers cache both via the cookie.
+// Costs one Sheets read.
 export async function verifyMembership(
   token: string,
   spreadsheetId: string,
   email: string,
-): Promise<FamilyRole | null> {
+): Promise<{ role: FamilyRole; uploadFolderId: string | null } | null> {
   try {
     const settings = await getUserSettings(token, spreadsheetId);
     const member = settings.familyMembers.find((m) => m.email === email);
-    return member?.role ?? null;
+    if (!member) return null;
+    return { role: member.role, uploadFolderId: settings.uploadFolderId };
   } catch {
     return null;
   }
@@ -136,8 +149,8 @@ export async function listAvailableAccounts(
   const files = await listSharedSumooFiles(token);
   const out: SharedAccountOption[] = [];
   for (const f of files) {
-    const role = await verifyMembership(token, f.id, email);
-    if (role) out.push({ spreadsheetId: f.id, ownerEmail: f.ownerEmail, role });
+    const m = await verifyMembership(token, f.id, email);
+    if (m) out.push({ spreadsheetId: f.id, ownerEmail: f.ownerEmail, role: m.role });
   }
   return out;
 }
@@ -162,13 +175,15 @@ export async function resolveActingContext(
         spreadsheetId: payload.spreadsheetId,
         role: payload.role,
         ownerEmail: payload.ownerEmail,
+        uploadFolderId: payload.uploadFolderId,
       };
     }
-    const role = await verifyMembership(token, payload.spreadsheetId, email);
-    if (role) {
+    const m = await verifyMembership(token, payload.spreadsheetId, email);
+    if (m) {
       const refreshed: ActiveAccountPayload = {
         ...payload,
-        role,
+        role: m.role,
+        uploadFolderId: m.uploadFolderId,
         verifiedAt: Date.now(),
       };
       store.set(
@@ -180,8 +195,9 @@ export async function resolveActingContext(
         token,
         email,
         spreadsheetId: payload.spreadsheetId,
-        role,
+        role: m.role,
         ownerEmail: payload.ownerEmail,
+        uploadFolderId: m.uploadFolderId,
       };
     }
     // Membership revoked (or registry unreadable) — fall back to personal.
@@ -195,7 +211,14 @@ export async function resolveActingContext(
     : ensure
       ? await ensureSpreadsheet(token)
       : await resolveSpreadsheetId(token);
-  return { token, email, spreadsheetId, role: "owner", ownerEmail: null };
+  return {
+    token,
+    email,
+    spreadsheetId,
+    role: "owner",
+    ownerEmail: null,
+    uploadFolderId: null,
+  };
 }
 
 // Thrown when the acting role lacks the required capability. Routes map it
@@ -223,13 +246,22 @@ export async function requireCapability(
   return ctx;
 }
 
-// UI-only role peek for server components (page shells, Header): verifies
-// the cookie's HMAC and returns the role WITHOUT any Google call and WITHOUT
-// writing cookies (cookies().set is illegal in server components). A stale
-// cookie may briefly overstate membership — acceptable, because every API
-// route re-enforces via requireCapability.
-export async function peekActingRole(): Promise<ActingRole> {
+// UI-only peek for server components (page shells, Header): verifies the
+// cookie's HMAC and returns the acting role + owner email WITHOUT any Google
+// call and WITHOUT writing cookies (cookies().set is illegal in server
+// components). A stale cookie may briefly overstate membership — acceptable,
+// because every API route re-enforces via requireCapability.
+export async function peekActingAccount(): Promise<{
+  role: ActingRole;
+  ownerEmail: string | null;
+}> {
   const store = await cookies();
   const payload = decodeActiveAccount(store.get(ACTIVE_ACCOUNT_COOKIE)?.value);
-  return payload ? payload.role : "owner";
+  return payload
+    ? { role: payload.role, ownerEmail: payload.ownerEmail }
+    : { role: "owner", ownerEmail: null };
+}
+
+export async function peekActingRole(): Promise<ActingRole> {
+  return (await peekActingAccount()).role;
 }

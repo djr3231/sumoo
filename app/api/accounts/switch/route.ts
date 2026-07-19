@@ -23,8 +23,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, active: { kind: "personal" } });
     }
 
-    const role = await verifyMembership(token, target, email);
-    if (!role) {
+    const membership = await verifyMembership(token, target, email);
+    if (!membership) {
       return NextResponse.json(
         { error: "Not a member of this account" },
         { status: 403 },
@@ -36,14 +36,20 @@ export async function POST(req: Request) {
       encodeActiveAccount({
         spreadsheetId: target,
         ownerEmail,
-        role,
+        role: membership.role,
+        uploadFolderId: membership.uploadFolderId,
         verifiedAt: Date.now(),
       }),
       ACTIVE_ACCOUNT_COOKIE_OPTIONS,
     );
     return NextResponse.json({
       ok: true,
-      active: { kind: "shared", spreadsheetId: target, ownerEmail, role },
+      active: {
+        kind: "shared",
+        spreadsheetId: target,
+        ownerEmail,
+        role: membership.role,
+      },
     });
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });
