@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { errorStatus, requireCapability } from "@/lib/accounts";
 import {
+  ensureFileSharedWithEmail,
   ensureUploadFolder,
   getUserSettings,
   revokeFileAccessByEmail,
-  shareFileWithEmail,
   writeUserSettings,
 } from "@/lib/google";
 import { CAPABILITY, FAMILY_ROLE_VALUES, type FamilyRole } from "@/lib/types";
@@ -58,19 +58,10 @@ export async function POST(req: Request) {
       ? settings.familyMembers.map((m) => (m.email === email ? { email, role } : m))
       : [...settings.familyMembers, { email, role }];
 
-    // Role change only: Drive grants are identical across roles, so no
-    // Drive calls at all.
-    if (existing) {
-      await writeUserSettings(ctx.token, ctx.spreadsheetId, {
-        ...settings,
-        familyMembers: members,
-      });
-      return NextResponse.json({ ok: true, members, sharing: [] });
-    }
-
-    // New member. Registry is written BEFORE sharing: an entry without a
-    // share is a member who cannot reach the data, while a share without an
-    // entry would be a dangling Drive grant.
+    // Registry is written BEFORE sharing: an entry without a share is a
+    // member who cannot reach the data, while a share without an entry would
+    // be a dangling Drive grant. Sharing runs on every POST — it is
+    // idempotent, so re-adding a member repairs a previously failed share.
     const uploadFolderId = await ensureUploadFolder(ctx.token);
     await writeUserSettings(ctx.token, ctx.spreadsheetId, {
       ...settings,
@@ -98,7 +89,7 @@ export async function POST(req: Request) {
     const sharing: ShareResult[] = [];
     for (const t of targets) {
       try {
-        await shareFileWithEmail(ctx.token, t.fileId, email, t.role);
+        await ensureFileSharedWithEmail(ctx.token, t.fileId, email, t.role);
         sharing.push({ target: t.target, ok: true });
       } catch {
         // Never log the email address (anonymity rule) — target name only.

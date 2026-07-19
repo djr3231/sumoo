@@ -772,21 +772,43 @@ export async function ensureUploadFolder(accessToken: string): Promise<string> {
 // upload folder, and (optionally) a custom report template the user picked.
 // ============================================================================
 
-// Grant `email` access to `fileId`. sendNotificationEmail=false: the owner
-// tells the family member directly; a surprise Google email is noise.
-export async function shareFileWithEmail(
+// Make `email` hold exactly `role` on `fileId`, whatever the current state.
+// Idempotent, so a partially failed share is repaired by simply adding the
+// member again. permissions.create is NOT the documented way to change an
+// existing grantee's role (Drive wants permissions.update), hence the lookup.
+export async function ensureFileSharedWithEmail(
   accessToken: string,
   fileId: string,
   email: string,
   role: "writer" | "reader",
 ): Promise<void> {
   const drive = driveClient(accessToken);
-  await drive.permissions.create({
+  // emailAddress is not in the default field set — it must be requested.
+  const res = await drive.permissions.list({
     fileId,
-    sendNotificationEmail: false,
-    requestBody: { type: "user", role, emailAddress: email },
-    fields: "id",
+    fields: "permissions(id,emailAddress,type,role)",
+    pageSize: 100,
   });
+  const target = email.toLowerCase();
+  const existing = (res.data.permissions ?? []).find(
+    (p) => p.type === "user" && (p.emailAddress ?? "").toLowerCase() === target,
+  );
+  if (!existing?.id) {
+    await drive.permissions.create({
+      fileId,
+      sendNotificationEmail: false,
+      requestBody: { type: "user", role, emailAddress: email },
+      fields: "id",
+    });
+    return;
+  }
+  if (existing.role !== role) {
+    await drive.permissions.update({
+      fileId,
+      permissionId: existing.id,
+      requestBody: { role },
+    });
+  }
 }
 
 // Remove every user-permission on `fileId` that belongs to `email`.

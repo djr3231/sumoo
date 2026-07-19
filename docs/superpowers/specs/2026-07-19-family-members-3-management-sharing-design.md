@@ -66,8 +66,12 @@ Registry is written **before** sharing, per parent spec §9: a registry entry wi
 share means a member who simply cannot reach the data, while a share without a registry
 entry would be a dangling Drive grant.
 
-**Role change** (email already in the registry) runs steps 1 + 3 only — Drive grants are
-identical across roles, so no Drive calls are made.
+**Role change** (email already in the registry) runs the same four steps. An earlier
+version of this design skipped sharing on a role change, since Drive grants are identical
+across roles — but that made a partially failed share unrepairable: the owner's natural
+retry is to add the member again, and that path performed no Drive calls. Sharing is
+idempotent (§4), so running it on every `POST` turns "add the member again" into the
+repair action.
 
 ### 3.2 `DELETE` — remove member
 
@@ -96,9 +100,14 @@ a dangling grant with no way to reach it from the app.
 
 Two new helpers in `lib/google.ts` (the only `googleapis` importer):
 
-- `shareFileWithEmail(token, fileId, email, role: "writer" | "reader")` —
-  `permissions.create` with `{ type: "user", role, emailAddress: email }`,
-  `fields: "id"`, `sendNotificationEmail: false`.
+- `ensureFileSharedWithEmail(token, fileId, email, role: "writer" | "reader")` —
+  `permissions.list` (fields `permissions(id,emailAddress,type,role)`) to find an existing
+  user permission for the email; none → `permissions.create` with
+  `{ type: "user", role, emailAddress: email }`, `fields: "id"`,
+  `sendNotificationEmail: false`; present with a different role →
+  `permissions.update`; present with the same role → no-op. The lookup is not
+  belt-and-braces: `permissions.create` is not the documented way to change an existing
+  grantee's role, and idempotency is what makes a failed share repairable (§3.1).
 - `revokeFileAccessByEmail(token, fileId, email)` — `permissions.list` with
   `fields: "permissions(id,emailAddress,type)"`, match `type === "user"` and a
   case-insensitive `emailAddress` match, then `permissions.delete`. A no-op when no
@@ -232,6 +241,12 @@ Success → refresh the settings data. `sharing` entries with `ok: false` → wa
   act on the member's own Drive (`report/period`, `report/process`, `drive*` routes).
   Deferred to Plan 4 by explicit user decision; the report feature is in production and
   touching it deserves its own plan.
+- **Stale report-template grants.** `DELETE` revokes the template currently configured.
+  If the owner switched templates after adding the member, the member keeps a `reader`
+  grant on the previous template file forever, invisible to the app. Fixing it properly
+  means recording the actually-shared file ids per member — a registry shape change.
+  Deferred to Plan 4 with the rest of the report/template path (user decision,
+  2026-07-19). Risk is low: a template is an empty structural file shared read-only.
 - Pagination in `listSharedSumooFiles` (pageSize 10).
 - Cross-checking `active` against `shared[]` in `GET /api/accounts`.
 - Invitation/acceptance emails; multi-owner accounts (parent spec §12).
