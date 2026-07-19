@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
-import { resolveActingContext } from "@/lib/accounts";
+import { errorStatus, requireCapability } from "@/lib/accounts";
 import { getUserSettings } from "@/lib/google";
 import { buildReportRollup } from "@/lib/report/rollup";
 import {
   generateReportArtifacts,
   resolveTemplateId,
 } from "@/lib/report/generate";
-import { DEFAULT_HOUSEHOLD_SIZE } from "@/lib/types";
+import { CAPABILITY, DEFAULT_HOUSEHOLD_SIZE } from "@/lib/types";
 import type { ReportFolders } from "@/lib/report/period";
 import type { RollupInput } from "@/lib/report/rollup";
 import type { ReportPeriod } from "@/lib/types";
@@ -30,7 +30,9 @@ export async function POST(req: Request) {
     ) {
       return NextResponse.json({ error: "חסרים נתוני תקופה" }, { status: 400 });
     }
-    const { token, spreadsheetId } = await resolveActingContext({ ensure: false });
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.ReportExport, {
+      ensure: false,
+    });
     const settings = await getUserSettings(token, spreadsheetId);
     const householdSize = settings.householdSize ?? DEFAULT_HOUSEHOLD_SIZE;
     const rollup = buildReportRollup({
@@ -48,7 +50,7 @@ export async function POST(req: Request) {
   } catch (err) {
     return NextResponse.json(
       { error: (err as Error).message },
-      { status: 500 },
+      { status: errorStatus(err) },
     );
   }
 }

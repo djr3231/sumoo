@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { errorStatus, requireCapability } from "@/lib/accounts";
 import { classifyExpenses } from "@/lib/ai";
+import { CAPABILITY } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -8,6 +10,7 @@ export const maxDuration = 120;
 // Body: { items: [{ description, amount }] } -> { categories: string[] }.
 export async function POST(req: Request) {
   try {
+    await requireCapability(CAPABILITY.ReportBuild, { spreadsheet: false });
     const body = await req.json();
     const raw = Array.isArray(body?.items)
       ? (body.items as Array<Record<string, unknown>>)
@@ -22,6 +25,6 @@ export async function POST(req: Request) {
     const categories = await classifyExpenses(items);
     return NextResponse.json({ ok: true, categories });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return NextResponse.json({ error: (e as Error).message }, { status: errorStatus(e) });
   }
 }

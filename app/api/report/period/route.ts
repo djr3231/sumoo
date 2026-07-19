@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { requireAccessToken } from "@/lib/google";
+import { errorStatus, requireCapability } from "@/lib/accounts";
 import { buildReportPeriod, ensureReportFolder } from "@/lib/report/period";
+import { CAPABILITY } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -20,11 +21,13 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
-    const token = await requireAccessToken();
+    const { token } = await requireCapability(CAPABILITY.ReportBuild, {
+      spreadsheet: false,
+    });
     const period = buildReportPeriod(year, month1, month2);
     const folders = await ensureReportFolder(token, period);
     return NextResponse.json({ ok: true, folderName: period.folderName, folders });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return NextResponse.json({ error: (e as Error).message }, { status: errorStatus(e) });
   }
 }

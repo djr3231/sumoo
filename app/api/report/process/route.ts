@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { requireAccessToken } from "@/lib/google";
+import { errorStatus, requireCapability } from "@/lib/accounts";
 import { processPeriodDocuments, type SourceFile } from "@/lib/report/process";
-import type { ReportPeriod } from "@/lib/types";
+import { CAPABILITY, type ReportPeriod } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -16,7 +16,9 @@ async function toSourceFile(f: File): Promise<SourceFile> {
 
 export async function POST(req: Request) {
   try {
-    const token = await requireAccessToken();
+    const { token } = await requireCapability(CAPABILITY.ReportBuild, {
+      spreadsheet: false,
+    });
     const form = await req.formData();
 
     const periodRaw = form.get("period");
@@ -44,6 +46,6 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return NextResponse.json({ error: (e as Error).message }, { status: errorStatus(e) });
   }
 }

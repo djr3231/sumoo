@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { resolveActingContext } from "@/lib/accounts";
+import { errorStatus, requireCapability } from "@/lib/accounts";
 import { buildReportPdfBundle } from "@/lib/report/pdf";
 import type { PersonalDetails, PdfExportArgs, PdfProgress } from "@/lib/report/pdf";
 import type { ReportFolders } from "@/lib/report/period";
-import type { ReportPeriod } from "@/lib/types";
+import { CAPABILITY, type ReportPeriod } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -45,6 +45,21 @@ export async function POST(req: Request) {
   const attachedReceiptFileNames = body.attachedReceiptFileNames ?? [];
   const date = personal.date ? personal.date : todayDDMMYYYY();
 
+  // Gate BEFORE the stream starts, so a 403 rides the HTTP status as plain
+  // JSON instead of being buried in an NDJSON line after a 200 is committed.
+  let token: string;
+  let spreadsheetId: string;
+  try {
+    ({ token, spreadsheetId } = await requireCapability(CAPABILITY.ReportExport, {
+      ensure: false,
+    }));
+  } catch (err) {
+    return NextResponse.json(
+      { error: (err as Error).message },
+      { status: errorStatus(err) },
+    );
+  }
+
   // NDJSON stream: {"progress":…} lines, then one final verdict line
   // ({"ok":…} or {"error":…}). HTTP status is committed at 200 once the
   // stream starts, so failures ride the final line, not the status.
@@ -61,7 +76,6 @@ export async function POST(req: Request) {
         }
       };
       try {
-        const { token, spreadsheetId } = await resolveActingContext({ ensure: false });
         const args: PdfExportArgs = {
           period,
           folders,

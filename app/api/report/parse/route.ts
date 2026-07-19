@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { errorStatus, requireCapability } from "@/lib/accounts";
 import { parseSalarySlip } from "@/lib/ai";
+import { CAPABILITY } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -8,6 +10,7 @@ export const maxDuration = 120;
 // Bank/credit statements continue to use /api/statements.
 export async function POST(req: Request) {
   try {
+    await requireCapability(CAPABILITY.ReportBuild, { spreadsheet: false });
     const form = await req.formData();
     const file = form.get("file") as File | null;
     const hint = (form.get("hint") as string) || undefined;
@@ -30,6 +33,6 @@ export async function POST(req: Request) {
     });
     return NextResponse.json({ ok: true, slip });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return NextResponse.json({ error: (e as Error).message }, { status: errorStatus(e) });
   }
 }

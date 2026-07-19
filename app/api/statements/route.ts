@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
+import { errorStatus, requireCapability } from "@/lib/accounts";
 import { parseStatementPDF } from "@/lib/ai";
 import { parseCSV, parseXLSX } from "@/lib/parsers";
-import type { BankTxn } from "@/lib/types";
+import { CAPABILITY, type BankTxn } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 export async function POST(req: Request) {
   try {
+    await requireCapability(CAPABILITY.Maintain, { spreadsheet: false });
     const form = await req.formData();
     const file = form.get("file") as File | null;
     const sourceLabel = (form.get("sourceLabel") as string) || "תדפיס";
@@ -56,7 +58,7 @@ export async function POST(req: Request) {
   } catch (err) {
     return NextResponse.json(
       { error: (err as Error).message },
-      { status: 500 },
+      { status: errorStatus(err) },
     );
   }
 }

@@ -1,17 +1,18 @@
 import { NextResponse } from "next/server";
-import { resolveActingContext } from "@/lib/accounts";
+import { errorStatus, requireCapability } from "@/lib/accounts";
 import { getUserSettings, writeUserSettings } from "@/lib/google";
+import { CAPABILITY } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
 export async function GET() {
   try {
-    const { token, spreadsheetId } = await resolveActingContext();
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.SettingsRead);
     const settings = await getUserSettings(token, spreadsheetId);
     return NextResponse.json(settings);
   } catch (err) {
-    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+    return NextResponse.json({ error: (err as Error).message }, { status: errorStatus(err) });
   }
 }
 
@@ -31,7 +32,7 @@ export async function POST(req: Request) {
         ? { id: rt.id, name: rt.name }
         : null;
 
-    const { token, spreadsheetId } = await resolveActingContext();
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.SettingsWrite);
     // The settings form doesn't know about familyMembers — preserve the
     // stored registry across rewrites (writeUserSettings clears A2:B).
     // strict: a failed read must abort the save, otherwise a transient
@@ -45,6 +46,6 @@ export async function POST(req: Request) {
     });
     return NextResponse.json({ ok: true });
   } catch (err) {
-    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+    return NextResponse.json({ error: (err as Error).message }, { status: errorStatus(err) });
   }
 }

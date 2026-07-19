@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { resolveActingContext } from "@/lib/accounts";
+import { errorStatus, requireCapability } from "@/lib/accounts";
 import { getAllReceipts } from "@/lib/google";
-import { DOCUMENT_TYPE } from "@/lib/types";
+import { CAPABILITY, DOCUMENT_TYPE } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -12,7 +12,7 @@ export const maxDuration = 60;
 // not receipts-as-evidence — they must never compete for an expense line.
 export async function GET() {
   try {
-    const { token, spreadsheetId } = await resolveActingContext();
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.ReportBuild);
     const receipts = (await getAllReceipts(token, spreadsheetId)).filter(
       (r) =>
         r.documentType !== DOCUMENT_TYPE.Duplicate &&
@@ -20,6 +20,6 @@ export async function GET() {
     );
     return NextResponse.json({ ok: true, receipts });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return NextResponse.json({ error: (e as Error).message }, { status: errorStatus(e) });
   }
 }

@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { resolveActingContext } from "@/lib/accounts";
+import { errorStatus, requireCapability } from "@/lib/accounts";
 import {
   appendReceipts,
   getAllReceipts,
   updateReceiptById,
 } from "@/lib/google";
-import type { Receipt } from "@/lib/types";
+import { CAPABILITY, type Receipt } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -25,28 +25,28 @@ function describe(err: unknown): string {
 
 export async function GET() {
   try {
-    const { token, spreadsheetId } = await resolveActingContext();
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.ViewReceipts);
     const receipts = await getAllReceipts(token, spreadsheetId);
     return NextResponse.json({ spreadsheetId, receipts });
   } catch (err) {
-    return NextResponse.json({ error: describe(err) }, { status: 500 });
+    return NextResponse.json({ error: describe(err) }, { status: errorStatus(err) });
   }
 }
 
 export async function POST(req: Request) {
   try {
-    const { token, spreadsheetId } = await resolveActingContext();
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.AppendReceipts);
     const body = (await req.json()) as { receipts: Receipt[] };
     await appendReceipts(token, spreadsheetId, body.receipts || []);
     return NextResponse.json({ ok: true, spreadsheetId });
   } catch (err) {
-    return NextResponse.json({ error: describe(err) }, { status: 500 });
+    return NextResponse.json({ error: describe(err) }, { status: errorStatus(err) });
   }
 }
 
 export async function PATCH(req: Request) {
   try {
-    const { token, spreadsheetId } = await resolveActingContext();
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.EditReceipts);
     const body = (await req.json()) as Partial<Receipt> & { id: string };
     if (!body.id) {
       return NextResponse.json({ error: "id is required" }, { status: 400 });
@@ -54,6 +54,6 @@ export async function PATCH(req: Request) {
     await updateReceiptById(token, spreadsheetId, body);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    return NextResponse.json({ error: describe(err) }, { status: 500 });
+    return NextResponse.json({ error: describe(err) }, { status: errorStatus(err) });
   }
 }

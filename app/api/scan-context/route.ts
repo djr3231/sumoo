@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { resolveActingContext } from "@/lib/accounts";
+import { errorStatus, requireCapability } from "@/lib/accounts";
 import { getAllStores, getUserSettings } from "@/lib/google";
+import { CAPABILITY } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -11,7 +12,7 @@ export const runtime = "nodejs";
 // of 49 times — which is what was blowing the 60-reads/min/user quota.
 export async function GET() {
   try {
-    const { token, spreadsheetId } = await resolveActingContext();
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.AppendReceipts);
     const [stores, settings] = await Promise.all([
       getAllStores(token, spreadsheetId).catch(() => []),
       getUserSettings(token, spreadsheetId).catch(
@@ -23,6 +24,6 @@ export async function GET() {
       userCards: settings.myCardsLast4,
     });
   } catch (err) {
-    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+    return NextResponse.json({ error: (err as Error).message }, { status: errorStatus(err) });
   }
 }
