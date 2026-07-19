@@ -766,6 +766,51 @@ export async function ensureUploadFolder(accessToken: string): Promise<string> {
   return created.data.id!;
 }
 
+// ============================================================================
+// Family-member sharing. The owner's drive.file scope covers app-created
+// files, which is exactly the set we share: the receipts spreadsheet, the
+// upload folder, and (optionally) a custom report template the user picked.
+// ============================================================================
+
+// Grant `email` access to `fileId`. sendNotificationEmail=false: the owner
+// tells the family member directly; a surprise Google email is noise.
+export async function shareFileWithEmail(
+  accessToken: string,
+  fileId: string,
+  email: string,
+  role: "writer" | "reader",
+): Promise<void> {
+  const drive = driveClient(accessToken);
+  await drive.permissions.create({
+    fileId,
+    sendNotificationEmail: false,
+    requestBody: { type: "user", role, emailAddress: email },
+    fields: "id",
+  });
+}
+
+// Remove every user-permission on `fileId` that belongs to `email`.
+// Idempotent: a no-op when no such permission exists, so it is safe to retry.
+export async function revokeFileAccessByEmail(
+  accessToken: string,
+  fileId: string,
+  email: string,
+): Promise<void> {
+  const drive = driveClient(accessToken);
+  // emailAddress is not in the default field set — it must be requested.
+  const res = await drive.permissions.list({
+    fileId,
+    fields: "permissions(id,emailAddress,type)",
+    pageSize: 100,
+  });
+  const target = email.toLowerCase();
+  for (const p of res.data.permissions ?? []) {
+    if (p.type !== "user" || !p.id) continue;
+    if ((p.emailAddress ?? "").toLowerCase() !== target) continue;
+    await drive.permissions.delete({ fileId, permissionId: p.id });
+  }
+}
+
 // Generic find-or-create for a Drive folder, optionally nested under a parent.
 // Idempotent: returns the existing folder's id when one with the same name
 // already lives under the given parent, else creates it. Generalizes
@@ -1082,6 +1127,7 @@ export async function getUserSettings(
     householdSize: null,
     reportTemplate: null,
     familyMembers: [],
+    uploadFolderId: null,
   };
   try {
     const r = await sheets.spreadsheets.values.get({
@@ -1128,6 +1174,10 @@ export async function getUserSettings(
           }
         } catch { /* malformed row — treat as unset */ }
       }
+      if (key === SETTINGS_KEY.UploadFolderId) {
+        // Drive file ids are opaque strings — store as-is, blank means unset.
+        if (value) out.uploadFolderId = value;
+      }
     }
     return out;
   } catch (e) {
@@ -1154,6 +1204,9 @@ export async function writeUserSettings(
   if (s.reportTemplate !== null) rows.push([SETTINGS_KEY.ReportTemplate, JSON.stringify(s.reportTemplate)]);
   if (s.familyMembers.length > 0) {
     rows.push([SETTINGS_KEY.FamilyMembers, JSON.stringify(s.familyMembers)]);
+  }
+  if (s.uploadFolderId) {
+    rows.push([SETTINGS_KEY.UploadFolderId, s.uploadFolderId]);
   }
   await sheets.spreadsheets.values.update({
     spreadsheetId,

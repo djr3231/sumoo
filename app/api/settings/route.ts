@@ -33,16 +33,17 @@ export async function POST(req: Request) {
         : null;
 
     const { token, spreadsheetId } = await requireCapability(CAPABILITY.SettingsWrite);
-    // The settings form doesn't know about familyMembers — preserve the
-    // stored registry across rewrites (writeUserSettings clears A2:B).
+    // The settings form doesn't know about familyMembers or uploadFolderId —
+    // preserve both across rewrites (writeUserSettings clears A2:B).
     // strict: a failed read must abort the save, otherwise a transient
-    // Sheets error would silently wipe the registry.
+    // Sheets error would silently wipe them.
     const current = await getUserSettings(token, spreadsheetId, { strict: true });
     await writeUserSettings(token, spreadsheetId, {
       myCardsLast4,
       householdSize,
       reportTemplate,
       familyMembers: current.familyMembers,
+      uploadFolderId: current.uploadFolderId,
     });
     return NextResponse.json({ ok: true });
   } catch (err) {
