@@ -216,6 +216,66 @@ export interface FamilyMember {
   role: FamilyRole;
 }
 
+// A signed-in user acting on an account is either its owner or a family
+// member with one of the FAMILY_ROLE values.
+export type ActingRole = "owner" | FamilyRole;
+
+export const CAPABILITY = {
+  ViewReceipts: "view-receipts", // GET /api/sheets
+  AppendReceipts: "append-receipts", // POST /api/sheets, /api/ocr, GET /api/scan-context
+  EditReceipts: "edit-receipts", // PATCH /api/sheets + inline editing UI
+  Maintain: "maintain", // dedup, fix-drive-ids, match, statements, /compare
+  DriveBrowse: "drive-browse", // /api/drive* listing (DriveImport + pickers)
+  ReportBuild: "report-build", // report wizard pipeline except export
+  ReportExport: "report-export", // POST /api/report/generate + /api/report/pdf
+  SettingsRead: "settings-read", // GET /api/settings + /settings page
+  SettingsWrite: "settings-write", // POST /api/settings
+} as const;
+export type Capability = (typeof CAPABILITY)[keyof typeof CAPABILITY];
+
+// The single authorization truth table. Exhaustive switches, no defaults —
+// adding a role or a capability must break the build until handled here.
+export function roleCan(role: ActingRole, cap: Capability): boolean {
+  switch (role) {
+    case "owner":
+      return true;
+    case FAMILY_ROLE.Full:
+      return true;
+    case FAMILY_ROLE.FullNoReport:
+      switch (cap) {
+        case CAPABILITY.ReportExport:
+          return false;
+        case CAPABILITY.ViewReceipts:
+        case CAPABILITY.AppendReceipts:
+        case CAPABILITY.EditReceipts:
+        case CAPABILITY.Maintain:
+        case CAPABILITY.DriveBrowse:
+        case CAPABILITY.ReportBuild:
+        case CAPABILITY.SettingsRead:
+        case CAPABILITY.SettingsWrite:
+          return true;
+      }
+      break;
+    case FAMILY_ROLE.UploadView:
+      switch (cap) {
+        case CAPABILITY.ViewReceipts:
+        case CAPABILITY.AppendReceipts:
+          return true;
+        case CAPABILITY.EditReceipts:
+        case CAPABILITY.Maintain:
+        case CAPABILITY.DriveBrowse:
+        case CAPABILITY.ReportBuild:
+        case CAPABILITY.ReportExport:
+        case CAPABILITY.SettingsRead:
+        case CAPABILITY.SettingsWrite:
+          return false;
+      }
+      break;
+  }
+  // Unreachable — every case above returns; TypeScript needs the closer.
+  return false;
+}
+
 // Household-size default for the Food row when the setting is unset (user-confirmed).
 export const DEFAULT_HOUSEHOLD_SIZE = 3;
 
