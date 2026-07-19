@@ -189,6 +189,7 @@ export const SETTINGS_KEY = {
   HouseholdSize: "householdSize",
   ReportTemplate: "reportTemplate",
   FamilyMembers: "familyMembers",
+  UploadFolderId: "uploadFolderId",
 } as const;
 export type SettingsKey = (typeof SETTINGS_KEY)[keyof typeof SETTINGS_KEY];
 
@@ -197,6 +198,10 @@ export interface UserSettings {
   householdSize: number | null; // 1..20; null = unset (fall back to DEFAULT_HOUSEHOLD_SIZE)
   reportTemplate: { id: string; name: string } | null; // null = built-in default template
   familyMembers: FamilyMember[]; // family-members registry (owner's account only)
+  // The owner's "סומו - העלאות" folder id. Stored so a family member can put
+  // uploads in the OWNER's folder — a Drive name search from the member's
+  // account is ambiguous (both accounts have a folder with that name).
+  uploadFolderId: string | null;
 }
 
 // ============================================================================
@@ -230,6 +235,7 @@ export const CAPABILITY = {
   ReportExport: "report-export", // POST /api/report/generate + /api/report/pdf
   SettingsRead: "settings-read", // GET /api/settings + /settings page
   SettingsWrite: "settings-write", // POST /api/settings
+  ManageFamily: "manage-family", // POST/DELETE /api/family — owner only
 } as const;
 export type Capability = (typeof CAPABILITY)[keyof typeof CAPABILITY];
 
@@ -240,10 +246,25 @@ export function roleCan(role: ActingRole, cap: Capability): boolean {
     case "owner":
       return true;
     case FAMILY_ROLE.Full:
-      return true;
+      switch (cap) {
+        case CAPABILITY.ManageFamily:
+          return false;
+        case CAPABILITY.ViewReceipts:
+        case CAPABILITY.AppendReceipts:
+        case CAPABILITY.EditReceipts:
+        case CAPABILITY.Maintain:
+        case CAPABILITY.DriveBrowse:
+        case CAPABILITY.ReportBuild:
+        case CAPABILITY.ReportExport:
+        case CAPABILITY.SettingsRead:
+        case CAPABILITY.SettingsWrite:
+          return true;
+      }
+      break;
     case FAMILY_ROLE.FullNoReport:
       switch (cap) {
         case CAPABILITY.ReportExport:
+        case CAPABILITY.ManageFamily:
           return false;
         case CAPABILITY.ViewReceipts:
         case CAPABILITY.AppendReceipts:
@@ -268,6 +289,7 @@ export function roleCan(role: ActingRole, cap: Capability): boolean {
         case CAPABILITY.ReportExport:
         case CAPABILITY.SettingsRead:
         case CAPABILITY.SettingsWrite:
+        case CAPABILITY.ManageFamily:
           return false;
       }
       break;
