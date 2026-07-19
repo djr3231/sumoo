@@ -2,7 +2,13 @@
 import { useState } from "react";
 import Link from "next/link";
 import { List } from "@phosphor-icons/react";
-import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetTitle,
+  SheetTrigger,
+} from "./ui/sheet";
 import { Button } from "./ui/button";
 import { UserMenu } from "./UserMenu";
 import { ThemeToggle } from "./ThemeToggle";
@@ -23,6 +29,12 @@ export function MobileNav({ email, showFullNav }: MobileNavProps) {
         </Button>
       </SheetTrigger>
       <SheetContent side="right" className="flex flex-col pt-10 gap-0">
+        {/* Radix Dialog requires a title + description for screen readers;
+            visually hidden since the menu is self-evident sighted. */}
+        <SheetTitle className="sr-only">תפריט ניווט</SheetTitle>
+        <SheetDescription className="sr-only">
+          ניווט בין דפי האפליקציה וניהול החשבון
+        </SheetDescription>
         <nav className="flex flex-col text-base">
           <Link href="/upload" onClick={() => setOpen(false)} className="px-3 py-3 hover:bg-accent">
             העלאה
