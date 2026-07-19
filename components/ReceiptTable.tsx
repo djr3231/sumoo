@@ -166,7 +166,7 @@ function DocTypeBadge({ type }: { type: DocumentType }) {
   );
 }
 
-export function ReceiptTable() {
+export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
   const [rows, setRows] = useState<Receipt[]>([]);
   const [spreadsheetId, setSpreadsheetId] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -209,6 +209,7 @@ export function ReceiptTable() {
   }
 
   async function patch(id: string, patch: Partial<Receipt>) {
+    if (readOnly) return; // UI guard; the API enforces with 403 anyway
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
     await fetch("/api/sheets", {
       method: "PATCH",
@@ -433,39 +434,47 @@ export function ReceiptTable() {
           aria-label="חיפוש חופשי"
           className="h-9 max-w-xs"
         />
-        <Button
-          size="sm"
-          onClick={runDedup}
-          disabled={dedupRunning || rows.length === 0}
-        >
-          {dedupRunning && <Loader2 className="animate-spin size-4 me-2" />}
-          {dedupRunning ? "מאחד..." : "איחוד שמות + זיהוי כפילויות וספחי אשראי"}
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={runFixDriveIds}
-          disabled={fixingIds || rows.length === 0}
-        >
-          {fixingIds && <Loader2 className="animate-spin size-4 me-2" />}
-          {fixingIds ? "מתקן..." : "תקן קישורי Drive"}
-        </Button>
+        {!readOnly && (
+          <>
+            <Button
+              size="sm"
+              onClick={runDedup}
+              disabled={dedupRunning || rows.length === 0}
+            >
+              {dedupRunning && <Loader2 className="animate-spin size-4 me-2" />}
+              {dedupRunning ? "מאחד..." : "איחוד שמות + זיהוי כפילויות וספחי אשראי"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={runFixDriveIds}
+              disabled={fixingIds || rows.length === 0}
+            >
+              {fixingIds && <Loader2 className="animate-spin size-4 me-2" />}
+              {fixingIds ? "מתקן..." : "תקן קישורי Drive"}
+            </Button>
+          </>
+        )}
         <div className="flex-1" />
-        <Button variant="outline" size="sm" onClick={downloadCSV}>
-          הורד CSV
-        </Button>
-        <Button variant="outline" size="sm" onClick={downloadXLSX}>
-          הורד Excel
-        </Button>
-        {spreadsheetId && (
-          <a
-            href={`https://docs.google.com/spreadsheets/d/${spreadsheetId}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm underline"
-          >
-            פתח ב-Google Sheets
-          </a>
+        {!readOnly && (
+          <>
+            <Button variant="outline" size="sm" onClick={downloadCSV}>
+              הורד CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={downloadXLSX}>
+              הורד Excel
+            </Button>
+            {spreadsheetId && (
+              <a
+                href={`https://docs.google.com/spreadsheets/d/${spreadsheetId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm underline"
+              >
+                פתח ב-Google Sheets
+              </a>
+            )}
+          </>
         )}
       </div>
 
@@ -480,46 +489,48 @@ export function ReceiptTable() {
         />
       </div>
       <div className="flex md:hidden gap-2 items-center">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" disabled={rows.length === 0}>
-              <Menu className="size-4 me-2" />
-              פעולות
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem
-              onSelect={runDedup}
-              disabled={dedupRunning || rows.length === 0}
-            >
-              {dedupRunning && <Loader2 className="animate-spin size-4 me-2" />}
-              {dedupRunning ? "מאחד..." : "איחוד שמות + זיהוי כפילויות וספחי אשראי"}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={runFixDriveIds}
-              disabled={fixingIds || rows.length === 0}
-            >
-              {fixingIds && <Loader2 className="animate-spin size-4 me-2" />}
-              {fixingIds ? "מתקן..." : "תקן קישורי Drive"}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={downloadCSV}>הורד CSV</DropdownMenuItem>
-            <DropdownMenuItem onSelect={downloadXLSX}>הורד Excel</DropdownMenuItem>
-            {spreadsheetId && (
+        {!readOnly && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" disabled={rows.length === 0}>
+                <Menu className="size-4 me-2" />
+                פעולות
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
               <DropdownMenuItem
-                onSelect={() => {
-                  window.open(
-                    `https://docs.google.com/spreadsheets/d/${spreadsheetId}`,
-                    "_blank",
-                    "noopener,noreferrer",
-                  );
-                }}
+                onSelect={runDedup}
+                disabled={dedupRunning || rows.length === 0}
               >
-                פתח ב-Google Sheets
+                {dedupRunning && <Loader2 className="animate-spin size-4 me-2" />}
+                {dedupRunning ? "מאחד..." : "איחוד שמות + זיהוי כפילויות וספחי אשראי"}
               </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+              <DropdownMenuItem
+                onSelect={runFixDriveIds}
+                disabled={fixingIds || rows.length === 0}
+              >
+                {fixingIds && <Loader2 className="animate-spin size-4 me-2" />}
+                {fixingIds ? "מתקן..." : "תקן קישורי Drive"}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={downloadCSV}>הורד CSV</DropdownMenuItem>
+              <DropdownMenuItem onSelect={downloadXLSX}>הורד Excel</DropdownMenuItem>
+              {spreadsheetId && (
+                <DropdownMenuItem
+                  onSelect={() => {
+                    window.open(
+                      `https://docs.google.com/spreadsheets/d/${spreadsheetId}`,
+                      "_blank",
+                      "noopener,noreferrer",
+                    );
+                  }}
+                >
+                  פתח ב-Google Sheets
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         <Sheet>
           <SheetTrigger asChild>
             <Button variant="outline" size="sm" disabled={rows.length === 0}>
@@ -729,6 +740,7 @@ export function ReceiptTable() {
                           const v = e.target.value.trim();
                           if (v !== (r.storeName ?? "")) patch(r.id, { storeName: v || null });
                         }}
+                        disabled={readOnly}
                         className="h-8 w-32"
                       />
                     </TableCell>
@@ -742,6 +754,7 @@ export function ReceiptTable() {
                             patch(r.id, { amount: v });
                           }
                         }}
+                        disabled={readOnly}
                         className="h-8 w-20 text-right"
                       />
                       <div className="text-[10px] text-muted-foreground">
@@ -755,6 +768,7 @@ export function ReceiptTable() {
                       <Select
                         value={r.paymentMethod || PAYMENT_METHOD.Unknown}
                         onValueChange={(v) => patch(r.id, { paymentMethod: v as PaymentMethod })}
+                        disabled={readOnly}
                       >
                         <SelectTrigger size="sm">
                           <SelectValue />
@@ -779,6 +793,7 @@ export function ReceiptTable() {
                           const v = e.target.value || null;
                           if (v !== r.date) patch(r.id, { date: v });
                         }}
+                        disabled={readOnly}
                         className="h-8"
                       />
                       <div className="text-[10px] text-muted-foreground">
@@ -789,6 +804,7 @@ export function ReceiptTable() {
                       <Select
                         value={r.category}
                         onValueChange={(v) => patch(r.id, { category: v as Category })}
+                        disabled={readOnly}
                       >
                         <SelectTrigger size="sm">
                           <SelectValue />
@@ -804,6 +820,7 @@ export function ReceiptTable() {
                       <Select
                         value={r.documentType}
                         onValueChange={(v) => patch(r.id, { documentType: v as DocumentType })}
+                        disabled={readOnly}
                       >
                         <SelectTrigger size="sm">
                           <SelectValue />
@@ -837,6 +854,7 @@ export function ReceiptTable() {
                       <Checkbox
                         checked={r.reviewed}
                         onCheckedChange={(c) => patch(r.id, { reviewed: c === true })}
+                        disabled={readOnly}
                       />
                     </TableCell>
                   </TableRow>
@@ -862,11 +880,11 @@ export function ReceiptTable() {
                 key={r.id}
                 role="button"
                 tabIndex={0}
-                onClick={() => setEditingId(r.id)}
+                onClick={() => { if (!readOnly) setEditingId(r.id); }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    setEditingId(r.id);
+                    if (!readOnly) setEditingId(r.id);
                   }
                 }}
                 size="sm"
@@ -933,11 +951,11 @@ export function ReceiptTable() {
                     key={r.id}
                     role="button"
                     tabIndex={0}
-                    onClick={() => setEditingId(r.id)}
+                    onClick={() => { if (!readOnly) setEditingId(r.id); }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        setEditingId(r.id);
+                        if (!readOnly) setEditingId(r.id);
                       }
                     }}
                     size="sm"
