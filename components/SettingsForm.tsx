@@ -315,12 +315,14 @@ export function SettingsForm({ isOwner }: { isOwner: boolean }) {
           {members.length > 0 && (
             <ul className="flex flex-wrap gap-2">
               {members.map((m) => (
-                <li key={m.email}>
+                <li key={m.email} className="min-w-0 max-w-full">
                   <Badge
                     variant="secondary"
-                    className="border border-border bg-muted px-3 py-1 text-sm font-normal tracking-normal normal-case gap-1.5"
+                    className="min-w-0 max-w-full border border-border bg-muted px-3 py-1 text-sm font-normal tracking-normal normal-case gap-1.5"
                   >
-                    <span dir="auto">{m.email}</span>
+                    <span dir="auto" className="min-w-0 truncate">
+                      {m.email}
+                    </span>
                     <span className="text-muted-foreground">
                       {roleLabel(m.role)}
                     </span>

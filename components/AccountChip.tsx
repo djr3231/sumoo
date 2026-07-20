@@ -27,7 +27,9 @@ export function AccountChip({
 }) {
   return (
     <Badge variant="secondary" className={className}>
-      <span className="truncate">{ownerEmail || "חשבון משותף"}</span>
+      <span dir="auto" className="min-w-0 truncate">
+        {ownerEmail || "חשבון משותף"}
+      </span>
       <span aria-hidden="true">·</span>
       <span className="whitespace-nowrap">{roleLabel(role)}</span>
     </Badge>
