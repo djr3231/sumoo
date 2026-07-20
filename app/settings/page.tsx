@@ -21,7 +21,7 @@ export default async function SettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <SettingsForm />
+          <SettingsForm isOwner={role === "owner"} />
         </CardContent>
       </Card>
     </div>

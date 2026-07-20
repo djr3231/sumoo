@@ -7,13 +7,30 @@ import { Badge } from "./ui/badge";
 import { Skeleton } from "./ui/Skeleton";
 import { Alert, AlertDescription } from "./ui/Alert";
 import { DriveFilePicker, type FileSelection } from "./DriveFilePicker";
-import { Loader2 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
+import { roleLabel } from "./AccountChip";
+import { FAMILY_ROLE, FAMILY_ROLE_VALUES, type FamilyMember, type FamilyRole } from "@/lib/types";
+import { Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 
 interface SettingsResponse {
   myCardsLast4?: string[];
   householdSize?: number | null;
   reportTemplate?: { id: string; name: string } | null;
+  familyMembers?: FamilyMember[];
+  error?: string;
+}
+
+interface FamilyResponse {
+  ok?: boolean;
+  members?: FamilyMember[];
+  sharing?: Array<{ target: string; ok: boolean }>;
   error?: string;
 }
 
@@ -21,7 +38,7 @@ function toReportTemplate(t: FileSelection): { id: string; name: string } | null
   return t.kind === "drive" ? { id: t.id, name: t.name } : null;
 }
 
-export function SettingsForm() {
+export function SettingsForm({ isOwner }: { isOwner: boolean }) {
   const [cards, setCards] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [draftError, setDraftError] = useState<string | null>(null);
@@ -31,6 +48,10 @@ export function SettingsForm() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [members, setMembers] = useState<FamilyMember[]>([]);
+  const [memberEmail, setMemberEmail] = useState("");
+  const [memberRole, setMemberRole] = useState<FamilyRole>(FAMILY_ROLE.UploadView);
+  const [familyBusy, setFamilyBusy] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -50,6 +71,7 @@ export function SettingsForm() {
             ? { kind: "drive", id: rt.id, name: rt.name }
             : { kind: "default" },
         );
+        setMembers(Array.isArray(json.familyMembers) ? json.familyMembers : []);
       } catch (e) {
         if (!alive) return;
         setError((e as Error).message);
@@ -123,6 +145,51 @@ export function SettingsForm() {
   async function changeTemplateAndSave(next: FileSelection) {
     setTemplate(next);
     await persist({ template: next });
+  }
+
+  async function addMember() {
+    const email = memberEmail.trim().toLowerCase();
+    if (!email) return;
+    setFamilyBusy(true);
+    try {
+      const res = await fetch("/api/family", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, role: memberRole }),
+      });
+      const json = (await res.json()) as FamilyResponse;
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      const known = members.some((m) => m.email === email);
+      setMembers(json.members ?? []);
+      setMemberEmail("");
+      toast.success(known ? "ההרשאה עודכנה" : "בן המשפחה נוסף");
+      if (json.sharing?.some((s) => !s.ok)) {
+        toast.warning("חלק מהשיתופים ב-Drive נכשלו");
+      }
+    } catch {
+      toast.error("הוספת בן המשפחה נכשלה");
+    } finally {
+      setFamilyBusy(false);
+    }
+  }
+
+  async function removeMember(email: string) {
+    setFamilyBusy(true);
+    try {
+      const res = await fetch("/api/family", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const json = (await res.json()) as FamilyResponse;
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      setMembers(json.members ?? []);
+      toast.success("בן המשפחה הוסר");
+    } catch {
+      toast.error("הסרת בן המשפחה נכשלה");
+    } finally {
+      setFamilyBusy(false);
+    }
   }
 
   if (loading) {
@@ -234,6 +301,89 @@ export function SettingsForm() {
         </p>
         <DriveFilePicker value={template} onChange={changeTemplateAndSave} disabled={saving} />
       </div>
+
+      {isOwner && (
+        <div className="space-y-3">
+          <Label htmlFor="member-email" className="text-base font-semibold">
+            בני משפחה
+          </Label>
+          <p className="text-sm text-muted-foreground">
+            בני משפחה שהוספת יוכלו להיכנס עם חשבון Google שלהם ולעבוד על החשבון
+            הזה לפי ההרשאה שתיתן.
+          </p>
+
+          {members.length > 0 && (
+            <ul className="flex flex-wrap gap-2">
+              {members.map((m) => (
+                <li key={m.email}>
+                  <Badge
+                    variant="secondary"
+                    className="border border-border bg-muted px-3 py-1 text-sm font-normal tracking-normal normal-case gap-1.5"
+                  >
+                    <span dir="auto">{m.email}</span>
+                    <span className="text-muted-foreground">
+                      {roleLabel(m.role)}
+                    </span>
+                    <Button
+                      type="button"
+                      onClick={() => removeMember(m.email)}
+                      disabled={familyBusy}
+                      aria-label={`הסרה ${m.email}`}
+                      variant="ghost"
+                      size="icon"
+                      className="text-muted-foreground hover:text-destructive"
+                    >
+                      <X className="size-4" />
+                    </Button>
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="flex flex-col gap-2 items-stretch sm:flex-row sm:items-start">
+            <Input
+              id="member-email"
+              value={memberEmail}
+              onChange={(e) => setMemberEmail(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); addMember(); }
+              }}
+              type="email"
+              inputMode="email"
+              placeholder="כתובת אימייל"
+              disabled={familyBusy}
+              dir="ltr"
+              className="w-full sm:flex-1"
+            />
+            <Select
+              value={memberRole}
+              onValueChange={(v) => setMemberRole(v as FamilyRole)}
+              disabled={familyBusy}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="הרשאה">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {FAMILY_ROLE_VALUES.map((r) => (
+                  <SelectItem key={r} value={r}>
+                    {roleLabel(r)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              onClick={addMember}
+              variant="outline"
+              disabled={!memberEmail || familyBusy}
+              className="w-full sm:w-auto"
+            >
+              {familyBusy && <Loader2 className="animate-spin size-4 me-2" />}
+              הוספה
+            </Button>
+          </div>
+        </div>
+      )}
 
       {error && (
         <Alert variant="destructive">
