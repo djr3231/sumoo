@@ -35,7 +35,7 @@
 
 - [ ] **Step 1: Update imports and family state**
 
-Remove the unused `Badge` import. Replace the Lucide import and the four current family state declarations with:
+Keep the `Badge` import because the credit-card list still uses it. Replace the Lucide import and the four current family state declarations with:
 
 ```tsx
 import { Check, Loader2, Pencil, Trash2, X } from "lucide-react";
@@ -376,4 +376,3 @@ Expected production-code output: only `components/SettingsForm.tsx` (plus this c
 - [ ] **Step 3: User E2E handoff**
 
 Hand off the six scenarios from the spec §7. Do not start the dev server or attempt visual verification.
-
