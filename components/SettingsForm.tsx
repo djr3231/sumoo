@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -16,7 +16,7 @@ import {
 } from "./ui/select";
 import { roleLabel } from "./AccountChip";
 import { FAMILY_ROLE, FAMILY_ROLE_VALUES, type FamilyMember, type FamilyRole } from "@/lib/types";
-import { Loader2, X } from "lucide-react";
+import { Check, Loader2, Pencil, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 interface SettingsResponse {
@@ -51,7 +51,12 @@ export function SettingsForm({ isOwner }: { isOwner: boolean }) {
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [memberEmail, setMemberEmail] = useState("");
   const [memberRole, setMemberRole] = useState<FamilyRole>(FAMILY_ROLE.UploadView);
-  const [familyBusy, setFamilyBusy] = useState(false);
+  const [addingMember, setAddingMember] = useState(false);
+  const [busyMemberEmail, setBusyMemberEmail] = useState<string | null>(null);
+  const [editingMemberEmail, setEditingMemberEmail] = useState<string | null>(null);
+  const [editingMemberRole, setEditingMemberRole] = useState<FamilyRole | null>(null);
+  const familyMutationLock = useRef(false);
+  const isFamilyMutating = addingMember || busyMemberEmail !== null;
 
   useEffect(() => {
     let alive = true;
@@ -149,8 +154,9 @@ export function SettingsForm({ isOwner }: { isOwner: boolean }) {
 
   async function addMember() {
     const email = memberEmail.trim().toLowerCase();
-    if (!email) return;
-    setFamilyBusy(true);
+    if (!email || familyMutationLock.current) return;
+    familyMutationLock.current = true;
+    setAddingMember(true);
     try {
       const res = await fetch("/api/family", {
         method: "POST",
@@ -169,12 +175,15 @@ export function SettingsForm({ isOwner }: { isOwner: boolean }) {
     } catch {
       toast.error("הוספת בן המשפחה נכשלה");
     } finally {
-      setFamilyBusy(false);
+      setAddingMember(false);
+      familyMutationLock.current = false;
     }
   }
 
   async function removeMember(email: string) {
-    setFamilyBusy(true);
+    if (familyMutationLock.current) return;
+    familyMutationLock.current = true;
+    setBusyMemberEmail(email);
     try {
       const res = await fetch("/api/family", {
         method: "DELETE",
@@ -184,11 +193,55 @@ export function SettingsForm({ isOwner }: { isOwner: boolean }) {
       const json = (await res.json()) as FamilyResponse;
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       setMembers(json.members ?? []);
+      if (editingMemberEmail === email) {
+        setEditingMemberEmail(null);
+        setEditingMemberRole(null);
+      }
       toast.success("בן המשפחה הוסר");
     } catch {
       toast.error("הסרת בן המשפחה נכשלה");
     } finally {
-      setFamilyBusy(false);
+      setBusyMemberEmail(null);
+      familyMutationLock.current = false;
+    }
+  }
+
+  function startEditingMember(member: FamilyMember) {
+    if (familyMutationLock.current) return;
+    setEditingMemberEmail(member.email);
+    setEditingMemberRole(member.role);
+  }
+
+  function cancelEditingMember() {
+    setEditingMemberEmail(null);
+    setEditingMemberRole(null);
+  }
+
+  async function saveMemberRole(member: FamilyMember) {
+    const role = editingMemberRole;
+    if (!role || role === member.role || familyMutationLock.current) return;
+    familyMutationLock.current = true;
+    setBusyMemberEmail(member.email);
+    try {
+      const res = await fetch("/api/family", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: member.email, role }),
+      });
+      const json = (await res.json()) as FamilyResponse;
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      setMembers(json.members ?? []);
+      setEditingMemberEmail(null);
+      setEditingMemberRole(null);
+      toast.success("ההרשאה עודכנה");
+      if (json.sharing?.some((s) => !s.ok)) {
+        toast.warning("חלק מהשיתופים ב-Drive נכשלו");
+      }
+    } catch {
+      toast.error("עדכון ההרשאה נכשל");
+    } finally {
+      setBusyMemberEmail(null);
+      familyMutationLock.current = false;
     }
   }
 
@@ -313,33 +366,117 @@ export function SettingsForm({ isOwner }: { isOwner: boolean }) {
           </p>
 
           {members.length > 0 && (
-            <ul className="flex flex-wrap gap-2">
-              {members.map((m) => (
-                <li key={m.email} className="min-w-0 max-w-full">
-                  <Badge
-                    variant="secondary"
-                    className="min-w-0 max-w-full border border-border bg-muted px-3 py-1 text-sm font-normal tracking-normal normal-case gap-1.5"
+            <ul className="divide-y divide-border border-y border-border">
+              {members.map((member) => {
+                const isEditing = editingMemberEmail === member.email;
+                const isBusy = busyMemberEmail === member.email;
+                const roleChanged =
+                  isEditing &&
+                  editingMemberRole !== null &&
+                  editingMemberRole !== member.role;
+
+                return (
+                  <li
+                    key={member.email}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape" && isEditing && !isBusy) {
+                        cancelEditingMember();
+                      }
+                    }}
+                    className="grid min-w-0 grid-cols-1 gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)_auto] sm:items-center sm:gap-3"
                   >
-                    <span dir="auto" className="min-w-0 truncate">
-                      {m.email}
+                    <span dir="ltr" className="min-w-0 truncate text-sm font-medium">
+                      {member.email}
                     </span>
-                    <span className="text-muted-foreground">
-                      {roleLabel(m.role)}
-                    </span>
-                    <Button
-                      type="button"
-                      onClick={() => removeMember(m.email)}
-                      disabled={familyBusy}
-                      aria-label={`הסרה ${m.email}`}
-                      variant="ghost"
-                      size="icon"
-                      className="text-muted-foreground hover:text-destructive"
-                    >
-                      <X className="size-4" />
-                    </Button>
-                  </Badge>
-                </li>
-              ))}
+
+                    {isEditing ? (
+                      <Select
+                        value={editingMemberRole ?? member.role}
+                        onValueChange={(value) =>
+                          setEditingMemberRole(value as FamilyRole)
+                        }
+                        disabled={isFamilyMutating}
+                      >
+                        <SelectTrigger
+                          className="w-full sm:min-w-44"
+                          aria-label={`עריכת ההרשאה של ${member.email}`}
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {FAMILY_ROLE_VALUES.map((role) => (
+                            <SelectItem key={role} value={role}>
+                              {roleLabel(role)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">
+                        {roleLabel(member.role)}
+                      </span>
+                    )}
+
+                    <div className="flex items-center justify-end gap-1 sm:justify-start">
+                      {isEditing ? (
+                        <>
+                          <Button
+                            type="button"
+                            size="icon"
+                            onClick={() => void saveMemberRole(member)}
+                            disabled={!roleChanged || isFamilyMutating}
+                            aria-label={`שמירת ההרשאה של ${member.email}`}
+                          >
+                            {isBusy ? (
+                              <Loader2 className="size-4 animate-spin" />
+                            ) : (
+                              <Check className="size-4" />
+                            )}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={cancelEditingMember}
+                            disabled={isFamilyMutating}
+                            aria-label={`ביטול עריכת ההרשאה של ${member.email}`}
+                          >
+                            <X className="size-4" />
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => startEditingMember(member)}
+                            disabled={isFamilyMutating}
+                            aria-label={`עריכת ההרשאה של ${member.email}`}
+                          >
+                            <Pencil className="size-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => void removeMember(member.email)}
+                            disabled={isFamilyMutating}
+                            aria-label={`הסרה ${member.email}`}
+                            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          >
+                            {isBusy ? (
+                              <Loader2 className="size-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="size-4" />
+                            )}
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
 
@@ -354,14 +491,14 @@ export function SettingsForm({ isOwner }: { isOwner: boolean }) {
               type="email"
               inputMode="email"
               placeholder="כתובת אימייל"
-              disabled={familyBusy}
+              disabled={isFamilyMutating}
               dir="ltr"
               className="w-full sm:flex-1"
             />
             <Select
               value={memberRole}
-              onValueChange={(v) => setMemberRole(v as FamilyRole)}
-              disabled={familyBusy}
+              onValueChange={(value) => setMemberRole(value as FamilyRole)}
+              disabled={isFamilyMutating}
             >
               <SelectTrigger className="w-full sm:w-44" aria-label="הרשאה">
                 <SelectValue />
@@ -377,10 +514,10 @@ export function SettingsForm({ isOwner }: { isOwner: boolean }) {
             <Button
               onClick={addMember}
               variant="outline"
-              disabled={!memberEmail || familyBusy}
+              disabled={!memberEmail || isFamilyMutating}
               className="w-full sm:w-auto"
             >
-              {familyBusy && <Loader2 className="animate-spin size-4 me-2" />}
+              {addingMember && <Loader2 className="me-2 size-4 animate-spin" />}
               הוספה
             </Button>
           </div>
