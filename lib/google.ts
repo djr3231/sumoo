@@ -4,6 +4,7 @@ import { authOptions } from "./auth";
 import {
   DEFAULT_STORE_NAME,
   DOCUMENT_TYPE,
+  FAMILY_ROLE_VALUES,
   normalizeCategory,
   PAYMENT_METHOD,
   RECEIPT_HEADERS,
@@ -16,6 +17,7 @@ import {
   STORE_HEADERS,
   TXN_HEADERS,
   type BankTxn,
+  type FamilyMember,
   type Receipt,
   type Store,
   type UserSettings,
@@ -153,7 +155,7 @@ export async function ensureSpreadsheet(accessToken: string): Promise<string> {
 
   const drive = driveClient(accessToken);
   const found = await drive.files.list({
-    q: `name = '${SHEET_NAME}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+    q: `name = '${SHEET_NAME}' and mimeType = 'application/vnd.google-apps.spreadsheet' and 'me' in owners and trashed = false`,
     fields: "files(id,name)",
     pageSize: 1,
   });
@@ -193,7 +195,7 @@ export async function resolveSpreadsheetId(accessToken: string): Promise<string>
 
   const drive = driveClient(accessToken);
   const found = await drive.files.list({
-    q: `name = '${SHEET_NAME}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+    q: `name = '${SHEET_NAME}' and mimeType = 'application/vnd.google-apps.spreadsheet' and 'me' in owners and trashed = false`,
     fields: "files(id,name)",
     pageSize: 1,
   });
@@ -204,6 +206,40 @@ export async function resolveSpreadsheetId(accessToken: string): Promise<string>
   // Not found yet (first run) — fall back to the full create-and-validate
   // path so the spreadsheet and its main tabs get created correctly.
   return ensureSpreadsheet(accessToken);
+}
+
+// Spreadsheets named like ours that OTHER users shared with the signed-in
+// user — candidates for family-member account discovery. Covered by the
+// drive.readonly scope. The registry check (is my email listed?) happens in
+// lib/accounts.ts; this only surfaces the candidates.
+export async function listSharedSumooFiles(
+  accessToken: string,
+): Promise<Array<{ id: string; ownerEmail: string }>> {
+  const drive = driveClient(accessToken);
+  const r = await drive.files.list({
+    q: `name = '${SHEET_NAME}' and mimeType = 'application/vnd.google-apps.spreadsheet' and sharedWithMe = true and trashed = false`,
+    fields: "files(id,name,owners(emailAddress))",
+    pageSize: 10,
+  });
+  return (r.data.files || []).map((f) => ({
+    id: f.id!,
+    ownerEmail: f.owners?.[0]?.emailAddress?.toLowerCase() ?? "",
+  }));
+}
+
+// Owner email of a single Drive file — targeted lookup for the account
+// switch, where the file id is already membership-verified. Cheaper and more
+// reliable than scanning the (page-capped) shared-file listing.
+export async function getDriveFileOwnerEmail(
+  accessToken: string,
+  fileId: string,
+): Promise<string> {
+  const drive = driveClient(accessToken);
+  const r = await drive.files.get({
+    fileId,
+    fields: "owners(emailAddress)",
+  });
+  return r.data.owners?.[0]?.emailAddress?.toLowerCase() ?? "";
 }
 
 // Generic find-or-create for a single named tab (a title not among the 4
@@ -730,6 +766,73 @@ export async function ensureUploadFolder(accessToken: string): Promise<string> {
   return created.data.id!;
 }
 
+// ============================================================================
+// Family-member sharing. The owner's drive.file scope covers app-created
+// files, which is exactly the set we share: the receipts spreadsheet, the
+// upload folder, and (optionally) a custom report template the user picked.
+// ============================================================================
+
+// Make `email` hold exactly `role` on `fileId`, whatever the current state.
+// Idempotent, so a partially failed share is repaired by simply adding the
+// member again. permissions.create is NOT the documented way to change an
+// existing grantee's role (Drive wants permissions.update), hence the lookup.
+export async function ensureFileSharedWithEmail(
+  accessToken: string,
+  fileId: string,
+  email: string,
+  role: "writer" | "reader",
+): Promise<void> {
+  const drive = driveClient(accessToken);
+  // emailAddress is not in the default field set — it must be requested.
+  const res = await drive.permissions.list({
+    fileId,
+    fields: "permissions(id,emailAddress,type,role)",
+    pageSize: 100,
+  });
+  const target = email.toLowerCase();
+  const existing = (res.data.permissions ?? []).find(
+    (p) => p.type === "user" && (p.emailAddress ?? "").toLowerCase() === target,
+  );
+  if (!existing?.id) {
+    await drive.permissions.create({
+      fileId,
+      sendNotificationEmail: false,
+      requestBody: { type: "user", role, emailAddress: email },
+      fields: "id",
+    });
+    return;
+  }
+  if (existing.role !== role) {
+    await drive.permissions.update({
+      fileId,
+      permissionId: existing.id,
+      requestBody: { role },
+    });
+  }
+}
+
+// Remove every user-permission on `fileId` that belongs to `email`.
+// Idempotent: a no-op when no such permission exists, so it is safe to retry.
+export async function revokeFileAccessByEmail(
+  accessToken: string,
+  fileId: string,
+  email: string,
+): Promise<void> {
+  const drive = driveClient(accessToken);
+  // emailAddress is not in the default field set — it must be requested.
+  const res = await drive.permissions.list({
+    fileId,
+    fields: "permissions(id,emailAddress,type)",
+    pageSize: 100,
+  });
+  const target = email.toLowerCase();
+  for (const p of res.data.permissions ?? []) {
+    if (p.type !== "user" || !p.id) continue;
+    if ((p.emailAddress ?? "").toLowerCase() !== target) continue;
+    await drive.permissions.delete({ fileId, permissionId: p.id });
+  }
+}
+
 // Generic find-or-create for a Drive folder, optionally nested under a parent.
 // Idempotent: returns the existing folder's id when one with the same name
 // already lives under the given parent, else creates it. Generalizes
@@ -1035,9 +1138,19 @@ const CARD_LAST4_RE = /^\d{4}$/;
 export async function getUserSettings(
   accessToken: string,
   spreadsheetId: string,
+  // strict: rethrow read failures instead of returning empty defaults.
+  // Callers that WRITE settings back must use strict — treating a transient
+  // read failure as "no settings" would wipe fields they meant to preserve.
+  opts: { strict?: boolean } = {},
 ): Promise<UserSettings> {
   const sheets = sheetsClient(accessToken);
-  const empty: UserSettings = { myCardsLast4: [], householdSize: null, reportTemplate: null };
+  const empty: UserSettings = {
+    myCardsLast4: [],
+    householdSize: null,
+    reportTemplate: null,
+    familyMembers: [],
+    uploadFolderId: null,
+  };
   try {
     const r = await sheets.spreadsheets.values.get({
       spreadsheetId,
@@ -1066,9 +1179,31 @@ export async function getUserSettings(
           }
         } catch { /* malformed row — treat as unset */ }
       }
+      if (key === SETTINGS_KEY.FamilyMembers) {
+        try {
+          const arr = JSON.parse(value) as unknown;
+          if (Array.isArray(arr)) {
+            out.familyMembers = arr
+              .filter(
+                (m): m is FamilyMember =>
+                  !!m &&
+                  typeof m === "object" &&
+                  typeof (m as FamilyMember).email === "string" &&
+                  (m as FamilyMember).email.includes("@") &&
+                  (FAMILY_ROLE_VALUES as string[]).includes((m as FamilyMember).role),
+              )
+              .map((m) => ({ email: m.email.toLowerCase(), role: m.role }));
+          }
+        } catch { /* malformed row — treat as unset */ }
+      }
+      if (key === SETTINGS_KEY.UploadFolderId) {
+        // Drive file ids are opaque strings — store as-is, blank means unset.
+        if (value) out.uploadFolderId = value;
+      }
     }
     return out;
-  } catch {
+  } catch (e) {
+    if (opts.strict) throw e;
     return empty;
   }
 }
@@ -1089,6 +1224,12 @@ export async function writeUserSettings(
   const rows: string[][] = [[SETTINGS_KEY.MyCardsLast4, validCards.join(",")]];
   if (s.householdSize !== null) rows.push([SETTINGS_KEY.HouseholdSize, String(s.householdSize)]);
   if (s.reportTemplate !== null) rows.push([SETTINGS_KEY.ReportTemplate, JSON.stringify(s.reportTemplate)]);
+  if (s.familyMembers.length > 0) {
+    rows.push([SETTINGS_KEY.FamilyMembers, JSON.stringify(s.familyMembers)]);
+  }
+  if (s.uploadFolderId) {
+    rows.push([SETTINGS_KEY.UploadFolderId, s.uploadFolderId]);
+  }
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range: `${SHEET_TAB_SETTINGS}!A2`,

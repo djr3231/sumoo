@@ -188,6 +188,8 @@ export const SETTINGS_KEY = {
   MyCardsLast4: "myCardsLast4",
   HouseholdSize: "householdSize",
   ReportTemplate: "reportTemplate",
+  FamilyMembers: "familyMembers",
+  UploadFolderId: "uploadFolderId",
 } as const;
 export type SettingsKey = (typeof SETTINGS_KEY)[keyof typeof SETTINGS_KEY];
 
@@ -195,6 +197,105 @@ export interface UserSettings {
   myCardsLast4: string[]; // exactly 4-digit strings, validated
   householdSize: number | null; // 1..20; null = unset (fall back to DEFAULT_HOUSEHOLD_SIZE)
   reportTemplate: { id: string; name: string } | null; // null = built-in default template
+  familyMembers: FamilyMember[]; // family-members registry (owner's account only)
+  // The owner's "סומו - העלאות" folder id. Stored so a family member can put
+  // uploads in the OWNER's folder — a Drive name search from the member's
+  // account is ambiguous (both accounts have a folder with that name).
+  uploadFolderId: string | null;
+}
+
+// ============================================================================
+// Family members (registry stored as JSON under SETTINGS_KEY.FamilyMembers)
+// ============================================================================
+
+export const FAMILY_ROLE = {
+  UploadView: "upload-view", // upload receipts + view receipts list only
+  Full: "full", // everything the owner can do (except managing members)
+  FullNoReport: "full-no-report", // everything except generating/exporting the report
+} as const;
+export type FamilyRole = (typeof FAMILY_ROLE)[keyof typeof FAMILY_ROLE];
+export const FAMILY_ROLE_VALUES: FamilyRole[] = Object.values(FAMILY_ROLE);
+
+export interface FamilyMember {
+  email: string; // lowercased Google account email
+  role: FamilyRole;
+}
+
+// A signed-in user acting on an account is either its owner or a family
+// member with one of the FAMILY_ROLE values.
+export type ActingRole = "owner" | FamilyRole;
+
+export const CAPABILITY = {
+  ViewReceipts: "view-receipts", // GET /api/sheets
+  AppendReceipts: "append-receipts", // POST /api/sheets, /api/ocr, GET /api/scan-context
+  EditReceipts: "edit-receipts", // PATCH /api/sheets + inline editing UI
+  Maintain: "maintain", // dedup, fix-drive-ids, match, statements, /compare
+  DriveBrowse: "drive-browse", // /api/drive* listing (DriveImport + pickers)
+  ReportBuild: "report-build", // report wizard pipeline except export
+  ReportExport: "report-export", // POST /api/report/generate + /api/report/pdf
+  SettingsRead: "settings-read", // GET /api/settings + /settings page
+  SettingsWrite: "settings-write", // POST /api/settings
+  ManageFamily: "manage-family", // POST/DELETE /api/family — owner only
+} as const;
+export type Capability = (typeof CAPABILITY)[keyof typeof CAPABILITY];
+
+// The single authorization truth table. Exhaustive switches, no defaults —
+// adding a role or a capability must break the build until handled here.
+export function roleCan(role: ActingRole, cap: Capability): boolean {
+  switch (role) {
+    case "owner":
+      return true;
+    case FAMILY_ROLE.Full:
+      switch (cap) {
+        case CAPABILITY.ManageFamily:
+          return false;
+        case CAPABILITY.ViewReceipts:
+        case CAPABILITY.AppendReceipts:
+        case CAPABILITY.EditReceipts:
+        case CAPABILITY.Maintain:
+        case CAPABILITY.DriveBrowse:
+        case CAPABILITY.ReportBuild:
+        case CAPABILITY.ReportExport:
+        case CAPABILITY.SettingsRead:
+        case CAPABILITY.SettingsWrite:
+          return true;
+      }
+      break;
+    case FAMILY_ROLE.FullNoReport:
+      switch (cap) {
+        case CAPABILITY.ReportExport:
+        case CAPABILITY.ManageFamily:
+          return false;
+        case CAPABILITY.ViewReceipts:
+        case CAPABILITY.AppendReceipts:
+        case CAPABILITY.EditReceipts:
+        case CAPABILITY.Maintain:
+        case CAPABILITY.DriveBrowse:
+        case CAPABILITY.ReportBuild:
+        case CAPABILITY.SettingsRead:
+        case CAPABILITY.SettingsWrite:
+          return true;
+      }
+      break;
+    case FAMILY_ROLE.UploadView:
+      switch (cap) {
+        case CAPABILITY.ViewReceipts:
+        case CAPABILITY.AppendReceipts:
+          return true;
+        case CAPABILITY.EditReceipts:
+        case CAPABILITY.Maintain:
+        case CAPABILITY.DriveBrowse:
+        case CAPABILITY.ReportBuild:
+        case CAPABILITY.ReportExport:
+        case CAPABILITY.SettingsRead:
+        case CAPABILITY.SettingsWrite:
+        case CAPABILITY.ManageFamily:
+          return false;
+      }
+      break;
+  }
+  // Unreachable — every case above returns; TypeScript needs the closer.
+  return false;
 }
 
 // Household-size default for the Food row when the setting is unset (user-confirmed).

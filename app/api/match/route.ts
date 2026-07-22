@@ -1,12 +1,8 @@
 import { NextResponse } from "next/server";
-import {
-  appendTxns,
-  ensureSpreadsheet,
-  getAllReceipts,
-  requireAccessToken,
-} from "@/lib/google";
+import { errorStatus, requireCapability } from "@/lib/accounts";
+import { appendTxns, getAllReceipts } from "@/lib/google";
 import { matchTxnsToReceipts } from "@/lib/match";
-import { PAYMENT_METHOD, type BankTxn } from "@/lib/types";
+import { CAPABILITY, PAYMENT_METHOD, type BankTxn } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -17,8 +13,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "txns required" }, { status: 400 });
     }
 
-    const token = await requireAccessToken();
-    const spreadsheetId = await ensureSpreadsheet(token);
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.Maintain);
     const receipts = await getAllReceipts(token, spreadsheetId);
 
     // Foreign-card receipts can't correspond to the user's own bank/card
@@ -47,7 +42,7 @@ export async function POST(req: Request) {
   } catch (err) {
     return NextResponse.json(
       { error: (err as Error).message },
-      { status: 500 },
+      { status: errorStatus(err) },
     );
   }
 }

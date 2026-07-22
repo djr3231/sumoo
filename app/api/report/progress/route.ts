@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { requireAccessToken, resolveSpreadsheetId } from "@/lib/google";
+import { errorStatus, requireCapability } from "@/lib/accounts";
 import { googleSheetProgressStore } from "@/lib/report/progress-store";
 import type { ReportProgress } from "@/lib/report/progress";
+import { CAPABILITY } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -19,12 +20,13 @@ export async function GET(req: Request) {
     if (!period || !PERIOD_RE.test(period)) {
       return NextResponse.json({ error: "Invalid or missing period" }, { status: 400 });
     }
-    const token = await requireAccessToken();
-    const spreadsheetId = await resolveSpreadsheetId(token);
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.ReportBuild, {
+      ensure: false,
+    });
     const progress = await googleSheetProgressStore(token, spreadsheetId).load(period);
     return NextResponse.json({ ok: true, progress });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return NextResponse.json({ error: (e as Error).message }, { status: errorStatus(e) });
   }
 }
 
@@ -35,12 +37,13 @@ export async function DELETE(req: Request) {
     if (!period || !PERIOD_RE.test(period)) {
       return NextResponse.json({ error: "Invalid or missing period" }, { status: 400 });
     }
-    const token = await requireAccessToken();
-    const spreadsheetId = await resolveSpreadsheetId(token);
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.ReportBuild, {
+      ensure: false,
+    });
     await googleSheetProgressStore(token, spreadsheetId).clear(period);
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return NextResponse.json({ error: (e as Error).message }, { status: errorStatus(e) });
   }
 }
 
@@ -54,11 +57,12 @@ export async function POST(req: Request) {
     if (!progress || typeof progress !== "object" || progress.schemaVersion !== 1) {
       return NextResponse.json({ error: "Invalid or missing progress" }, { status: 400 });
     }
-    const token = await requireAccessToken();
-    const spreadsheetId = await resolveSpreadsheetId(token);
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.ReportBuild, {
+      ensure: false,
+    });
     await googleSheetProgressStore(token, spreadsheetId).save(period, progress);
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return NextResponse.json({ error: (e as Error).message }, { status: errorStatus(e) });
   }
 }

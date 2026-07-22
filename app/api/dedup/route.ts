@@ -1,18 +1,17 @@
 import { NextResponse } from "next/server";
+import { errorStatus, requireCapability } from "@/lib/accounts";
 import {
   canonicalizeStoreNames,
   detectDuplicatesAndPairs,
 } from "@/lib/ai";
 import {
   bulkUpdateReceipts,
-  ensureSpreadsheet,
   getAllReceipts,
   getAllStores,
-  requireAccessToken,
   writeAllStores,
 } from "@/lib/google";
 import { looksUnresolved, resolveStoreName } from "@/lib/places";
-import { DEFAULT_STORE_NAME, DOCUMENT_TYPE } from "@/lib/types";
+import { CAPABILITY, DEFAULT_STORE_NAME, DOCUMENT_TYPE } from "@/lib/types";
 import type { Receipt, Store } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -47,8 +46,7 @@ function isReceiptType(t: Receipt["documentType"]): boolean {
 
 export async function POST() {
   try {
-    const token = await requireAccessToken();
-    const spreadsheetId = await ensureSpreadsheet(token);
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.Maintain);
     const receipts = await getAllReceipts(token, spreadsheetId);
 
     if (receipts.length === 0) {
@@ -307,7 +305,7 @@ export async function POST() {
   } catch (err) {
     return NextResponse.json(
       { error: (err as Error).message },
-      { status: 500 },
+      { status: errorStatus(err) },
     );
   }
 }

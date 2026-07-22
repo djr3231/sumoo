@@ -1,19 +1,14 @@
 import { NextResponse } from "next/server";
-import {
-  bulkUpdateReceipts,
-  ensureSpreadsheet,
-  getAllReceipts,
-  requireAccessToken,
-  driveClient,
-} from "@/lib/google";
+import { errorStatus, requireCapability } from "@/lib/accounts";
+import { bulkUpdateReceipts, getAllReceipts, driveClient } from "@/lib/google";
+import { CAPABILITY } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 export async function POST() {
   try {
-    const token = await requireAccessToken();
-    const spreadsheetId = await ensureSpreadsheet(token);
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.Maintain);
     const receipts = await getAllReceipts(token, spreadsheetId);
 
     if (receipts.length === 0) {
@@ -68,7 +63,7 @@ export async function POST() {
   } catch (err) {
     return NextResponse.json(
       { error: (err as Error).message },
-      { status: 500 },
+      { status: errorStatus(err) },
     );
   }
 }

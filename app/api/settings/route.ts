@@ -1,22 +1,18 @@
 import { NextResponse } from "next/server";
-import {
-  ensureSpreadsheet,
-  getUserSettings,
-  requireAccessToken,
-  writeUserSettings,
-} from "@/lib/google";
+import { errorStatus, requireCapability } from "@/lib/accounts";
+import { getUserSettings, writeUserSettings } from "@/lib/google";
+import { CAPABILITY } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
 export async function GET() {
   try {
-    const token = await requireAccessToken();
-    const spreadsheetId = await ensureSpreadsheet(token);
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.SettingsRead);
     const settings = await getUserSettings(token, spreadsheetId);
     return NextResponse.json(settings);
   } catch (err) {
-    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+    return NextResponse.json({ error: (err as Error).message }, { status: errorStatus(err) });
   }
 }
 
@@ -36,11 +32,21 @@ export async function POST(req: Request) {
         ? { id: rt.id, name: rt.name }
         : null;
 
-    const token = await requireAccessToken();
-    const spreadsheetId = await ensureSpreadsheet(token);
-    await writeUserSettings(token, spreadsheetId, { myCardsLast4, householdSize, reportTemplate });
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.SettingsWrite);
+    // The settings form doesn't know about familyMembers or uploadFolderId —
+    // preserve both across rewrites (writeUserSettings clears A2:B).
+    // strict: a failed read must abort the save, otherwise a transient
+    // Sheets error would silently wipe them.
+    const current = await getUserSettings(token, spreadsheetId, { strict: true });
+    await writeUserSettings(token, spreadsheetId, {
+      myCardsLast4,
+      householdSize,
+      reportTemplate,
+      familyMembers: current.familyMembers,
+      uploadFolderId: current.uploadFolderId,
+    });
     return NextResponse.json({ ok: true });
   } catch (err) {
-    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+    return NextResponse.json({ error: (err as Error).message }, { status: errorStatus(err) });
   }
 }

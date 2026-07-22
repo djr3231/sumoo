@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
-import { listDriveFolderImages, requireAccessToken } from "@/lib/google";
+import { errorStatus, requireCapability } from "@/lib/accounts";
+import { listDriveFolderImages } from "@/lib/google";
+import { CAPABILITY } from "@/lib/types";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
   try {
-    const token = await requireAccessToken();
+    const { token } = await requireCapability(CAPABILITY.DriveBrowse, {
+      spreadsheet: false,
+    });
     const url = new URL(req.url);
     const folderId = url.searchParams.get("folderId");
     if (!folderId) {
@@ -16,7 +20,7 @@ export async function GET(req: Request) {
   } catch (err) {
     return NextResponse.json(
       { error: (err as Error).message },
-      { status: 500 },
+      { status: errorStatus(err) },
     );
   }
 }

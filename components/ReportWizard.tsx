@@ -294,7 +294,7 @@ const ExpenseRow = memo(function ExpenseRow({
   );
 });
 
-export function ReportWizard() {
+export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
   const [step, setStep] = useState(0);
   // Highest step the user has reached. Adjusted during render (React's
   // "adjust state while rendering" pattern — see the You-Might-Not-Need-an-Effect
@@ -2687,18 +2687,26 @@ export function ReportWizard() {
 
               <div className="space-y-3">
                 <div className="flex items-center gap-3 flex-wrap">
-                  <Button onClick={generateReport} disabled={generating}>
-                    {generating ? "מפיק…" : generated !== null ? "הפק מחדש" : "הפק דוח"}
-                  </Button>
-                  {generated !== null ? (
-                    <Button
-                      variant="outline"
-                      type="button"
-                      onClick={() => setPdfDialogOpen(true)}
-                    >
-                      נפק PDF
-                    </Button>
-                  ) : null}
+                  {canExport ? (
+                    <>
+                      <Button onClick={generateReport} disabled={generating}>
+                        {generating ? "מפיק…" : generated !== null ? "הפק מחדש" : "הפק דוח"}
+                      </Button>
+                      {generated !== null ? (
+                        <Button
+                          variant="outline"
+                          type="button"
+                          onClick={() => setPdfDialogOpen(true)}
+                        >
+                          נפק PDF
+                        </Button>
+                      ) : null}
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      הפקת הדוח זמינה לבעל החשבון בלבד
+                    </p>
+                  )}
                 </div>
 
                 {generated ? (

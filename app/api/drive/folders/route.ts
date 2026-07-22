@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { requireAccessToken, searchDriveFolders } from "@/lib/google";
+import { errorStatus, requireCapability } from "@/lib/accounts";
+import { searchDriveFolders } from "@/lib/google";
+import { CAPABILITY } from "@/lib/types";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -8,10 +10,12 @@ export async function GET(req: Request) {
     return NextResponse.json({ folders: [] });
   }
   try {
-    const token = await requireAccessToken();
+    const { token } = await requireCapability(CAPABILITY.DriveBrowse, {
+      spreadsheet: false,
+    });
     const folders = await searchDriveFolders(token, q);
     return NextResponse.json({ folders });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return NextResponse.json({ error: (e as Error).message }, { status: errorStatus(e) });
   }
 }

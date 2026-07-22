@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -7,13 +7,30 @@ import { Badge } from "./ui/badge";
 import { Skeleton } from "./ui/Skeleton";
 import { Alert, AlertDescription } from "./ui/Alert";
 import { DriveFilePicker, type FileSelection } from "./DriveFilePicker";
-import { Loader2 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
+import { roleLabel } from "./AccountChip";
+import { FAMILY_ROLE, FAMILY_ROLE_VALUES, type FamilyMember, type FamilyRole } from "@/lib/types";
+import { Check, Loader2, Pencil, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 interface SettingsResponse {
   myCardsLast4?: string[];
   householdSize?: number | null;
   reportTemplate?: { id: string; name: string } | null;
+  familyMembers?: FamilyMember[];
+  error?: string;
+}
+
+interface FamilyResponse {
+  ok?: boolean;
+  members?: FamilyMember[];
+  sharing?: Array<{ target: string; ok: boolean }>;
   error?: string;
 }
 
@@ -21,7 +38,7 @@ function toReportTemplate(t: FileSelection): { id: string; name: string } | null
   return t.kind === "drive" ? { id: t.id, name: t.name } : null;
 }
 
-export function SettingsForm() {
+export function SettingsForm({ isOwner }: { isOwner: boolean }) {
   const [cards, setCards] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [draftError, setDraftError] = useState<string | null>(null);
@@ -31,6 +48,15 @@ export function SettingsForm() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [members, setMembers] = useState<FamilyMember[]>([]);
+  const [memberEmail, setMemberEmail] = useState("");
+  const [memberRole, setMemberRole] = useState<FamilyRole>(FAMILY_ROLE.UploadView);
+  const [addingMember, setAddingMember] = useState(false);
+  const [busyMemberEmail, setBusyMemberEmail] = useState<string | null>(null);
+  const [editingMemberEmail, setEditingMemberEmail] = useState<string | null>(null);
+  const [editingMemberRole, setEditingMemberRole] = useState<FamilyRole | null>(null);
+  const familyMutationLock = useRef(false);
+  const isFamilyMutating = addingMember || busyMemberEmail !== null;
 
   useEffect(() => {
     let alive = true;
@@ -50,6 +76,7 @@ export function SettingsForm() {
             ? { kind: "drive", id: rt.id, name: rt.name }
             : { kind: "default" },
         );
+        setMembers(Array.isArray(json.familyMembers) ? json.familyMembers : []);
       } catch (e) {
         if (!alive) return;
         setError((e as Error).message);
@@ -123,6 +150,99 @@ export function SettingsForm() {
   async function changeTemplateAndSave(next: FileSelection) {
     setTemplate(next);
     await persist({ template: next });
+  }
+
+  async function addMember() {
+    const email = memberEmail.trim().toLowerCase();
+    if (!email || familyMutationLock.current) return;
+    familyMutationLock.current = true;
+    setAddingMember(true);
+    try {
+      const res = await fetch("/api/family", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, role: memberRole }),
+      });
+      const json = (await res.json()) as FamilyResponse;
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      const known = members.some((m) => m.email === email);
+      setMembers(json.members ?? []);
+      setMemberEmail("");
+      toast.success(known ? "ההרשאה עודכנה" : "בן המשפחה נוסף");
+      if (json.sharing?.some((s) => !s.ok)) {
+        toast.warning("חלק מהשיתופים ב-Drive נכשלו");
+      }
+    } catch {
+      toast.error("הוספת בן המשפחה נכשלה");
+    } finally {
+      setAddingMember(false);
+      familyMutationLock.current = false;
+    }
+  }
+
+  async function removeMember(email: string) {
+    if (familyMutationLock.current) return;
+    familyMutationLock.current = true;
+    setBusyMemberEmail(email);
+    try {
+      const res = await fetch("/api/family", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const json = (await res.json()) as FamilyResponse;
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      setMembers(json.members ?? []);
+      if (editingMemberEmail === email) {
+        setEditingMemberEmail(null);
+        setEditingMemberRole(null);
+      }
+      toast.success("בן המשפחה הוסר");
+    } catch {
+      toast.error("הסרת בן המשפחה נכשלה");
+    } finally {
+      setBusyMemberEmail(null);
+      familyMutationLock.current = false;
+    }
+  }
+
+  function startEditingMember(member: FamilyMember) {
+    if (familyMutationLock.current) return;
+    setEditingMemberEmail(member.email);
+    setEditingMemberRole(member.role);
+  }
+
+  function cancelEditingMember() {
+    setEditingMemberEmail(null);
+    setEditingMemberRole(null);
+  }
+
+  async function saveMemberRole(member: FamilyMember) {
+    const role = editingMemberRole;
+    if (!role || role === member.role || familyMutationLock.current) return;
+    familyMutationLock.current = true;
+    setBusyMemberEmail(member.email);
+    try {
+      const res = await fetch("/api/family", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: member.email, role }),
+      });
+      const json = (await res.json()) as FamilyResponse;
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      setMembers(json.members ?? []);
+      setEditingMemberEmail(null);
+      setEditingMemberRole(null);
+      toast.success("ההרשאה עודכנה");
+      if (json.sharing?.some((s) => !s.ok)) {
+        toast.warning("חלק מהשיתופים ב-Drive נכשלו");
+      }
+    } catch {
+      toast.error("עדכון ההרשאה נכשל");
+    } finally {
+      setBusyMemberEmail(null);
+      familyMutationLock.current = false;
+    }
   }
 
   if (loading) {
@@ -234,6 +354,175 @@ export function SettingsForm() {
         </p>
         <DriveFilePicker value={template} onChange={changeTemplateAndSave} disabled={saving} />
       </div>
+
+      {isOwner && (
+        <div className="space-y-3">
+          <Label htmlFor="member-email" className="text-base font-semibold">
+            בני משפחה
+          </Label>
+          <p className="text-sm text-muted-foreground">
+            בני משפחה שהוספת יוכלו להיכנס עם חשבון Google שלהם ולעבוד על החשבון
+            הזה לפי ההרשאה שתיתן.
+          </p>
+
+          {members.length > 0 && (
+            <ul className="divide-y divide-border border-y border-border">
+              {members.map((member) => {
+                const isEditing = editingMemberEmail === member.email;
+                const isBusy = busyMemberEmail === member.email;
+                const roleChanged =
+                  isEditing &&
+                  editingMemberRole !== null &&
+                  editingMemberRole !== member.role;
+
+                return (
+                  <li
+                    key={member.email}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape" && isEditing && !isBusy) {
+                        cancelEditingMember();
+                      }
+                    }}
+                    className="grid min-w-0 grid-cols-1 gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)_auto] sm:items-center sm:gap-3"
+                  >
+                    <span dir="ltr" className="min-w-0 truncate text-sm font-medium">
+                      {member.email}
+                    </span>
+
+                    {isEditing ? (
+                      <Select
+                        value={editingMemberRole ?? member.role}
+                        onValueChange={(value) =>
+                          setEditingMemberRole(value as FamilyRole)
+                        }
+                        disabled={isFamilyMutating}
+                      >
+                        <SelectTrigger
+                          className="w-full sm:min-w-44"
+                          aria-label={`עריכת ההרשאה של ${member.email}`}
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {FAMILY_ROLE_VALUES.map((role) => (
+                            <SelectItem key={role} value={role}>
+                              {roleLabel(role)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">
+                        {roleLabel(member.role)}
+                      </span>
+                    )}
+
+                    <div className="flex items-center justify-end gap-1 sm:justify-start">
+                      {isEditing ? (
+                        <>
+                          <Button
+                            type="button"
+                            size="icon"
+                            onClick={() => void saveMemberRole(member)}
+                            disabled={!roleChanged || isFamilyMutating}
+                            aria-label={`שמירת ההרשאה של ${member.email}`}
+                          >
+                            {isBusy ? (
+                              <Loader2 className="size-4 animate-spin" />
+                            ) : (
+                              <Check className="size-4" />
+                            )}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={cancelEditingMember}
+                            disabled={isFamilyMutating}
+                            aria-label={`ביטול עריכת ההרשאה של ${member.email}`}
+                          >
+                            <X className="size-4" />
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => startEditingMember(member)}
+                            disabled={isFamilyMutating}
+                            aria-label={`עריכת ההרשאה של ${member.email}`}
+                          >
+                            <Pencil className="size-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => void removeMember(member.email)}
+                            disabled={isFamilyMutating}
+                            aria-label={`הסרה ${member.email}`}
+                            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          >
+                            {isBusy ? (
+                              <Loader2 className="size-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="size-4" />
+                            )}
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          <div className="flex flex-col gap-2 items-stretch sm:flex-row sm:items-start">
+            <Input
+              id="member-email"
+              value={memberEmail}
+              onChange={(e) => setMemberEmail(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); addMember(); }
+              }}
+              type="email"
+              inputMode="email"
+              placeholder="כתובת אימייל"
+              disabled={isFamilyMutating}
+              dir="ltr"
+              className="w-full sm:flex-1"
+            />
+            <Select
+              value={memberRole}
+              onValueChange={(value) => setMemberRole(value as FamilyRole)}
+              disabled={isFamilyMutating}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="הרשאה">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {FAMILY_ROLE_VALUES.map((r) => (
+                  <SelectItem key={r} value={r}>
+                    {roleLabel(r)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              onClick={addMember}
+              variant="outline"
+              disabled={!memberEmail || isFamilyMutating}
+              className="w-full sm:w-auto"
+            >
+              {addingMember && <Loader2 className="me-2 size-4 animate-spin" />}
+              הוספה
+            </Button>
+          </div>
+        </div>
+      )}
 
       {error && (
         <Alert variant="destructive">

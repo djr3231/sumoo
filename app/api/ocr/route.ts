@@ -1,18 +1,18 @@
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { v4 as uuidv4 } from "uuid";
+import { errorStatus, requireCapability } from "@/lib/accounts";
 import { extractReceipt } from "@/lib/ai";
 import {
   appendOrIncrementStore,
   downloadDriveFile,
-  ensureSpreadsheet,
   ensureUploadFolder,
   getAllStores,
   getUserSettings,
-  requireAccessToken,
   uploadFileToDrive,
 } from "@/lib/google";
 import {
+  CAPABILITY,
   DOCUMENT_TYPE,
   EXTRACTED_DOC_TYPE,
   EXTRACTED_METHOD,
@@ -103,7 +103,9 @@ export async function POST(req: Request) {
       fileName = body.fileName;
       originalBuffer = Buffer.from(base64, "base64");
     } else {
-      const token = await requireAccessToken();
+      const { token } = await requireCapability(CAPABILITY.AppendReceipts, {
+        spreadsheet: false,
+      });
       const dl = await downloadDriveFile(token, body.driveFileId);
       base64 = dl.buffer.toString("base64");
       mediaType = body.mediaType || dl.mimeType;
@@ -152,10 +154,17 @@ export async function POST(req: Request) {
 
     let token: string | null = null;
     let spreadsheetId: string | null = null;
+    // Shared account => uploads must go to the OWNER's folder, carried in the
+    // acting context. Personal account => ensure our own folder as before.
+    let isSharedAccount = false;
+    let ownerUploadFolderId: string | null = null;
     let knownStores: string[] = body.knownStores ?? [];
     try {
-      token = await requireAccessToken();
-      spreadsheetId = await ensureSpreadsheet(token);
+      const ctx = await requireCapability(CAPABILITY.AppendReceipts);
+      token = ctx.token;
+      spreadsheetId = ctx.spreadsheetId;
+      isSharedAccount = ctx.ownerEmail !== null;
+      ownerUploadFolderId = ctx.uploadFolderId;
       // Only read the stores tab if the client didn't supply it — cuts one
       // Sheets read per file during a batch.
       if (body.knownStores === undefined) {
@@ -174,18 +183,30 @@ export async function POST(req: Request) {
     });
 
     // Auto-upload local files to Drive so they get a permanent link.
-    // Honor a client-supplied folderId; fall back to the default "סומו - העלאות".
+    // Honor a client-supplied folderId; otherwise the owner's folder on a
+    // shared account, or our own "סומו - העלאות" on a personal one.
     if (body.kind === "upload" && token && originalBuffer) {
       try {
-        const folderId = body.folderId ?? (await ensureUploadFolder(token));
-        const uploaded = await uploadFileToDrive(
-          token,
-          folderId,
-          fileName,
-          originalBuffer,
-          body.mediaType || "image/jpeg",
-        );
-        driveFileId = uploaded.id;
+        const folderId =
+          body.folderId ??
+          (isSharedAccount ? ownerUploadFolderId : await ensureUploadFolder(token));
+        if (!folderId) {
+          // Shared account whose owner has no registered upload folder yet.
+          // Deliberately NOT falling back to a name search: a file saved in
+          // the member's own Drive gives the owner a broken link. The row is
+          // still saved, just without an image. The next /api/family write
+          // backfills the id and the next account switch repairs the cookie.
+          console.warn("No upload folder for the active account — skipping Drive upload");
+        } else {
+          const uploaded = await uploadFileToDrive(
+            token,
+            folderId,
+            fileName,
+            originalBuffer,
+            body.mediaType || "image/jpeg",
+          );
+          driveFileId = uploaded.id;
+        }
       } catch (e) {
         console.warn("Drive auto-upload failed", e);
       }
@@ -286,6 +307,13 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, receipts });
   } catch (err) {
+    const capStatus = errorStatus(err);
+    if (capStatus === 403) {
+      return NextResponse.json(
+        { error: (err as Error).message },
+        { status: 403 },
+      );
+    }
     const e = err as { status?: number; message?: string };
     const msg = e?.message ?? "OCR failed";
     const status =
