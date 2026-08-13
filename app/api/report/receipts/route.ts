@@ -12,7 +12,7 @@ export const maxDuration = 60;
 // not receipts-as-evidence — they must never compete for an expense line.
 export async function GET() {
   try {
-    const { token, spreadsheetId } = await requireCapability(CAPABILITY.ReportBuild);
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.ReportBuild, { ensure: false });
     const receipts = (await getAllReceipts(token, spreadsheetId)).filter(
       (r) =>
         r.documentType !== DOCUMENT_TYPE.Duplicate &&

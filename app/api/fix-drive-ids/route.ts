@@ -8,7 +8,7 @@ export const maxDuration = 120;
 
 export async function POST() {
   try {
-    const { token, spreadsheetId } = await requireCapability(CAPABILITY.Maintain);
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.Maintain, { ensure: false });
     const receipts = await getAllReceipts(token, spreadsheetId);
 
     if (receipts.length === 0) {

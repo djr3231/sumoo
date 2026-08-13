@@ -514,18 +514,27 @@ export async function updateReceiptById(
   patch: Partial<Receipt> & { id: string },
 ) {
   const sheets = sheetsClient(accessToken);
-  const all = await sheets.spreadsheets.values.get({
+  // Locate the row by reading the id column ALONE. This used to read the whole
+  // A:O tab to find one row, on every single field edit — the table autosaves
+  // per field, so a pass through the edit drawer cost one full-sheet read per
+  // field. Two narrow reads beat one read of everything.
+  const ids = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_TAB_RECEIPTS}!A:O`,
+    range: `${SHEET_TAB_RECEIPTS}!A2:A`,
   });
-  const rows = all.data.values || [];
-  const idx = rows.findIndex((r, i) => i > 0 && r[0] === patch.id);
-  if (idx <= 0) throw new Error(`Row not found for id ${patch.id}`);
-  const existing = rowToReceipt(rows[idx]);
+  const idRows = ids.data.values || [];
+  const offset = idRows.findIndex((r) => r[0] === patch.id);
+  if (offset < 0) throw new Error(`Row not found for id ${patch.id}`);
+  // A2 is sheet row 2, so the sheet row number is offset + 2.
+  const rowNumber = offset + 2;
+
+  const range = `${SHEET_TAB_RECEIPTS}!A${rowNumber}:O${rowNumber}`;
+  const current = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const existing = rowToReceipt(current.data.values?.[0] || []);
   const merged: Receipt = { ...existing, ...patch };
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `${SHEET_TAB_RECEIPTS}!A${idx + 1}:O${idx + 1}`,
+    range,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [receiptToRow(merged)] },
   });

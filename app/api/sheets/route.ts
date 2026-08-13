@@ -34,7 +34,7 @@ function describe(err: unknown): string {
 // which is where the user-visible seconds actually are.
 export async function GET(req: Request) {
   try {
-    const { token, spreadsheetId } = await requireCapability(CAPABILITY.ViewReceipts);
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.ViewReceipts, { ensure: false });
     const all = await getAllReceipts(token, spreadsheetId);
 
     const url = new URL(req.url);
@@ -64,7 +64,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const { token, spreadsheetId } = await requireCapability(CAPABILITY.AppendReceipts);
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.AppendReceipts, { ensure: false });
     const body = (await req.json()) as { receipts: Receipt[] };
     await appendReceipts(token, spreadsheetId, body.receipts || []);
     return NextResponse.json({ ok: true, spreadsheetId });
@@ -75,7 +75,7 @@ export async function POST(req: Request) {
 
 export async function PATCH(req: Request) {
   try {
-    const { token, spreadsheetId } = await requireCapability(CAPABILITY.EditReceipts);
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.EditReceipts, { ensure: false });
     const body = (await req.json()) as Partial<Receipt> & { id: string };
     if (!body.id) {
       return NextResponse.json({ error: "id is required" }, { status: 400 });
