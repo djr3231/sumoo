@@ -239,6 +239,8 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
     pair: currentMonthPair(),
   }));
   const [totalCount, setTotalCount] = useState(0);
+  // Rows with an autosave in flight, for the inline "שומר…" marker.
+  const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
   const [dedupRunning, setDedupRunning] = useState(false);
   const [fixingIds, setFixingIds] = useState(false);
   const [search, setSearch] = useState("");
@@ -295,32 +297,56 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
   }, [period]);
 
   useEffect(() => {
+    // load() sets its loading flag before the first await, which the rule
+    // reads as a synchronous setState. Fetching on mount and on period change
+    // is exactly the case it cannot tell apart from a cascading render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 
-  async function patch(id: string, patch: Partial<Receipt>) {
-    if (readOnly) return; // UI guard; the API enforces with 403 anyway
-    const previous = rows.find((r) => r.id === id);
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-    try {
-      const r = await apiFetch("/api/sheets", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, ...patch }),
+  // useCallback so the memoized rows below keep a stable prop identity —
+  // without it every row re-renders on every keystroke and the memo is inert.
+  const patch = useCallback(
+    async (id: string, patch: Partial<Receipt>) => {
+      if (readOnly) return; // UI guard; the API enforces with 403 anyway
+      let previous: Receipt | undefined;
+      setRows((prev) => {
+        previous = prev.find((r) => r.id === id);
+        return prev.map((r) => (r.id === id ? { ...r, ...patch } : r));
       });
-      if (!r.ok) throw new Error(await apiErrorMessage(r));
-    } catch (e) {
-      // The optimistic update has to be rolled back, otherwise the table shows
-      // a value that was never written to the sheet.
-      if (previous) setRows((prev) => prev.map((r) => (r.id === id ? previous : r)));
-      toast.error("השמירה נכשלה: " + (e as Error).message);
-    }
-  }
+      // Not a blocking overlay: this fires on every field blur, so a modal veil
+      // would flash between each pair of fields. A per-row marker instead.
+      setSavingIds((prev) => new Set(prev).add(id));
+      try {
+        const r = await apiFetch("/api/sheets", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, ...patch }),
+        });
+        if (!r.ok) throw new Error(await apiErrorMessage(r));
+      } catch (e) {
+        // The optimistic update has to be rolled back, otherwise the table
+        // shows a value that was never written to the sheet.
+        if (previous) {
+          const restore = previous;
+          setRows((prev) => prev.map((r) => (r.id === id ? restore : r)));
+        }
+        toast.error("השמירה נכשלה: " + (e as Error).message);
+      } finally {
+        setSavingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+    },
+    [readOnly],
+  );
 
   async function runFixDriveIds() {
     setFixingIds(true);
     try {
-      const r = await apiFetch("/api/fix-drive-ids", { method: "POST" });
+      const r = await apiFetch("/api/fix-drive-ids", { method: "POST" }, { blocking: true });
       const j = await r.json();
       if (!r.ok) { toast.error("שגיאה: " + (j.error || r.status)); return; }
       toast.success(
@@ -337,7 +363,7 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
   async function runDedup() {
     setDedupRunning(true);
     try {
-      const r = await apiFetch("/api/dedup", { method: "POST" });
+      const r = await apiFetch("/api/dedup", { method: "POST" }, { blocking: true });
       const j = await r.json();
       if (!r.ok) {
         toast.error("שגיאה: " + (j.error || r.status));
@@ -1115,7 +1141,15 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
           {editing && (
             <>
               <DrawerHeader>
-                <DrawerTitle>{editing.storeName ?? DEFAULT_STORE_NAME}</DrawerTitle>
+                <DrawerTitle className="flex items-center gap-2">
+                  {editing.storeName ?? DEFAULT_STORE_NAME}
+                  {savingIds.has(editing.id) && (
+                    <span className="flex items-center gap-1 text-xs font-normal text-muted-foreground">
+                      <Loader2 className="size-3 animate-spin" />
+                      שומר…
+                    </span>
+                  )}
+                </DrawerTitle>
                 <DrawerDescription>{editing.fileName}</DrawerDescription>
               </DrawerHeader>
               <div className="px-4 pb-4 space-y-4 overflow-y-auto">

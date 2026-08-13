@@ -4,6 +4,7 @@ import { ThemeProvider } from "next-themes";
 import { Toaster } from "sonner";
 import { Direction } from "radix-ui";
 import { SessionGuard } from "./SessionGuard";
+import { GlobalLoading } from "./GlobalLoading";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   return (
@@ -18,6 +19,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
           <SessionGuard />
           {children}
         </SessionProvider>
+        <GlobalLoading />
         <Toaster richColors position="top-center" dir="rtl" />
       </Direction.Provider>
     </ThemeProvider>
