@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -233,6 +233,217 @@ function PeriodSelect({
     </Select>
   );
 }
+
+// One table row, memoized. Each row mounts three Inputs and three Radix
+// Selects, so re-rendering all of them on every keystroke or drawer open was
+// what made the table stall. Same fix as ExpenseRow in 9f5f32c. The memo only
+// works because `patch` is a useCallback — an inline closure would give it a
+// fresh identity every render and defeat it entirely.
+const ReceiptRow = memo(function ReceiptRow({
+  r,
+  patch,
+  readOnly,
+}: {
+  r: Receipt;
+  patch: (id: string, p: Partial<Receipt>) => void;
+  readOnly: boolean;
+}) {
+  return (
+                  <TableRow>
+                    <TableCell>
+                      <Input
+                        defaultValue={r.storeName ?? ""}
+                        onBlur={(e) => {
+                          const v = e.target.value.trim();
+                          if (v !== (r.storeName ?? "")) patch(r.id, { storeName: v || null });
+                        }}
+                        disabled={readOnly}
+                        className="h-8 w-32"
+                      />
+                    </TableCell>
+                    <TableCell className="tabular-nums">
+                      <Input
+                        defaultValue={r.amount ?? ""}
+                        onBlur={(e) => {
+                          const raw = e.target.value.trim();
+                          const v = raw === "" ? null : Number(raw);
+                          if (v !== r.amount && (v === null || !Number.isNaN(v))) {
+                            patch(r.id, { amount: v });
+                          }
+                        }}
+                        disabled={readOnly}
+                        className="h-8 w-20 text-right"
+                      />
+                      <div className="text-[10px] text-muted-foreground">
+                        {formatILS(r.amount)}
+                      </div>
+                    </TableCell>
+                    <TableCell className="tabular-nums text-muted-foreground">
+                      {r.totalReceiptAmount == null ? "—" : formatILS(r.totalReceiptAmount)}
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={r.paymentMethod || PAYMENT_METHOD.Unknown}
+                        onValueChange={(v) => patch(r.id, { paymentMethod: v as PaymentMethod })}
+                        disabled={readOnly}
+                      >
+                        <SelectTrigger size="sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PAYMENT_METHODS.map((m) => (
+                            <SelectItem key={m} value={m}>{m}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {r.cardLast4 && (
+                        <div className="text-[10px] text-muted-foreground">
+                          ★{r.cardLast4}
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        type="date"
+                        defaultValue={r.date ?? ""}
+                        onBlur={(e) => {
+                          const v = e.target.value || null;
+                          if (v !== r.date) patch(r.id, { date: v });
+                        }}
+                        disabled={readOnly}
+                        className="h-8"
+                      />
+                      <div className="text-[10px] text-muted-foreground">
+                        {formatDate(r.date)}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={r.category}
+                        onValueChange={(v) => patch(r.id, { category: v as Category })}
+                        disabled={readOnly}
+                      >
+                        <SelectTrigger size="sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {CATEGORIES.map((c) => (
+                            <SelectItem key={c} value={c}>{c}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={r.documentType}
+                        onValueChange={(v) => patch(r.id, { documentType: v as DocumentType })}
+                        disabled={readOnly}
+                      >
+                        <SelectTrigger size="sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {DOC_TYPES.map((c) => (
+                            <SelectItem key={c} value={c}>{c}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell className="max-w-[200px]">
+                      {r.driveFileId ? (
+                        <a
+                          href={`https://drive.google.com/file/d/${r.driveFileId}/view`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline truncate inline-block max-w-full"
+                          title={r.fileName}
+                        >
+                          {r.fileName}
+                        </a>
+                      ) : (
+                        <span className="truncate inline-block max-w-full" title={r.fileName}>
+                          {r.fileName}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{r.confidence}</TableCell>
+                    <TableCell>
+                      <Checkbox
+                        checked={r.reviewed}
+                        onCheckedChange={(c) => patch(r.id, { reviewed: c === true })}
+                        disabled={readOnly}
+                      />
+                    </TableCell>
+                  </TableRow>
+  );
+});
+
+// The mobile counterpart of ReceiptRow, memoized for the same reason: tapping
+// a card opens the drawer, which re-rendered every card on the page.
+const ReceiptCard = memo(function ReceiptCard({
+  r,
+  readOnly,
+  onEdit,
+}: {
+  r: Receipt;
+  readOnly: boolean;
+  onEdit: (id: string) => void;
+}) {
+  return (
+              <Card
+                role="button"
+                tabIndex={0}
+                onClick={() => { if (!readOnly) onEdit(r.id); }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    if (!readOnly) onEdit(r.id);
+                  }
+                }}
+                size="sm"
+                className="cursor-pointer"
+              >
+                <CardContent className="space-y-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="text-base font-semibold truncate">
+                      {r.storeName ?? DEFAULT_STORE_NAME}
+                    </div>
+                    <div className="text-base font-semibold tabular-nums shrink-0">
+                      {r.amount === null ? "—" : formatILS(r.amount)}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between text-sm text-muted-foreground gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span>{formatDate(r.date) || "—"}</span>
+                      <span>·</span>
+                      <span className="truncate">{r.category}</span>
+                    </div>
+                    <PaymentMethodIcon method={r.paymentMethod} />
+                  </div>
+                  {r.driveFileId ? (
+                    <a
+                      href={`https://drive.google.com/file/d/${r.driveFileId}/view`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-sm underline truncate block"
+                      title={r.fileName}
+                    >
+                      {r.fileName}
+                    </a>
+                  ) : (
+                    <span className="text-sm text-muted-foreground truncate block" title={r.fileName}>
+                      {r.fileName}
+                    </span>
+                  )}
+                  {(r.documentType === DOCUMENT_TYPE.Duplicate ||
+                    r.documentType === DOCUMENT_TYPE.CreditSlip) && (
+                    <DocTypeBadge type={r.documentType} />
+                  )}
+                </CardContent>
+              </Card>
+  );
+});
 
 export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
   const [rows, setRows] = useState<Receipt[]>([]);
@@ -512,6 +723,10 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
     () => sorted.slice((safePage - 1) * pageSize, safePage * pageSize),
     [sorted, safePage, pageSize],
   );
+
+  // Stable identity, or ReceiptCard's memo would be defeated by a fresh
+  // closure on every render.
+  const onEdit = useCallback((id: string) => setEditingId(id), []);
 
   const editing = useMemo(
     () => (editingId ? rows.find((r) => r.id === editingId) ?? null : null),
@@ -905,132 +1120,7 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
               </TableHeader>
               <TableBody>
                 {paged.map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell>
-                      <Input
-                        defaultValue={r.storeName ?? ""}
-                        onBlur={(e) => {
-                          const v = e.target.value.trim();
-                          if (v !== (r.storeName ?? "")) patch(r.id, { storeName: v || null });
-                        }}
-                        disabled={readOnly}
-                        className="h-8 w-32"
-                      />
-                    </TableCell>
-                    <TableCell className="tabular-nums">
-                      <Input
-                        defaultValue={r.amount ?? ""}
-                        onBlur={(e) => {
-                          const raw = e.target.value.trim();
-                          const v = raw === "" ? null : Number(raw);
-                          if (v !== r.amount && (v === null || !Number.isNaN(v))) {
-                            patch(r.id, { amount: v });
-                          }
-                        }}
-                        disabled={readOnly}
-                        className="h-8 w-20 text-right"
-                      />
-                      <div className="text-[10px] text-muted-foreground">
-                        {formatILS(r.amount)}
-                      </div>
-                    </TableCell>
-                    <TableCell className="tabular-nums text-muted-foreground">
-                      {r.totalReceiptAmount == null ? "—" : formatILS(r.totalReceiptAmount)}
-                    </TableCell>
-                    <TableCell>
-                      <Select
-                        value={r.paymentMethod || PAYMENT_METHOD.Unknown}
-                        onValueChange={(v) => patch(r.id, { paymentMethod: v as PaymentMethod })}
-                        disabled={readOnly}
-                      >
-                        <SelectTrigger size="sm">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {PAYMENT_METHODS.map((m) => (
-                            <SelectItem key={m} value={m}>{m}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {r.cardLast4 && (
-                        <div className="text-[10px] text-muted-foreground">
-                          ★{r.cardLast4}
-                        </div>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Input
-                        type="date"
-                        defaultValue={r.date ?? ""}
-                        onBlur={(e) => {
-                          const v = e.target.value || null;
-                          if (v !== r.date) patch(r.id, { date: v });
-                        }}
-                        disabled={readOnly}
-                        className="h-8"
-                      />
-                      <div className="text-[10px] text-muted-foreground">
-                        {formatDate(r.date)}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Select
-                        value={r.category}
-                        onValueChange={(v) => patch(r.id, { category: v as Category })}
-                        disabled={readOnly}
-                      >
-                        <SelectTrigger size="sm">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {CATEGORIES.map((c) => (
-                            <SelectItem key={c} value={c}>{c}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
-                    <TableCell>
-                      <Select
-                        value={r.documentType}
-                        onValueChange={(v) => patch(r.id, { documentType: v as DocumentType })}
-                        disabled={readOnly}
-                      >
-                        <SelectTrigger size="sm">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {DOC_TYPES.map((c) => (
-                            <SelectItem key={c} value={c}>{c}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
-                    <TableCell className="max-w-[200px]">
-                      {r.driveFileId ? (
-                        <a
-                          href={`https://drive.google.com/file/d/${r.driveFileId}/view`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="underline truncate inline-block max-w-full"
-                          title={r.fileName}
-                        >
-                          {r.fileName}
-                        </a>
-                      ) : (
-                        <span className="truncate inline-block max-w-full" title={r.fileName}>
-                          {r.fileName}
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{r.confidence}</TableCell>
-                    <TableCell>
-                      <Checkbox
-                        checked={r.reviewed}
-                        onCheckedChange={(c) => patch(r.id, { reviewed: c === true })}
-                        disabled={readOnly}
-                      />
-                    </TableCell>
-                  </TableRow>
+                  <ReceiptRow key={r.id} r={r} patch={patch} readOnly={readOnly} />
                 ))}
                 {sorted.length === 0 && (
                   <TableRow>
@@ -1049,59 +1139,7 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
               <p className="text-center text-muted-foreground py-6">אין שורות.</p>
             )}
             {paged.map((r) => (
-              <Card
-                key={r.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => { if (!readOnly) setEditingId(r.id); }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    if (!readOnly) setEditingId(r.id);
-                  }
-                }}
-                size="sm"
-                className="cursor-pointer"
-              >
-                <CardContent className="space-y-2">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="text-base font-semibold truncate">
-                      {r.storeName ?? DEFAULT_STORE_NAME}
-                    </div>
-                    <div className="text-base font-semibold tabular-nums shrink-0">
-                      {r.amount === null ? "—" : formatILS(r.amount)}
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between text-sm text-muted-foreground gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span>{formatDate(r.date) || "—"}</span>
-                      <span>·</span>
-                      <span className="truncate">{r.category}</span>
-                    </div>
-                    <PaymentMethodIcon method={r.paymentMethod} />
-                  </div>
-                  {r.driveFileId ? (
-                    <a
-                      href={`https://drive.google.com/file/d/${r.driveFileId}/view`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="text-sm underline truncate block"
-                      title={r.fileName}
-                    >
-                      {r.fileName}
-                    </a>
-                  ) : (
-                    <span className="text-sm text-muted-foreground truncate block" title={r.fileName}>
-                      {r.fileName}
-                    </span>
-                  )}
-                  {(r.documentType === DOCUMENT_TYPE.Duplicate ||
-                    r.documentType === DOCUMENT_TYPE.CreditSlip) && (
-                    <DocTypeBadge type={r.documentType} />
-                  )}
-                </CardContent>
-              </Card>
+              <ReceiptCard key={r.id} r={r} readOnly={readOnly} onEdit={onEdit} />
             ))}
           </div>
 
