@@ -18,6 +18,7 @@ import { roleLabel } from "./AccountChip";
 import { FAMILY_ROLE, FAMILY_ROLE_VALUES, type FamilyMember, type FamilyRole } from "@/lib/types";
 import { Check, Loader2, Pencil, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
+import { apiFetch } from "@/lib/api-client";
 
 interface SettingsResponse {
   myCardsLast4?: string[];
@@ -62,7 +63,7 @@ export function SettingsForm({ isOwner }: { isOwner: boolean }) {
     let alive = true;
     (async () => {
       try {
-        const res = await fetch("/api/settings");
+        const res = await apiFetch("/api/settings");
         const json = (await res.json()) as SettingsResponse;
         if (!alive) return;
         if (!res.ok) { setError(json.error || `HTTP ${res.status}`); return; }
@@ -101,7 +102,7 @@ export function SettingsForm({ isOwner }: { isOwner: boolean }) {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch("/api/settings", {
+      const res = await apiFetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -158,7 +159,7 @@ export function SettingsForm({ isOwner }: { isOwner: boolean }) {
     familyMutationLock.current = true;
     setAddingMember(true);
     try {
-      const res = await fetch("/api/family", {
+      const res = await apiFetch("/api/family", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, role: memberRole }),
@@ -185,7 +186,7 @@ export function SettingsForm({ isOwner }: { isOwner: boolean }) {
     familyMutationLock.current = true;
     setBusyMemberEmail(email);
     try {
-      const res = await fetch("/api/family", {
+      const res = await apiFetch("/api/family", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
@@ -223,7 +224,7 @@ export function SettingsForm({ isOwner }: { isOwner: boolean }) {
     familyMutationLock.current = true;
     setBusyMemberEmail(member.email);
     try {
-      const res = await fetch("/api/family", {
+      const res = await apiFetch("/api/family", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: member.email, role }),

@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import type { BankTxn } from "@/lib/types";
 import { formatDate, formatILS } from "@/lib/utils";
+import { apiFetch } from "@/lib/api-client";
 
 interface MatchResult {
   matched: { receiptId: string; txn: BankTxn }[];
@@ -41,11 +42,11 @@ export function CompareView() {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("sourceLabel", sourceLabel || file.name);
-      const r = await fetch("/api/statements", { method: "POST", body: fd });
+      const r = await apiFetch("/api/statements", { method: "POST", body: fd });
       const json = await r.json();
       if (!r.ok || !json.ok) throw new Error(json.error || "Parse failed");
       setParsedTxns(json.txns);
-      const m = await fetch("/api/match", {
+      const m = await apiFetch("/api/match", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ txns: json.txns, saveToSheet: false }),
@@ -70,7 +71,7 @@ export function CompareView() {
       ...result.matched.map((m) => m.txn),
       ...result.missingReceipts,
     ];
-    const r = await fetch("/api/match", {
+    const r = await apiFetch("/api/match", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ txns: all, saveToSheet: true }),

@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import {
   ACTIVE_ACCOUNT_COOKIE,
   decodeActiveAccount,
+  errorStatus,
   listAvailableAccounts,
   requireSessionIdentity,
 } from "@/lib/accounts";
@@ -26,6 +27,9 @@ export async function GET() {
         : { kind: "personal" },
     });
   } catch (err) {
-    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+    return NextResponse.json(
+      { error: (err as Error).message },
+      { status: errorStatus(err) },
+    );
   }
 }

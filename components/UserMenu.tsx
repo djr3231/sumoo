@@ -3,6 +3,7 @@ import { useState } from "react";
 import { signOut } from "next-auth/react";
 import { UserCircle } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import { apiFetch } from "@/lib/api-client";
 import { Button } from "./ui/button";
 import {
   DropdownMenu,
@@ -38,9 +39,14 @@ export function UserMenu({ email }: { email: string }) {
     if (data || loading) return;
     setLoading(true);
     try {
-      const r = await fetch("/api/accounts");
+      const r = await apiFetch("/api/accounts");
       const j = (await r.json()) as AccountsResponse;
-      if (!r.ok) throw new Error(j.error || "failed");
+      if (!r.ok) {
+        // 401 is already ending the session — a "load failed" toast on the way
+        // out is just noise.
+        if (r.status !== 401) toast.error("טעינת החשבונות נכשלה");
+        return;
+      }
       setData(j);
     } catch {
       toast.error("טעינת החשבונות נכשלה");
@@ -51,7 +57,7 @@ export function UserMenu({ email }: { email: string }) {
 
   async function switchTo(target: string) {
     try {
-      const r = await fetch("/api/accounts/switch", {
+      const r = await apiFetch("/api/accounts/switch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target }),

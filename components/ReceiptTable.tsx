@@ -56,6 +56,8 @@ import {
   AccordionTrigger,
 } from "./ui/accordion";
 import { toast } from "sonner";
+import { apiErrorMessage, apiFetch } from "@/lib/api-client";
+import { Alert, AlertDescription, AlertTitle } from "./ui/Alert";
 import { Skeleton } from "./ui/Skeleton";
 import {
   Loader2,
@@ -170,6 +172,7 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
   const [rows, setRows] = useState<Receipt[]>([]);
   const [spreadsheetId, setSpreadsheetId] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [dedupRunning, setDedupRunning] = useState(false);
   const [fixingIds, setFixingIds] = useState(false);
   const [search, setSearch] = useState("");
@@ -199,29 +202,52 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
 
   async function load() {
     setLoading(true);
-    const r = await fetch("/api/sheets");
-    const json = await r.json();
-    if (r.ok) {
+    setLoadError(null);
+    try {
+      const r = await apiFetch("/api/sheets");
+      if (!r.ok) {
+        // A 401 is already ending the session; anything else has to be shown,
+        // or the user just sees an empty table and assumes there are no
+        // receipts.
+        if (r.status !== 401) setLoadError(await apiErrorMessage(r));
+        return;
+      }
+      const json = (await r.json()) as {
+        receipts: Receipt[];
+        spreadsheetId: string;
+      };
       setRows(json.receipts);
       setSpreadsheetId(json.spreadsheetId);
+    } catch (e) {
+      setLoadError((e as Error).message);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   async function patch(id: string, patch: Partial<Receipt>) {
     if (readOnly) return; // UI guard; the API enforces with 403 anyway
+    const previous = rows.find((r) => r.id === id);
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-    await fetch("/api/sheets", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, ...patch }),
-    });
+    try {
+      const r = await apiFetch("/api/sheets", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, ...patch }),
+      });
+      if (!r.ok) throw new Error(await apiErrorMessage(r));
+    } catch (e) {
+      // The optimistic update has to be rolled back, otherwise the table shows
+      // a value that was never written to the sheet.
+      if (previous) setRows((prev) => prev.map((r) => (r.id === id ? previous : r)));
+      toast.error("השמירה נכשלה: " + (e as Error).message);
+    }
   }
 
   async function runFixDriveIds() {
     setFixingIds(true);
     try {
-      const r = await fetch("/api/fix-drive-ids", { method: "POST" });
+      const r = await apiFetch("/api/fix-drive-ids", { method: "POST" });
       const j = await r.json();
       if (!r.ok) { toast.error("שגיאה: " + (j.error || r.status)); return; }
       toast.success(
@@ -238,7 +264,7 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
   async function runDedup() {
     setDedupRunning(true);
     try {
-      const r = await fetch("/api/dedup", { method: "POST" });
+      const r = await apiFetch("/api/dedup", { method: "POST" });
       const j = await r.json();
       if (!r.ok) {
         toast.error("שגיאה: " + (j.error || r.status));
@@ -708,6 +734,19 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
             <Skeleton key={i} className="h-10 w-full" />
           ))}
         </div>
+      ) : loadError ? (
+        <Alert variant="destructive">
+          <AlertTitle>טעינת הקבלות נכשלה</AlertTitle>
+          <AlertDescription>{loadError}</AlertDescription>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-3"
+            onClick={() => void load()}
+          >
+            נסה שוב
+          </Button>
+        </Alert>
       ) : (
         <>
           {/* Desktop table */}

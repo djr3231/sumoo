@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { serializeProgress, type WizardProgressState } from "@/lib/report/progress";
+import { apiFetch } from "@/lib/api-client";
 
 export type ReportProgressSaveStatus = "idle" | "saving" | "saved" | "error";
 
@@ -99,7 +100,7 @@ export function useReportProgress({
 
     setStatus("saving");
     try {
-      const res = await fetch("/api/report/progress", {
+      const res = await apiFetch("/api/report/progress", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ period, progress }),

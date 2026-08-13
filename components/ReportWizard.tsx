@@ -66,6 +66,7 @@ import {
 } from "@/lib/report/progress";
 import { useReportProgress } from "@/lib/report/use-report-progress";
 import Link from "next/link";
+import { apiFetch } from "@/lib/api-client";
 
 // Six wizard steps — labels verbatim from the spec (§4.2).
 const STEPS = [
@@ -428,7 +429,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
     setCreating(true);
     setError(null);
     try {
-      const res = await fetch("/api/report/period", {
+      const res = await apiFetch("/api/report/period", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ year, month1: pair.m1, month2: pair.m2 }),
@@ -446,7 +447,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
       // authoritative for steps 2-5 (see WizardProgressState doc comment).
       let resumed = false;
       try {
-        const progRes = await fetch(
+        const progRes = await apiFetch(
           `/api/report/progress?period=${encodeURIComponent(data.folderName)}`,
         );
         const progData = await progRes.json().catch(() => null);
@@ -507,7 +508,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
       for (const f of directFiles) fd.append("direct", f);
       for (const f of salaryFiles) fd.append("salary", f);
 
-      const res = await fetch("/api/report/process", {
+      const res = await apiFetch("/api/report/process", {
         method: "POST",
         body: fd,
       });
@@ -553,7 +554,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
     cancelProgressSave();
     setRestarting(true);
     try {
-      await fetch(
+      await apiFetch(
         `/api/report/progress?period=${encodeURIComponent(created.folderName)}`,
         { method: "DELETE" },
       );
@@ -724,7 +725,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
     setReceiptsLoading(true);
     setReceiptsError(null);
     try {
-      const res = await fetch("/api/report/receipts");
+      const res = await apiFetch("/api/report/receipts");
       const data = await res.json();
       if (!res.ok || !data.ok)
         throw new Error(data.error ?? "שגיאה בטעינת הקבלות");
@@ -751,7 +752,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
     setAddingCashId(r.id);
     let category: GovExpenseCategory = GOV_EXPENSE_CATEGORY.Miscellaneous;
     try {
-      const res = await fetch("/api/report/classify", {
+      const res = await apiFetch("/api/report/classify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ items: [{ description, amount }] }),
@@ -945,7 +946,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
   useEffect(() => {
     if (step !== 5) return;
     let cancelled = false;
-    fetch("/api/settings")
+    apiFetch("/api/settings")
       .then((r) => r.json())
       .then((json: { householdSize?: number | null }) => {
         if (!cancelled) setHouseholdSize(json.householdSize ?? DEFAULT_HOUSEHOLD_SIZE);
@@ -995,7 +996,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
     setGenerating(true);
     setGenerateError(null);
     try {
-      const res = await fetch("/api/report/generate", {
+      const res = await apiFetch("/api/report/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1050,7 +1051,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
             .map((e) => e.receipt as string),
         ),
       );
-      const res = await fetch("/api/report/pdf", {
+      const res = await apiFetch("/api/report/pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

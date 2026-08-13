@@ -16,6 +16,7 @@ import {
 } from "./ui/dialog";
 import { Label } from "./ui/label";
 import { Loader2, Upload } from "lucide-react";
+import { apiFetch } from "@/lib/api-client";
 import { DEFAULT_STORE_NAME, type Receipt } from "@/lib/types";
 import { useSharedFiles } from "@/lib/use-shared-files";
 import { DriveFolderPicker, type FolderSelection } from "./DriveFolderPicker";
@@ -75,7 +76,7 @@ async function resizeToBase64(
 }
 
 async function postOnce(url: string, body: unknown) {
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -206,7 +207,7 @@ export function UploadZone() {
     // On failure, ctx stays empty and the server reads per file, as before.
     let ctx: ScanContext = {};
     try {
-      const r = await fetch("/api/scan-context");
+      const r = await apiFetch("/api/scan-context");
       if (r.ok) ctx = await r.json();
     } catch {
       // ignore — fall back to per-file server reads
@@ -234,15 +235,20 @@ export function UploadZone() {
           if (!f) break;
           try {
             const rs = await processOne(f, ctx);
-            newResults.push(...rs);
             state.consecutiveOverloads = 0;
+            // The write has to be confirmed BEFORE the receipt is shown or the
+            // file is retired. Ignoring this response is how an expired token
+            // produced a full green results table with nothing in the sheet.
+            //
+            // postOnce, not postWithNetRetry: the receipts already carry their
+            // UUIDs, so retrying a write whose response was merely lost would
+            // append the same ids twice — and duplicate ids break row lookup
+            // by id. A failure here leaves the file in the queue instead, and
+            // re-scanning mints fresh ids.
             if (rs.length > 0) {
-              await fetch("/api/sheets", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ receipts: rs }),
-              });
+              await postOnce("/api/sheets", { receipts: rs });
             }
+            newResults.push(...rs);
             state.succeeded.add(f);
           } catch (e) {
             const err = e as Error & { status?: number };

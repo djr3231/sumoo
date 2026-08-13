@@ -68,11 +68,14 @@ export async function requireSessionIdentity(): Promise<{
   email: string;
 }> {
   const session = await getServerSession(authOptions);
-  // Session type augmentation only covers accessToken; same cast as
-  // requireAccessToken in lib/google.ts.
-  const token = (session as { accessToken?: string } | null)?.accessToken;
-  const email = session?.user?.email?.toLowerCase();
-  if (!token || !email) throw new Error("Not authenticated with Google");
+  // `session.error` means the jwt callback found the Google grant dead and
+  // already cleared the access token (lib/auth.ts). Treat it as unauthenticated
+  // so the route answers 401 and the client signs out — rather than 500, which
+  // is indistinguishable from a quota error or a bug.
+  if (!session || session.error) throw new UnauthenticatedError();
+  const token = session.accessToken;
+  const email = session.user?.email?.toLowerCase();
+  if (!token || !email) throw new UnauthenticatedError();
   return { token, email };
 }
 
@@ -230,8 +233,32 @@ export class ForbiddenError extends Error {
   }
 }
 
+// Thrown when there is no usable Google grant. Routes map it to HTTP 401.
+export class UnauthenticatedError extends Error {
+  constructor() {
+    super("Not authenticated with Google");
+    this.name = "UnauthenticatedError";
+  }
+}
+
+// A grant revoked mid-session: NextAuth still holds an unexpired access token,
+// but Google rejects it. Only a real API call reveals this, so the raw
+// googleapis error has to be recognised too. Depending on the failure path the
+// status lands on `code`, `status`, or `response.status`.
+export function isGoogleAuthError(err: unknown): boolean {
+  const e = err as {
+    code?: unknown;
+    status?: unknown;
+    response?: { status?: unknown };
+  } | null;
+  return e?.code === 401 || e?.status === 401 || e?.response?.status === 401;
+}
+
 export function errorStatus(err: unknown): number {
-  return err instanceof ForbiddenError ? 403 : 500;
+  if (err instanceof UnauthenticatedError) return 401;
+  if (err instanceof ForbiddenError) return 403;
+  if (isGoogleAuthError(err)) return 401;
+  return 500;
 }
 
 // The standard route front door with authorization: resolves the acting

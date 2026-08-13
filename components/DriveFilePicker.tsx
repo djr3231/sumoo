@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import { apiFetch } from "@/lib/api-client";
 import {
   Combobox,
   ComboboxContent,
@@ -62,7 +63,7 @@ export function DriveFilePicker({ value, onChange, disabled }: Props) {
       abortRef.current?.abort();
       abortRef.current = controller;
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `/api/drive/files?q=${encodeURIComponent(next)}`,
           { signal: controller.signal },
         );
