@@ -67,6 +67,13 @@ import {
 import { useReportProgress } from "@/lib/report/use-report-progress";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api-client";
+import {
+  CURRENT_YEAR,
+  MONTH_PAIRS,
+  YEAR_OPTIONS,
+  monthOfISO,
+  pad2,
+} from "@/lib/period";
 
 // Six wizard steps — labels verbatim from the spec (§4.2).
 const STEPS = [
@@ -91,12 +98,6 @@ function isDraftExpense(e: { amount: number; description: string }): boolean {
   return e.amount === 0 && e.description.trim() === "";
 }
 
-// Month number from an ISO date (null-safe).
-function monthOfISO(d?: string | null): number | null {
-  const m = d ? Number(d.slice(5, 7)) : NaN;
-  return Number.isFinite(m) && m >= 1 && m <= 12 ? m : null;
-}
-
 const SOURCE_LABEL: Record<"direct" | "checking" | "cash" | "manual", string> =
   {
     direct: "כרטיס",
@@ -104,22 +105,6 @@ const SOURCE_LABEL: Record<"direct" | "checking" | "cash" | "manual", string> =
     cash: "מזומן",
     manual: "ידני",
   };
-
-// Two-digit month label, e.g. 3 -> "03".
-const pad2 = (n: number) => String(n).padStart(2, "0");
-
-// The six bi-monthly periods of a year.
-const MONTH_PAIRS = [
-  { m1: 1, m2: 2 },
-  { m1: 3, m2: 4 },
-  { m1: 5, m2: 6 },
-  { m1: 7, m2: 8 },
-  { m1: 9, m2: 10 },
-  { m1: 11, m2: 12 },
-] as const;
-
-const CURRENT_YEAR = new Date().getFullYear();
-const YEAR_OPTIONS = [CURRENT_YEAR - 1, CURRENT_YEAR, CURRENT_YEAR + 1];
 
 interface CreatedPeriod {
   folderName: string;

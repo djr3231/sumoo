@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -57,6 +57,15 @@ import {
 } from "./ui/accordion";
 import { toast } from "sonner";
 import { apiErrorMessage, apiFetch } from "@/lib/api-client";
+import {
+  CURRENT_YEAR,
+  MONTH_PAIRS,
+  YEAR_OPTIONS,
+  currentMonthPair,
+  periodDateRange,
+  periodLabel,
+  type MonthPair,
+} from "@/lib/period";
 import { Alert, AlertDescription, AlertTitle } from "./ui/Alert";
 import { Skeleton } from "./ui/Skeleton";
 import {
@@ -168,11 +177,68 @@ function DocTypeBadge({ type }: { type: DocumentType }) {
   );
 }
 
+// null = every receipt, ignoring dates.
+type PeriodChoice = { year: number; pair: MonthPair } | null;
+
+const PERIOD_ALL = "all";
+
+function encodePeriod(p: PeriodChoice): string {
+  return p ? `${p.year}:${p.pair.m1}` : PERIOD_ALL;
+}
+
+function decodePeriod(value: string): PeriodChoice {
+  if (value === PERIOD_ALL) return null;
+  const [year, m1] = value.split(":").map(Number);
+  const pair = MONTH_PAIRS.find((p) => p.m1 === m1);
+  return pair ? { year, pair } : null;
+}
+
+// Newest first — the period being worked on is almost always the current one.
+const PERIOD_OPTIONS: PeriodChoice[] = [...YEAR_OPTIONS]
+  .reverse()
+  .flatMap((year) => [...MONTH_PAIRS].reverse().map((pair) => ({ year, pair })));
+
+function PeriodSelect({
+  value,
+  onChange,
+  className,
+}: {
+  value: PeriodChoice;
+  onChange: (p: PeriodChoice) => void;
+  className?: string;
+}) {
+  return (
+    <Select
+      value={encodePeriod(value)}
+      onValueChange={(v) => onChange(decodePeriod(v))}
+    >
+      <SelectTrigger className={className} aria-label="תקופת דוח">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {PERIOD_OPTIONS.map((p) => (
+          <SelectItem key={encodePeriod(p)} value={encodePeriod(p)}>
+            {periodLabel(p!.year, p!.pair)}
+          </SelectItem>
+        ))}
+        <SelectItem value={PERIOD_ALL}>כל הקבלות</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
+
 export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
   const [rows, setRows] = useState<Receipt[]>([]);
   const [spreadsheetId, setSpreadsheetId] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // The sheet holds every receipt ever scanned and only grows. Default to the
+  // current reporting period; null = "all receipts".
+  const [period, setPeriod] = useState<PeriodChoice>(() => ({
+    year: CURRENT_YEAR,
+    pair: currentMonthPair(),
+  }));
+  const [totalCount, setTotalCount] = useState(0);
   const [dedupRunning, setDedupRunning] = useState(false);
   const [fixingIds, setFixingIds] = useState(false);
   const [search, setSearch] = useState("");
@@ -180,10 +246,6 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
   const [colFilters, setColFilters] = useState<Partial<Record<SortKey, Set<string>>>>({});
   const [openCol, setOpenCol] = useState<SortKey | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-
-  useEffect(() => {
-    void load();
-  }, []);
 
   useEffect(() => {
     if (!openCol) return;
@@ -200,11 +262,16 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
     };
   }, [openCol]);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const r = await apiFetch("/api/sheets");
+      let url = "/api/sheets";
+      if (period) {
+        const { from, to } = periodDateRange(period.year, period.pair);
+        url += `?from=${from}&to=${to}`;
+      }
+      const r = await apiFetch(url);
       if (!r.ok) {
         // A 401 is already ending the session; anything else has to be shown,
         // or the user just sees an empty table and assumes there are no
@@ -215,15 +282,21 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
       const json = (await r.json()) as {
         receipts: Receipt[];
         spreadsheetId: string;
+        total?: number;
       };
       setRows(json.receipts);
       setSpreadsheetId(json.spreadsheetId);
+      setTotalCount(json.total ?? json.receipts.length);
     } catch (e) {
       setLoadError((e as Error).message);
     } finally {
       setLoading(false);
     }
-  }
+  }, [period]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   async function patch(id: string, patch: Partial<Receipt>) {
     if (readOnly) return; // UI guard; the API enforces with 403 anyway
@@ -453,6 +526,7 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
     <div className="space-y-3">
       {/* Desktop toolbar */}
       <div className="hidden md:flex flex-wrap gap-2 items-center">
+        <PeriodSelect value={period} onChange={setPeriod} className="h-9 w-40" />
         <Input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -505,6 +579,9 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
       </div>
 
       {/* Mobile toolbar */}
+      <div className="flex md:hidden flex-col gap-2">
+        <PeriodSelect value={period} onChange={setPeriod} className="h-9 w-full" />
+      </div>
       <div className="flex md:hidden gap-2 items-start">
         <Input
           value={search}

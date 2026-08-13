@@ -130,15 +130,12 @@ export function DriveImport() {
       setErrors([]);
       setProgress({ done: 0, total: 0 });
 
-      const sheetsRes = await apiFetch("/api/sheets");
+      // ids=1 — this only needs the Drive file ids to detect already-imported
+      // files, not every field of every receipt ever scanned.
+      const sheetsRes = await apiFetch("/api/sheets?ids=1");
       if (sheetsRes.ok) {
-        const sheetsJson = await sheetsRes.json();
-        const ids = new Set<string>(
-          (sheetsJson.receipts as Receipt[])
-            .map((r) => r.driveFileId)
-            .filter((id): id is string => Boolean(id)),
-        );
-        setExistingDriveIds(ids);
+        const sheetsJson = (await sheetsRes.json()) as { driveFileIds: string[] };
+        setExistingDriveIds(new Set(sheetsJson.driveFileIds));
       }
     } finally {
       setLoadingFolder(false);
