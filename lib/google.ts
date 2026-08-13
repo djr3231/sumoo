@@ -1,6 +1,4 @@
-import { getServerSession } from "next-auth";
 import { google, type sheets_v4, type drive_v3 } from "googleapis";
-import { authOptions } from "./auth";
 import {
   DEFAULT_STORE_NAME,
   DOCUMENT_TYPE,
@@ -22,13 +20,6 @@ import {
   type Store,
   type UserSettings,
 } from "./types";
-
-export async function requireAccessToken(): Promise<string> {
-  const session = await getServerSession(authOptions);
-  const token = (session as any)?.accessToken as string | undefined;
-  if (!token) throw new Error("Not authenticated with Google");
-  return token;
-}
 
 function authClient(accessToken: string) {
   const oauth2 = new google.auth.OAuth2();
