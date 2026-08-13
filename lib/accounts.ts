@@ -38,6 +38,33 @@ export const ACTIVE_ACCOUNT_COOKIE_OPTIONS = {
 
 const MEMBERSHIP_TTL_MS = 10 * 60 * 1000;
 
+// ---------------------------------------------------------------------------
+// Personal-spreadsheet id cache
+//
+// resolveSpreadsheetId costs a Drive files.list, and ensureSpreadsheet adds
+// spreadsheets.get + values.batchGet + spreadsheets.get on top — per request,
+// for an id that never changes. Cache it in an HMAC-signed cookie, bound to
+// the signed-in email so a different account cannot inherit it.
+// ---------------------------------------------------------------------------
+
+export const PERSONAL_SHEET_COOKIE = "sumoo-personal-sheet";
+
+const PERSONAL_SHEET_TTL_MS = 24 * 60 * 60 * 1000;
+
+export const PERSONAL_SHEET_COOKIE_OPTIONS = {
+  httpOnly: true,
+  sameSite: "lax" as const,
+  secure: process.env.NODE_ENV === "production",
+  path: "/",
+  maxAge: PERSONAL_SHEET_TTL_MS / 1000,
+};
+
+interface PersonalSheetPayload {
+  spreadsheetId: string;
+  email: string;
+  cachedAt: number;
+}
+
 export interface ActiveAccountPayload {
   spreadsheetId: string;
   ownerEmail: string;
@@ -119,6 +146,44 @@ export function decodeActiveAccount(
       ...p,
       uploadFolderId: typeof folderId === "string" && folderId ? folderId : null,
     };
+  } catch {
+    return null;
+  }
+}
+
+function encodePersonalSheet(spreadsheetId: string, email: string): string {
+  const payload: PersonalSheetPayload = {
+    spreadsheetId,
+    email,
+    cachedAt: Date.now(),
+  };
+  const data = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `${data}.${sign(data)}`;
+}
+
+// Returns the cached id only if the signature holds, the TTL has not passed,
+// and the cookie belongs to the currently signed-in email.
+function decodePersonalSheet(
+  raw: string | undefined,
+  email: string,
+): string | null {
+  if (!raw) return null;
+  const dot = raw.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const data = raw.slice(0, dot);
+  const sigBuf = Buffer.from(raw.slice(dot + 1));
+  const expBuf = Buffer.from(sign(data));
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+    return null;
+  }
+  try {
+    const p = JSON.parse(
+      Buffer.from(data, "base64url").toString(),
+    ) as PersonalSheetPayload;
+    if (typeof p.spreadsheetId !== "string" || !p.spreadsheetId) return null;
+    if (p.email !== email) return null;
+    if (Date.now() - p.cachedAt > PERSONAL_SHEET_TTL_MS) return null;
+    return p.spreadsheetId;
   } catch {
     return null;
   }
@@ -209,11 +274,34 @@ export async function resolveActingContext(
 
   // spreadsheet: false — caller only needs identity + role (token-only
   // routes). Skips the Drive lookup entirely; spreadsheetId must not be used.
-  const spreadsheetId = !spreadsheet
-    ? ""
-    : ensure
-      ? await ensureSpreadsheet(token)
-      : await resolveSpreadsheetId(token);
+  let spreadsheetId = "";
+  if (spreadsheet) {
+    // The personal spreadsheet id never changes, but finding it costs a Drive
+    // files.list on EVERY request (and ensureSpreadsheet adds three more calls
+    // on top). Cache it in the same signed-cookie mechanism the active account
+    // uses, so the lookup happens once a day instead of once a request.
+    const cached = decodePersonalSheet(
+      store.get(PERSONAL_SHEET_COOKIE)?.value,
+      email,
+    );
+    if (cached) {
+      // A cached entry is only ever written by the ensure path, so the main
+      // tabs are known to exist and ensureTabs can be skipped either way.
+      spreadsheetId = cached;
+    } else if (ensure) {
+      spreadsheetId = await ensureSpreadsheet(token);
+      store.set(
+        PERSONAL_SHEET_COOKIE,
+        encodePersonalSheet(spreadsheetId, email),
+        PERSONAL_SHEET_COOKIE_OPTIONS,
+      );
+    } else {
+      // Deliberately NOT cached: this path never ran ensureTabs, and caching it
+      // would let a brand-new user's later ensure:true call hit the cache and
+      // skip tab creation entirely.
+      spreadsheetId = await resolveSpreadsheetId(token);
+    }
+  }
   return {
     token,
     email,

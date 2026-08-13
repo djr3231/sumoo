@@ -13,7 +13,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "txns required" }, { status: 400 });
     }
 
-    const { token, spreadsheetId } = await requireCapability(CAPABILITY.Maintain);
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.Maintain, { ensure: false });
     const receipts = await getAllReceipts(token, spreadsheetId);
 
     // Foreign-card receipts can't correspond to the user's own bank/card

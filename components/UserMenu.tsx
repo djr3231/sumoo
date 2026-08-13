@@ -57,11 +57,17 @@ export function UserMenu({ email }: { email: string }) {
 
   async function switchTo(target: string) {
     try {
-      const r = await apiFetch("/api/accounts/switch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target }),
-      });
+      const r = await apiFetch(
+        "/api/accounts/switch",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ target }),
+        },
+        // Ends in a full page reload — block the UI so the account cannot be
+        // switched twice while the first switch is still resolving.
+        { blocking: true },
+      );
       if (!r.ok) {
         const j = (await r.json()) as { error?: string };
         throw new Error(j.error || "failed");

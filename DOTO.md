@@ -59,6 +59,23 @@ Another example: The payment of property taxes to the Harish Municipality is rec
   expenses/unmatchedReceipts);
   (d) "+ הוסף שורה" residual ~204ms/click (acceptable for now, tracked here).
 
+- Debounce follow-ups (left out of feat/receipts-performance): ReportWizard's
+  `expenseFilter` input and MatchWorkbench's search both filter on every keystroke
+  with no debounce and no memo — the same defect fixed on the receipts table with
+  SEARCH_DEBOUNCE_MS. MatchWorkbench also recomputes its candidate list on every
+  render.
+- Receipts read is still O(all rows): `GET /api/sheets?from&to` filters in the route
+  AFTER reading the whole tab, because Sheets cannot filter by cell value on
+  values.get and rows are appended in scan order, not date order. Only payload,
+  parse and client-side work were saved. A genuinely ranged read needs the
+  receipt↔expense data-model rework below.
+- OAuth consent screen is in "Testing" publishing status, which is why the Google
+  grant dies every ~7 days (Google revokes refresh tokens for testing-status
+  External apps). The app now signs the user out cleanly instead of silently losing
+  scans, but the root cause remains. Moving to "In production" requires verification,
+  and `drive.readonly` is a RESTRICTED scope, which can trigger a third-party
+  security assessment — weigh before doing it.
+
 - vercel show logs of:
 
 ```
