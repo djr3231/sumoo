@@ -96,6 +96,13 @@ import { cn, formatDate, formatILS } from "@/lib/utils";
 
 const DOC_TYPES: DocumentType[] = DOCUMENT_TYPES;
 
+// Matches the Drive pickers' debounce.
+const SEARCH_DEBOUNCE_MS = 300;
+// Rows per page — the sheet grows without bound, so the table cannot render
+// all of it at once.
+const DEFAULT_PAGE_SIZE = 50;
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 250];
+
 type SortKey =
   | "storeName"
   | "amount"
@@ -241,13 +248,24 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
   const [totalCount, setTotalCount] = useState(0);
   // Rows with an autosave in flight, for the inline "שומר…" marker.
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [dedupRunning, setDedupRunning] = useState(false);
   const [fixingIds, setFixingIds] = useState(false);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [sort, setSort] = useState<{ key: SortKey | null; dir: "asc" | "desc" }>({ key: null, dir: "asc" });
   const [colFilters, setColFilters] = useState<Partial<Record<SortKey, Set<string>>>>({});
   const [openCol, setOpenCol] = useState<SortKey | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // The search box drove `filtered` on every keystroke, and `filtered`
+  // rebuilds a haystack string per row before the whole table re-renders.
+  // Same 300 ms shape as the Drive pickers.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [search]);
 
   useEffect(() => {
     if (!openCol) return;
@@ -446,6 +464,7 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
   );
 
   function toggleFilterValue(key: SortKey, v: string) {
+    setPage(1);
     setColFilters((prev) => {
       const cur = prev[key];
       const next = cur ? new Set(cur) : new Set<string>();
@@ -461,8 +480,8 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
 
   const filtered = useMemo(() => {
     return mainRows.filter((r) => {
-      if (search) {
-        const t = search.toLowerCase();
+      if (debouncedSearch) {
+        const t = debouncedSearch.toLowerCase();
         const hay = [r.fileName, r.storeName, r.notes, r.date, String(r.amount)]
           .filter(Boolean)
           .join(" ")
@@ -476,7 +495,7 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
       }
       return true;
     });
-  }, [mainRows, search, colFilters]);
+  }, [mainRows, debouncedSearch, colFilters]);
 
   const sorted = useMemo(() => {
     if (!sort.key) return filtered;
@@ -484,14 +503,26 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
     return [...filtered].sort((a, b) => compareReceipts(a, b, key, sort.dir));
   }, [filtered, sort]);
 
+  // Rendering every matching row is what makes the table crawl: each one
+  // mounts three Inputs and three Radix Selects. Only a page of them is
+  // rendered; exports and totals still work off the full `sorted` list.
+  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const safePage = Math.min(page, pageCount);
+  const paged = useMemo(
+    () => sorted.slice((safePage - 1) * pageSize, safePage * pageSize),
+    [sorted, safePage, pageSize],
+  );
+
   const editing = useMemo(
     () => (editingId ? rows.find((r) => r.id === editingId) ?? null : null),
     [editingId, rows],
   );
 
-  function driveLink(r: Receipt): string {
-    return r.driveFileId ? `https://drive.google.com/file/d/${r.driveFileId}/view` : "";
-  }
+  const driveLink = useCallback(
+    (r: Receipt): string =>
+      r.driveFileId ? `https://drive.google.com/file/d/${r.driveFileId}/view` : "",
+    [],
+  );
 
   function downloadCSV() {
     const headers = [
@@ -552,10 +583,10 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
     <div className="space-y-3">
       {/* Desktop toolbar */}
       <div className="hidden md:flex flex-wrap gap-2 items-center">
-        <PeriodSelect value={period} onChange={setPeriod} className="h-9 w-40" />
+        <PeriodSelect value={period} onChange={(p) => { setPeriod(p); setPage(1); }} className="h-9 w-40" />
         <Input
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           placeholder="חיפוש חופשי..."
           aria-label="חיפוש חופשי"
           className="h-9 max-w-xs"
@@ -606,12 +637,12 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
 
       {/* Mobile toolbar */}
       <div className="flex md:hidden flex-col gap-2">
-        <PeriodSelect value={period} onChange={setPeriod} className="h-9 w-full" />
+        <PeriodSelect value={period} onChange={(p) => { setPeriod(p); setPage(1); }} className="h-9 w-full" />
       </div>
       <div className="flex md:hidden gap-2 items-start">
         <Input
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           placeholder="חיפוש חופשי..."
           aria-label="חיפוש חופשי"
           className="h-9 flex-1 min-w-[12rem]"
@@ -873,7 +904,7 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sorted.map((r) => (
+                {paged.map((r) => (
                   <TableRow key={r.id}>
                     <TableCell>
                       <Input
@@ -1017,7 +1048,7 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
             {sorted.length === 0 && (
               <p className="text-center text-muted-foreground py-6">אין שורות.</p>
             )}
-            {sorted.map((r) => (
+            {paged.map((r) => (
               <Card
                 key={r.id}
                 role="button"
@@ -1072,6 +1103,53 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
                 </CardContent>
               </Card>
             ))}
+          </div>
+
+          {/* Pagination + scope readout */}
+          <div className="flex flex-wrap items-center gap-3 pt-2 text-sm text-muted-foreground">
+            <span>
+              {sorted.length === 0
+                ? "אין קבלות להצגה"
+                : `מציג ${(safePage - 1) * pageSize + 1}–${Math.min(safePage * pageSize, sorted.length)} מתוך ${sorted.length}`}
+              {period && totalCount > rows.length && ` (${totalCount} בסך הכול)`}
+            </span>
+            <div className="flex-1" />
+            <Select
+              value={String(pageSize)}
+              onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}
+            >
+              <SelectTrigger className="h-8 w-24" aria-label="שורות בעמוד">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PAGE_SIZE_OPTIONS.map((n) => (
+                  <SelectItem key={n} value={String(n)}>
+                    {n}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={safePage <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                הקודם
+              </Button>
+              <span>
+                {safePage} / {pageCount}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={safePage >= pageCount}
+                onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+              >
+                הבא
+              </Button>
+            </div>
           </div>
         </>
       )}
