@@ -76,6 +76,11 @@ Another example: The payment of property taxes to the Harish Municipality is rec
   and `drive.readonly` is a RESTRICTED scope, which can trigger a third-party
   security assessment — weigh before doing it.
 
+- What's-New popup (`components/WhatsNew.tsx`, added 2026-08-14): open question at
+  every release — leave the current announcement running, refresh the copy and bump
+  `RELEASE`, or delete it. ASK the user; do not decide. Full protocol in CLAUDE.MD
+  under "What's-New Popup".
+
 - vercel show logs of:
 
 ```
