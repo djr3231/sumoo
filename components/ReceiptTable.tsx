@@ -574,6 +574,11 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
           body: JSON.stringify({ id, ...patch }),
         });
         if (!r.ok) throw new Error(await apiErrorMessage(r));
+        // A fixed id, not a fresh toast per save: patch fires on every field
+        // blur, so a pass through the drawer is a dozen requests. Sonner
+        // replaces a live toast that carries the same id, which turns that
+        // into one bubble that refreshes instead of a stack.
+        toast.success("השינויים נשמרו בהצלחה", { id: "receipt-save", duration: 2000 });
       } catch (e) {
         // The optimistic update has to be rolled back, otherwise the table
         // shows a value that was never written to the sheet.
