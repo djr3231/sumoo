@@ -540,6 +540,53 @@ export async function updateReceiptById(
   });
 }
 
+// Remove a receipt row entirely. deleteDimension — NOT a range clear: a cleared
+// row stays in the grid with an empty column A, which rowToReceipt would map to
+// a receipt with an empty id and which breaks the gap-sensitive values.append
+// used by appendReceipts.
+export async function deleteReceiptById(
+  accessToken: string,
+  spreadsheetId: string,
+  id: string,
+) {
+  const sheets = sheetsClient(accessToken);
+  // Same narrow id-column read as updateReceiptById — no need to pull A:O to
+  // find one row.
+  const ids = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_TAB_RECEIPTS}!A2:A`,
+  });
+  const idRows = ids.data.values || [];
+  const offset = idRows.findIndex((r) => r[0] === id);
+  if (offset < 0) throw new Error(`Row not found for id ${id}`);
+  // A2 is sheet row 2, so the sheet row number is offset + 2.
+  const rowNumber = offset + 2;
+
+  // deleteDimension addresses rows by the tab's numeric id, not its title.
+  const tabs = await listSheetTabs(accessToken, spreadsheetId);
+  const tab = tabs.find((t) => t.title === SHEET_TAB_RECEIPTS);
+  if (!tab) throw new Error(`Tab not found: ${SHEET_TAB_RECEIPTS}`);
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          deleteDimension: {
+            // Zero-based, end-exclusive: one row, the one found above.
+            range: {
+              sheetId: tab.sheetId,
+              dimension: "ROWS",
+              startIndex: rowNumber - 1,
+              endIndex: rowNumber,
+            },
+          },
+        },
+      ],
+    },
+  });
+}
+
 export async function bulkUpdateReceipts(
   accessToken: string,
   spreadsheetId: string,
