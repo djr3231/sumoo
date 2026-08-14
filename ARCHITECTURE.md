@@ -270,9 +270,17 @@ JWT-only. The access token + refresh token live in the JWT. `getServerSession` e
 
 ### 6.3 Token refresh
 
-`auth.ts` refreshes proactively when the JWT callback runs and `expiresAt` is within 60s of now. If refresh fails, the next API call will hit a 401 from Google and the user must sign in again.
+`auth.ts` refreshes proactively when the JWT callback runs and `expiresAt` is within 60s of now.
 
-`requireAccessToken()` in `lib/google.ts` is the only authorized way to get a token in an API route. It throws if no session — never call `getServerSession` directly.
+Refresh failure is split two ways. A **hard** failure — Google rejects the refresh token itself (`!response.ok`: `invalid_grant`, revoked access) — clears `token.accessToken` and sets `token.error = REFRESH_ERROR`, which the `session` callback exposes as `session.error`. A **soft** failure (network/parse) leaves the token alone and retries on the next request, so a transient blip never signs the user out.
+
+`REFRESH_ERROR` lives in `lib/auth-error.ts`, not `lib/auth.ts`, so `components/SessionGuard.tsx` can import it without pulling the server-only NextAuth config into the client bundle.
+
+`requireCapability()` / `resolveActingContext()` / `requireSessionIdentity()` in `lib/accounts.ts` are the only authorized way to get a token in an API route — never call `getServerSession` directly. `requireSessionIdentity` throws `UnauthenticatedError` when the session is missing, has no access token, or carries `session.error`; `errorStatus()` maps that to **401**.
+
+Two layers detect a dead grant, and both are needed:
+- **Page entry** — `SessionGuard` reads `session.error` and signs the user out. Catches a grant that died before the page loaded.
+- **Live 401** — a grant revoked mid-session still has an unexpired access token, so only a real Google call reveals it. `isGoogleAuthError()` recognises the raw googleapis error and `errorStatus()` maps it to 401.
 
 ### 6.4 Per-spreadsheet authorization
 
@@ -388,12 +396,12 @@ The user's spreadsheet sometimes has rows the user added manually. If column A (
 
 ### 8.6 Calling `getServerSession` directly in an API route
 ```ts
-// ❌  Bypasses requireAccessToken's error contract
+// ❌  Bypasses the 401 contract — a dead grant surfaces as a 500
 const session = await getServerSession(authOptions);
 const token = (session as any).accessToken;
 
 // ✅
-const token = await requireAccessToken();
+const { token, spreadsheetId } = await requireCapability(CAPABILITY.ViewReceipts);
 ```
 
 ### 8.7 Inventing categories or payment methods
@@ -453,7 +461,7 @@ Gemini is instructed to return one of the fixed `CATEGORIES` and one of the `EXT
 | Add a new column to the receipts tab      | `lib/types.ts` (`RECEIPT_HEADERS` + `Receipt`) → `lib/google.ts` (`receiptToRow` + `rowToReceipt`) → `components/ReceiptTable.tsx` (column def) → backfill `lib/ai.ts` if Gemini needs to extract it |
 | Add a new setting (key/value)             | `lib/types.ts` (`SETTINGS_KEY` + extend `UserSettings`) → `lib/google.ts` (`getUserSettings` / `writeUserSettings`) → `app/api/settings/route.ts` (validation) → `components/SettingsForm.tsx` (UI) |
 | Add a new sheet tab                       | `lib/types.ts` (`SHEET_TAB_*` constant) → `lib/google.ts` (`tabsFromMeta` + `ensureTabs` + new read/write helpers + add to spreadsheet creation) |
-| Add a new API route                       | `app/api/<route>/route.ts` — must use `requireAccessToken` for auth, return JSON, set `runtime = "nodejs"` |
+| Add a new API route                       | `app/api/<route>/route.ts` — must use `requireCapability` for auth, return JSON with `errorStatus(err)`, set `runtime = "nodejs"` |
 | Add a new external service                | `lib/<service>.ts` — wrap all calls, no global state, return typed results |
 
 ---

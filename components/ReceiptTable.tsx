@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -56,6 +56,17 @@ import {
   AccordionTrigger,
 } from "./ui/accordion";
 import { toast } from "sonner";
+import { apiErrorMessage, apiFetch } from "@/lib/api-client";
+import {
+  CURRENT_YEAR,
+  MONTH_PAIRS,
+  YEAR_OPTIONS,
+  currentMonthPair,
+  periodDateRange,
+  periodLabel,
+  type MonthPair,
+} from "@/lib/period";
+import { Alert, AlertDescription, AlertTitle } from "./ui/Alert";
 import { Skeleton } from "./ui/Skeleton";
 import {
   Loader2,
@@ -84,6 +95,13 @@ import {
 import { cn, formatDate, formatILS } from "@/lib/utils";
 
 const DOC_TYPES: DocumentType[] = DOCUMENT_TYPES;
+
+// Matches the Drive pickers' debounce.
+const SEARCH_DEBOUNCE_MS = 300;
+// Rows per page — the sheet grows without bound, so the table cannot render
+// all of it at once.
+const DEFAULT_PAGE_SIZE = 50;
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 250];
 
 type SortKey =
   | "storeName"
@@ -166,21 +184,299 @@ function DocTypeBadge({ type }: { type: DocumentType }) {
   );
 }
 
+// null = every receipt, ignoring dates.
+type PeriodChoice = { year: number; pair: MonthPair } | null;
+
+const PERIOD_ALL = "all";
+
+function encodePeriod(p: PeriodChoice): string {
+  return p ? `${p.year}:${p.pair.m1}` : PERIOD_ALL;
+}
+
+function decodePeriod(value: string): PeriodChoice {
+  if (value === PERIOD_ALL) return null;
+  const [year, m1] = value.split(":").map(Number);
+  const pair = MONTH_PAIRS.find((p) => p.m1 === m1);
+  return pair ? { year, pair } : null;
+}
+
+// Newest first — the period being worked on is almost always the current one.
+const PERIOD_OPTIONS: PeriodChoice[] = [...YEAR_OPTIONS]
+  .reverse()
+  .flatMap((year) => [...MONTH_PAIRS].reverse().map((pair) => ({ year, pair })));
+
+function PeriodSelect({
+  value,
+  onChange,
+  className,
+}: {
+  value: PeriodChoice;
+  onChange: (p: PeriodChoice) => void;
+  className?: string;
+}) {
+  return (
+    <Select
+      value={encodePeriod(value)}
+      onValueChange={(v) => onChange(decodePeriod(v))}
+    >
+      <SelectTrigger className={className} aria-label="תקופת דוח">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {PERIOD_OPTIONS.map((p) => (
+          <SelectItem key={encodePeriod(p)} value={encodePeriod(p)}>
+            {periodLabel(p!.year, p!.pair)}
+          </SelectItem>
+        ))}
+        <SelectItem value={PERIOD_ALL}>כל הקבלות</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
+
+// One table row, memoized. Each row mounts three Inputs and three Radix
+// Selects, so re-rendering all of them on every keystroke or drawer open was
+// what made the table stall. Same fix as ExpenseRow in 9f5f32c. The memo only
+// works because `patch` is a useCallback — an inline closure would give it a
+// fresh identity every render and defeat it entirely.
+const ReceiptRow = memo(function ReceiptRow({
+  r,
+  patch,
+  readOnly,
+}: {
+  r: Receipt;
+  patch: (id: string, p: Partial<Receipt>) => void;
+  readOnly: boolean;
+}) {
+  return (
+                  <TableRow>
+                    <TableCell>
+                      <Input
+                        defaultValue={r.storeName ?? ""}
+                        onBlur={(e) => {
+                          const v = e.target.value.trim();
+                          if (v !== (r.storeName ?? "")) patch(r.id, { storeName: v || null });
+                        }}
+                        disabled={readOnly}
+                        className="h-8 w-32"
+                      />
+                    </TableCell>
+                    <TableCell className="tabular-nums">
+                      <Input
+                        defaultValue={r.amount ?? ""}
+                        onBlur={(e) => {
+                          const raw = e.target.value.trim();
+                          const v = raw === "" ? null : Number(raw);
+                          if (v !== r.amount && (v === null || !Number.isNaN(v))) {
+                            patch(r.id, { amount: v });
+                          }
+                        }}
+                        disabled={readOnly}
+                        className="h-8 w-20 text-right"
+                      />
+                      <div className="text-[10px] text-muted-foreground">
+                        {formatILS(r.amount)}
+                      </div>
+                    </TableCell>
+                    <TableCell className="tabular-nums text-muted-foreground">
+                      {r.totalReceiptAmount == null ? "—" : formatILS(r.totalReceiptAmount)}
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={r.paymentMethod || PAYMENT_METHOD.Unknown}
+                        onValueChange={(v) => patch(r.id, { paymentMethod: v as PaymentMethod })}
+                        disabled={readOnly}
+                      >
+                        <SelectTrigger size="sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PAYMENT_METHODS.map((m) => (
+                            <SelectItem key={m} value={m}>{m}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {r.cardLast4 && (
+                        <div className="text-[10px] text-muted-foreground">
+                          ★{r.cardLast4}
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        type="date"
+                        defaultValue={r.date ?? ""}
+                        onBlur={(e) => {
+                          const v = e.target.value || null;
+                          if (v !== r.date) patch(r.id, { date: v });
+                        }}
+                        disabled={readOnly}
+                        className="h-8"
+                      />
+                      <div className="text-[10px] text-muted-foreground">
+                        {formatDate(r.date)}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={r.category}
+                        onValueChange={(v) => patch(r.id, { category: v as Category })}
+                        disabled={readOnly}
+                      >
+                        <SelectTrigger size="sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {CATEGORIES.map((c) => (
+                            <SelectItem key={c} value={c}>{c}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={r.documentType}
+                        onValueChange={(v) => patch(r.id, { documentType: v as DocumentType })}
+                        disabled={readOnly}
+                      >
+                        <SelectTrigger size="sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {DOC_TYPES.map((c) => (
+                            <SelectItem key={c} value={c}>{c}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell className="max-w-[200px]">
+                      {r.driveFileId ? (
+                        <a
+                          href={`https://drive.google.com/file/d/${r.driveFileId}/view`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline truncate inline-block max-w-full"
+                          title={r.fileName}
+                        >
+                          {r.fileName}
+                        </a>
+                      ) : (
+                        <span className="truncate inline-block max-w-full" title={r.fileName}>
+                          {r.fileName}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{r.confidence}</TableCell>
+                    <TableCell>
+                      <Checkbox
+                        checked={r.reviewed}
+                        onCheckedChange={(c) => patch(r.id, { reviewed: c === true })}
+                        disabled={readOnly}
+                      />
+                    </TableCell>
+                  </TableRow>
+  );
+});
+
+// The mobile counterpart of ReceiptRow, memoized for the same reason: tapping
+// a card opens the drawer, which re-rendered every card on the page.
+const ReceiptCard = memo(function ReceiptCard({
+  r,
+  readOnly,
+  onEdit,
+}: {
+  r: Receipt;
+  readOnly: boolean;
+  onEdit: (id: string) => void;
+}) {
+  return (
+              <Card
+                role="button"
+                tabIndex={0}
+                onClick={() => { if (!readOnly) onEdit(r.id); }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    if (!readOnly) onEdit(r.id);
+                  }
+                }}
+                size="sm"
+                className="cursor-pointer"
+              >
+                <CardContent className="space-y-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="text-base font-semibold truncate">
+                      {r.storeName ?? DEFAULT_STORE_NAME}
+                    </div>
+                    <div className="text-base font-semibold tabular-nums shrink-0">
+                      {r.amount === null ? "—" : formatILS(r.amount)}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between text-sm text-muted-foreground gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span>{formatDate(r.date) || "—"}</span>
+                      <span>·</span>
+                      <span className="truncate">{r.category}</span>
+                    </div>
+                    <PaymentMethodIcon method={r.paymentMethod} />
+                  </div>
+                  {r.driveFileId ? (
+                    <a
+                      href={`https://drive.google.com/file/d/${r.driveFileId}/view`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-sm underline truncate block"
+                      title={r.fileName}
+                    >
+                      {r.fileName}
+                    </a>
+                  ) : (
+                    <span className="text-sm text-muted-foreground truncate block" title={r.fileName}>
+                      {r.fileName}
+                    </span>
+                  )}
+                  {(r.documentType === DOCUMENT_TYPE.Duplicate ||
+                    r.documentType === DOCUMENT_TYPE.CreditSlip) && (
+                    <DocTypeBadge type={r.documentType} />
+                  )}
+                </CardContent>
+              </Card>
+  );
+});
+
 export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
   const [rows, setRows] = useState<Receipt[]>([]);
   const [spreadsheetId, setSpreadsheetId] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // The sheet holds every receipt ever scanned and only grows. Default to the
+  // current reporting period; null = "all receipts".
+  const [period, setPeriod] = useState<PeriodChoice>(() => ({
+    year: CURRENT_YEAR,
+    pair: currentMonthPair(),
+  }));
+  const [totalCount, setTotalCount] = useState(0);
+  // Rows with an autosave in flight, for the inline "שומר…" marker.
+  const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [dedupRunning, setDedupRunning] = useState(false);
   const [fixingIds, setFixingIds] = useState(false);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [sort, setSort] = useState<{ key: SortKey | null; dir: "asc" | "desc" }>({ key: null, dir: "asc" });
   const [colFilters, setColFilters] = useState<Partial<Record<SortKey, Set<string>>>>({});
   const [openCol, setOpenCol] = useState<SortKey | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  // The search box drove `filtered` on every keystroke, and `filtered`
+  // rebuilds a haystack string per row before the whole table re-renders.
+  // Same 300 ms shape as the Drive pickers.
   useEffect(() => {
-    void load();
-  }, []);
+    const t = setTimeout(() => setDebouncedSearch(search), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [search]);
 
   useEffect(() => {
     if (!openCol) return;
@@ -197,31 +493,89 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
     };
   }, [openCol]);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
-    const r = await fetch("/api/sheets");
-    const json = await r.json();
-    if (r.ok) {
+    setLoadError(null);
+    try {
+      let url = "/api/sheets";
+      if (period) {
+        const { from, to } = periodDateRange(period.year, period.pair);
+        url += `?from=${from}&to=${to}`;
+      }
+      const r = await apiFetch(url);
+      if (!r.ok) {
+        // A 401 is already ending the session; anything else has to be shown,
+        // or the user just sees an empty table and assumes there are no
+        // receipts.
+        if (r.status !== 401) setLoadError(await apiErrorMessage(r));
+        return;
+      }
+      const json = (await r.json()) as {
+        receipts: Receipt[];
+        spreadsheetId: string;
+        total?: number;
+      };
       setRows(json.receipts);
       setSpreadsheetId(json.spreadsheetId);
+      setTotalCount(json.total ?? json.receipts.length);
+    } catch (e) {
+      setLoadError((e as Error).message);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  }
+  }, [period]);
 
-  async function patch(id: string, patch: Partial<Receipt>) {
-    if (readOnly) return; // UI guard; the API enforces with 403 anyway
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-    await fetch("/api/sheets", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, ...patch }),
-    });
-  }
+  useEffect(() => {
+    // load() sets its loading flag before the first await, which the rule
+    // reads as a synchronous setState. Fetching on mount and on period change
+    // is exactly the case it cannot tell apart from a cascading render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load();
+  }, [load]);
+
+  // useCallback so the memoized rows below keep a stable prop identity —
+  // without it every row re-renders on every keystroke and the memo is inert.
+  const patch = useCallback(
+    async (id: string, patch: Partial<Receipt>) => {
+      if (readOnly) return; // UI guard; the API enforces with 403 anyway
+      let previous: Receipt | undefined;
+      setRows((prev) => {
+        previous = prev.find((r) => r.id === id);
+        return prev.map((r) => (r.id === id ? { ...r, ...patch } : r));
+      });
+      // Not a blocking overlay: this fires on every field blur, so a modal veil
+      // would flash between each pair of fields. A per-row marker instead.
+      setSavingIds((prev) => new Set(prev).add(id));
+      try {
+        const r = await apiFetch("/api/sheets", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, ...patch }),
+        });
+        if (!r.ok) throw new Error(await apiErrorMessage(r));
+      } catch (e) {
+        // The optimistic update has to be rolled back, otherwise the table
+        // shows a value that was never written to the sheet.
+        if (previous) {
+          const restore = previous;
+          setRows((prev) => prev.map((r) => (r.id === id ? restore : r)));
+        }
+        toast.error("השמירה נכשלה: " + (e as Error).message);
+      } finally {
+        setSavingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+    },
+    [readOnly],
+  );
 
   async function runFixDriveIds() {
     setFixingIds(true);
     try {
-      const r = await fetch("/api/fix-drive-ids", { method: "POST" });
+      const r = await apiFetch("/api/fix-drive-ids", { method: "POST" }, { blocking: true });
       const j = await r.json();
       if (!r.ok) { toast.error("שגיאה: " + (j.error || r.status)); return; }
       toast.success(
@@ -238,7 +592,7 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
   async function runDedup() {
     setDedupRunning(true);
     try {
-      const r = await fetch("/api/dedup", { method: "POST" });
+      const r = await apiFetch("/api/dedup", { method: "POST" }, { blocking: true });
       const j = await r.json();
       if (!r.ok) {
         toast.error("שגיאה: " + (j.error || r.status));
@@ -321,6 +675,7 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
   );
 
   function toggleFilterValue(key: SortKey, v: string) {
+    setPage(1);
     setColFilters((prev) => {
       const cur = prev[key];
       const next = cur ? new Set(cur) : new Set<string>();
@@ -336,8 +691,8 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
 
   const filtered = useMemo(() => {
     return mainRows.filter((r) => {
-      if (search) {
-        const t = search.toLowerCase();
+      if (debouncedSearch) {
+        const t = debouncedSearch.toLowerCase();
         const hay = [r.fileName, r.storeName, r.notes, r.date, String(r.amount)]
           .filter(Boolean)
           .join(" ")
@@ -351,7 +706,7 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
       }
       return true;
     });
-  }, [mainRows, search, colFilters]);
+  }, [mainRows, debouncedSearch, colFilters]);
 
   const sorted = useMemo(() => {
     if (!sort.key) return filtered;
@@ -359,14 +714,30 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
     return [...filtered].sort((a, b) => compareReceipts(a, b, key, sort.dir));
   }, [filtered, sort]);
 
+  // Rendering every matching row is what makes the table crawl: each one
+  // mounts three Inputs and three Radix Selects. Only a page of them is
+  // rendered; exports and totals still work off the full `sorted` list.
+  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const safePage = Math.min(page, pageCount);
+  const paged = useMemo(
+    () => sorted.slice((safePage - 1) * pageSize, safePage * pageSize),
+    [sorted, safePage, pageSize],
+  );
+
+  // Stable identity, or ReceiptCard's memo would be defeated by a fresh
+  // closure on every render.
+  const onEdit = useCallback((id: string) => setEditingId(id), []);
+
   const editing = useMemo(
     () => (editingId ? rows.find((r) => r.id === editingId) ?? null : null),
     [editingId, rows],
   );
 
-  function driveLink(r: Receipt): string {
-    return r.driveFileId ? `https://drive.google.com/file/d/${r.driveFileId}/view` : "";
-  }
+  const driveLink = useCallback(
+    (r: Receipt): string =>
+      r.driveFileId ? `https://drive.google.com/file/d/${r.driveFileId}/view` : "",
+    [],
+  );
 
   function downloadCSV() {
     const headers = [
@@ -427,9 +798,10 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
     <div className="space-y-3">
       {/* Desktop toolbar */}
       <div className="hidden md:flex flex-wrap gap-2 items-center">
+        <PeriodSelect value={period} onChange={(p) => { setPeriod(p); setPage(1); }} className="h-9 w-40" />
         <Input
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           placeholder="חיפוש חופשי..."
           aria-label="חיפוש חופשי"
           className="h-9 max-w-xs"
@@ -479,10 +851,13 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
       </div>
 
       {/* Mobile toolbar */}
+      <div className="flex md:hidden flex-col gap-2">
+        <PeriodSelect value={period} onChange={(p) => { setPeriod(p); setPage(1); }} className="h-9 w-full" />
+      </div>
       <div className="flex md:hidden gap-2 items-start">
         <Input
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           placeholder="חיפוש חופשי..."
           aria-label="חיפוש חופשי"
           className="h-9 flex-1 min-w-[12rem]"
@@ -708,6 +1083,19 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
             <Skeleton key={i} className="h-10 w-full" />
           ))}
         </div>
+      ) : loadError ? (
+        <Alert variant="destructive">
+          <AlertTitle>טעינת הקבלות נכשלה</AlertTitle>
+          <AlertDescription>{loadError}</AlertDescription>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-3"
+            onClick={() => void load()}
+          >
+            נסה שוב
+          </Button>
+        </Alert>
       ) : (
         <>
           {/* Desktop table */}
@@ -731,133 +1119,8 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sorted.map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell>
-                      <Input
-                        defaultValue={r.storeName ?? ""}
-                        onBlur={(e) => {
-                          const v = e.target.value.trim();
-                          if (v !== (r.storeName ?? "")) patch(r.id, { storeName: v || null });
-                        }}
-                        disabled={readOnly}
-                        className="h-8 w-32"
-                      />
-                    </TableCell>
-                    <TableCell className="tabular-nums">
-                      <Input
-                        defaultValue={r.amount ?? ""}
-                        onBlur={(e) => {
-                          const raw = e.target.value.trim();
-                          const v = raw === "" ? null : Number(raw);
-                          if (v !== r.amount && (v === null || !Number.isNaN(v))) {
-                            patch(r.id, { amount: v });
-                          }
-                        }}
-                        disabled={readOnly}
-                        className="h-8 w-20 text-right"
-                      />
-                      <div className="text-[10px] text-muted-foreground">
-                        {formatILS(r.amount)}
-                      </div>
-                    </TableCell>
-                    <TableCell className="tabular-nums text-muted-foreground">
-                      {r.totalReceiptAmount == null ? "—" : formatILS(r.totalReceiptAmount)}
-                    </TableCell>
-                    <TableCell>
-                      <Select
-                        value={r.paymentMethod || PAYMENT_METHOD.Unknown}
-                        onValueChange={(v) => patch(r.id, { paymentMethod: v as PaymentMethod })}
-                        disabled={readOnly}
-                      >
-                        <SelectTrigger size="sm">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {PAYMENT_METHODS.map((m) => (
-                            <SelectItem key={m} value={m}>{m}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {r.cardLast4 && (
-                        <div className="text-[10px] text-muted-foreground">
-                          ★{r.cardLast4}
-                        </div>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Input
-                        type="date"
-                        defaultValue={r.date ?? ""}
-                        onBlur={(e) => {
-                          const v = e.target.value || null;
-                          if (v !== r.date) patch(r.id, { date: v });
-                        }}
-                        disabled={readOnly}
-                        className="h-8"
-                      />
-                      <div className="text-[10px] text-muted-foreground">
-                        {formatDate(r.date)}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Select
-                        value={r.category}
-                        onValueChange={(v) => patch(r.id, { category: v as Category })}
-                        disabled={readOnly}
-                      >
-                        <SelectTrigger size="sm">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {CATEGORIES.map((c) => (
-                            <SelectItem key={c} value={c}>{c}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
-                    <TableCell>
-                      <Select
-                        value={r.documentType}
-                        onValueChange={(v) => patch(r.id, { documentType: v as DocumentType })}
-                        disabled={readOnly}
-                      >
-                        <SelectTrigger size="sm">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {DOC_TYPES.map((c) => (
-                            <SelectItem key={c} value={c}>{c}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
-                    <TableCell className="max-w-[200px]">
-                      {r.driveFileId ? (
-                        <a
-                          href={`https://drive.google.com/file/d/${r.driveFileId}/view`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="underline truncate inline-block max-w-full"
-                          title={r.fileName}
-                        >
-                          {r.fileName}
-                        </a>
-                      ) : (
-                        <span className="truncate inline-block max-w-full" title={r.fileName}>
-                          {r.fileName}
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{r.confidence}</TableCell>
-                    <TableCell>
-                      <Checkbox
-                        checked={r.reviewed}
-                        onCheckedChange={(c) => patch(r.id, { reviewed: c === true })}
-                        disabled={readOnly}
-                      />
-                    </TableCell>
-                  </TableRow>
+                {paged.map((r) => (
+                  <ReceiptRow key={r.id} r={r} patch={patch} readOnly={readOnly} />
                 ))}
                 {sorted.length === 0 && (
                   <TableRow>
@@ -875,61 +1138,56 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
             {sorted.length === 0 && (
               <p className="text-center text-muted-foreground py-6">אין שורות.</p>
             )}
-            {sorted.map((r) => (
-              <Card
-                key={r.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => { if (!readOnly) setEditingId(r.id); }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    if (!readOnly) setEditingId(r.id);
-                  }
-                }}
-                size="sm"
-                className="cursor-pointer"
-              >
-                <CardContent className="space-y-2">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="text-base font-semibold truncate">
-                      {r.storeName ?? DEFAULT_STORE_NAME}
-                    </div>
-                    <div className="text-base font-semibold tabular-nums shrink-0">
-                      {r.amount === null ? "—" : formatILS(r.amount)}
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between text-sm text-muted-foreground gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span>{formatDate(r.date) || "—"}</span>
-                      <span>·</span>
-                      <span className="truncate">{r.category}</span>
-                    </div>
-                    <PaymentMethodIcon method={r.paymentMethod} />
-                  </div>
-                  {r.driveFileId ? (
-                    <a
-                      href={`https://drive.google.com/file/d/${r.driveFileId}/view`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="text-sm underline truncate block"
-                      title={r.fileName}
-                    >
-                      {r.fileName}
-                    </a>
-                  ) : (
-                    <span className="text-sm text-muted-foreground truncate block" title={r.fileName}>
-                      {r.fileName}
-                    </span>
-                  )}
-                  {(r.documentType === DOCUMENT_TYPE.Duplicate ||
-                    r.documentType === DOCUMENT_TYPE.CreditSlip) && (
-                    <DocTypeBadge type={r.documentType} />
-                  )}
-                </CardContent>
-              </Card>
+            {paged.map((r) => (
+              <ReceiptCard key={r.id} r={r} readOnly={readOnly} onEdit={onEdit} />
             ))}
+          </div>
+
+          {/* Pagination + scope readout */}
+          <div className="flex flex-wrap items-center gap-3 pt-2 text-sm text-muted-foreground">
+            <span>
+              {sorted.length === 0
+                ? "אין קבלות להצגה"
+                : `מציג ${(safePage - 1) * pageSize + 1}–${Math.min(safePage * pageSize, sorted.length)} מתוך ${sorted.length}`}
+              {period && totalCount > rows.length && ` (${totalCount} בסך הכול)`}
+            </span>
+            <div className="flex-1" />
+            <Select
+              value={String(pageSize)}
+              onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}
+            >
+              <SelectTrigger className="h-8 w-24" aria-label="שורות בעמוד">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PAGE_SIZE_OPTIONS.map((n) => (
+                  <SelectItem key={n} value={String(n)}>
+                    {n}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={safePage <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                הקודם
+              </Button>
+              <span>
+                {safePage} / {pageCount}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={safePage >= pageCount}
+                onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+              >
+                הבא
+              </Button>
+            </div>
           </div>
         </>
       )}
@@ -999,7 +1257,15 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
           {editing && (
             <>
               <DrawerHeader>
-                <DrawerTitle>{editing.storeName ?? DEFAULT_STORE_NAME}</DrawerTitle>
+                <DrawerTitle className="flex items-center gap-2">
+                  {editing.storeName ?? DEFAULT_STORE_NAME}
+                  {savingIds.has(editing.id) && (
+                    <span className="flex items-center gap-1 text-xs font-normal text-muted-foreground">
+                      <Loader2 className="size-3 animate-spin" />
+                      שומר…
+                    </span>
+                  )}
+                </DrawerTitle>
                 <DrawerDescription>{editing.fileName}</DrawerDescription>
               </DrawerHeader>
               <div className="px-4 pb-4 space-y-4 overflow-y-auto">

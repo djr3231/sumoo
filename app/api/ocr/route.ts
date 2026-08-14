@@ -152,27 +152,28 @@ export async function POST(req: Request) {
       }
     }
 
-    let token: string | null = null;
-    let spreadsheetId: string | null = null;
+    // Auth is fatal and must NOT be swallowed. Without a token this route can
+    // persist nothing — it used to carry on, burn a Gemini call, skip the Drive
+    // upload and still answer `{ ok: true }`, which is how an expired grant
+    // produced a full results table with nothing in the sheet.
+    const ctx = await requireCapability(CAPABILITY.AppendReceipts);
+    const token = ctx.token;
+    const spreadsheetId = ctx.spreadsheetId;
     // Shared account => uploads must go to the OWNER's folder, carried in the
     // acting context. Personal account => ensure our own folder as before.
-    let isSharedAccount = false;
-    let ownerUploadFolderId: string | null = null;
+    const isSharedAccount = ctx.ownerEmail !== null;
+    const ownerUploadFolderId = ctx.uploadFolderId;
+
+    // The stores read, by contrast, is genuinely optional: it only improves
+    // canonicalization, so a failure here must not fail the scan.
     let knownStores: string[] = body.knownStores ?? [];
-    try {
-      const ctx = await requireCapability(CAPABILITY.AppendReceipts);
-      token = ctx.token;
-      spreadsheetId = ctx.spreadsheetId;
-      isSharedAccount = ctx.ownerEmail !== null;
-      ownerUploadFolderId = ctx.uploadFolderId;
-      // Only read the stores tab if the client didn't supply it — cuts one
-      // Sheets read per file during a batch.
-      if (body.knownStores === undefined) {
+    if (body.knownStores === undefined) {
+      try {
         const stores = await getAllStores(token, spreadsheetId);
         knownStores = stores.map((s) => s.canonical);
+      } catch (e) {
+        console.warn("Could not load known stores", e);
       }
-    } catch (e) {
-      console.warn("Could not load spreadsheet context", e);
     }
 
     const extracted = await extractReceipt({
@@ -308,10 +309,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, receipts });
   } catch (err) {
     const capStatus = errorStatus(err);
-    if (capStatus === 403) {
+    if (capStatus === 401 || capStatus === 403) {
       return NextResponse.json(
         { error: (err as Error).message },
-        { status: 403 },
+        { status: capStatus },
       );
     }
     const e = err as { status?: number; message?: string };

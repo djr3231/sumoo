@@ -66,6 +66,14 @@ import {
 } from "@/lib/report/progress";
 import { useReportProgress } from "@/lib/report/use-report-progress";
 import Link from "next/link";
+import { apiFetch } from "@/lib/api-client";
+import {
+  CURRENT_YEAR,
+  MONTH_PAIRS,
+  YEAR_OPTIONS,
+  monthOfISO,
+  pad2,
+} from "@/lib/period";
 
 // Six wizard steps — labels verbatim from the spec (§4.2).
 const STEPS = [
@@ -90,12 +98,6 @@ function isDraftExpense(e: { amount: number; description: string }): boolean {
   return e.amount === 0 && e.description.trim() === "";
 }
 
-// Month number from an ISO date (null-safe).
-function monthOfISO(d?: string | null): number | null {
-  const m = d ? Number(d.slice(5, 7)) : NaN;
-  return Number.isFinite(m) && m >= 1 && m <= 12 ? m : null;
-}
-
 const SOURCE_LABEL: Record<"direct" | "checking" | "cash" | "manual", string> =
   {
     direct: "כרטיס",
@@ -103,22 +105,6 @@ const SOURCE_LABEL: Record<"direct" | "checking" | "cash" | "manual", string> =
     cash: "מזומן",
     manual: "ידני",
   };
-
-// Two-digit month label, e.g. 3 -> "03".
-const pad2 = (n: number) => String(n).padStart(2, "0");
-
-// The six bi-monthly periods of a year.
-const MONTH_PAIRS = [
-  { m1: 1, m2: 2 },
-  { m1: 3, m2: 4 },
-  { m1: 5, m2: 6 },
-  { m1: 7, m2: 8 },
-  { m1: 9, m2: 10 },
-  { m1: 11, m2: 12 },
-] as const;
-
-const CURRENT_YEAR = new Date().getFullYear();
-const YEAR_OPTIONS = [CURRENT_YEAR - 1, CURRENT_YEAR, CURRENT_YEAR + 1];
 
 interface CreatedPeriod {
   folderName: string;
@@ -428,7 +414,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
     setCreating(true);
     setError(null);
     try {
-      const res = await fetch("/api/report/period", {
+      const res = await apiFetch("/api/report/period", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ year, month1: pair.m1, month2: pair.m2 }),
@@ -446,7 +432,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
       // authoritative for steps 2-5 (see WizardProgressState doc comment).
       let resumed = false;
       try {
-        const progRes = await fetch(
+        const progRes = await apiFetch(
           `/api/report/progress?period=${encodeURIComponent(data.folderName)}`,
         );
         const progData = await progRes.json().catch(() => null);
@@ -507,7 +493,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
       for (const f of directFiles) fd.append("direct", f);
       for (const f of salaryFiles) fd.append("salary", f);
 
-      const res = await fetch("/api/report/process", {
+      const res = await apiFetch("/api/report/process", {
         method: "POST",
         body: fd,
       });
@@ -553,7 +539,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
     cancelProgressSave();
     setRestarting(true);
     try {
-      await fetch(
+      await apiFetch(
         `/api/report/progress?period=${encodeURIComponent(created.folderName)}`,
         { method: "DELETE" },
       );
@@ -724,7 +710,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
     setReceiptsLoading(true);
     setReceiptsError(null);
     try {
-      const res = await fetch("/api/report/receipts");
+      const res = await apiFetch("/api/report/receipts");
       const data = await res.json();
       if (!res.ok || !data.ok)
         throw new Error(data.error ?? "שגיאה בטעינת הקבלות");
@@ -751,7 +737,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
     setAddingCashId(r.id);
     let category: GovExpenseCategory = GOV_EXPENSE_CATEGORY.Miscellaneous;
     try {
-      const res = await fetch("/api/report/classify", {
+      const res = await apiFetch("/api/report/classify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ items: [{ description, amount }] }),
@@ -945,7 +931,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
   useEffect(() => {
     if (step !== 5) return;
     let cancelled = false;
-    fetch("/api/settings")
+    apiFetch("/api/settings")
       .then((r) => r.json())
       .then((json: { householdSize?: number | null }) => {
         if (!cancelled) setHouseholdSize(json.householdSize ?? DEFAULT_HOUSEHOLD_SIZE);
@@ -995,7 +981,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
     setGenerating(true);
     setGenerateError(null);
     try {
-      const res = await fetch("/api/report/generate", {
+      const res = await apiFetch("/api/report/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1050,7 +1036,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
             .map((e) => e.receipt as string),
         ),
       );
-      const res = await fetch("/api/report/pdf", {
+      const res = await apiFetch("/api/report/pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -14,13 +14,14 @@ import {
   ComboboxInput,
   ComboboxEmpty,
 } from "./ui/combobox";
+import { apiFetch } from "@/lib/api-client";
 import type { Receipt } from "@/lib/types";
 
 const CONCURRENCY = 2;
 const MAX_CONSECUTIVE_OVERLOADS = 3;
 
 async function postOnce(url: string, body: unknown) {
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -93,7 +94,7 @@ export function DriveImport() {
       abortRef.current?.abort();
       abortRef.current = controller;
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `/api/drive/folders?q=${encodeURIComponent(next)}`,
           { signal: controller.signal },
         );
@@ -114,7 +115,7 @@ export function DriveImport() {
     setFolderIdError(null);
     setLoadingFolder(true);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/drive?folderId=${encodeURIComponent(selectedFolder.id)}`,
       );
       const json = await res.json();
@@ -129,15 +130,12 @@ export function DriveImport() {
       setErrors([]);
       setProgress({ done: 0, total: 0 });
 
-      const sheetsRes = await fetch("/api/sheets");
+      // ids=1 — this only needs the Drive file ids to detect already-imported
+      // files, not every field of every receipt ever scanned.
+      const sheetsRes = await apiFetch("/api/sheets?ids=1");
       if (sheetsRes.ok) {
-        const sheetsJson = await sheetsRes.json();
-        const ids = new Set<string>(
-          (sheetsJson.receipts as Receipt[])
-            .map((r) => r.driveFileId)
-            .filter((id): id is string => Boolean(id)),
-        );
-        setExistingDriveIds(ids);
+        const sheetsJson = (await sheetsRes.json()) as { driveFileIds: string[] };
+        setExistingDriveIds(new Set(sheetsJson.driveFileIds));
       }
     } finally {
       setLoadingFolder(false);
@@ -182,15 +180,13 @@ export function DriveImport() {
           if (!f) break;
           try {
             const rs = await processOne(f);
-            newResults.push(...rs);
             state.consecutiveOverloads = 0;
+            // Confirm the write before showing the receipt or marking the file
+            // imported — see the same fix in UploadZone.
             if (rs.length > 0) {
-              await fetch("/api/sheets", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ receipts: rs }),
-              });
+              await postOnce("/api/sheets", { receipts: rs });
             }
+            newResults.push(...rs);
             setExistingDriveIds((prev) => new Set(prev).add(f.id));
           } catch (e) {
             const err = e as Error & { status?: number };
