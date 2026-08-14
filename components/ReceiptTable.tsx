@@ -68,6 +68,7 @@ import {
 } from "@/lib/period";
 import { Alert, AlertDescription, AlertTitle } from "./ui/Alert";
 import { Skeleton } from "./ui/Skeleton";
+import { DeleteReceiptDialog } from "./DeleteReceiptDialog";
 import {
   Loader2,
   CreditCard,
@@ -79,6 +80,7 @@ import {
   ListFilter,
   ArrowUpDown,
   Menu,
+  Trash2,
 } from "lucide-react";
 import {
   CATEGORIES,
@@ -243,10 +245,12 @@ const ReceiptRow = memo(function ReceiptRow({
   r,
   patch,
   readOnly,
+  onDelete,
 }: {
   r: Receipt;
   patch: (id: string, p: Partial<Receipt>) => void;
   readOnly: boolean;
+  onDelete: (id: string) => void;
 }) {
   return (
                   <TableRow>
@@ -374,6 +378,20 @@ const ReceiptRow = memo(function ReceiptRow({
                         disabled={readOnly}
                       />
                     </TableCell>
+                    {!readOnly && (
+                      <TableCell>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => onDelete(r.id)}
+                          aria-label="מחיקת קבלה"
+                          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </TableCell>
+                    )}
                   </TableRow>
   );
 });
@@ -469,6 +487,9 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
   const [colFilters, setColFilters] = useState<Partial<Record<SortKey, Set<string>>>>({});
   const [openCol, setOpenCol] = useState<SortKey | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // The row the delete dialog is confirming, and its in-flight flag.
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   // The search box drove `filtered` on every keystroke, and `filtered`
   // rebuilds a haystack string per row before the whole table re-renders.
@@ -571,6 +592,31 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
     },
     [readOnly],
   );
+
+  // Deliberately NOT optimistic, unlike patch: the list is sorted and paged, so
+  // re-inserting a row after a failed delete would drop it somewhere the user
+  // is not looking. The dialog stays open and holds the busy state instead.
+  const confirmDelete = useCallback(async () => {
+    if (!deletingId) return;
+    const id = deletingId;
+    setDeleteBusy(true);
+    try {
+      const r = await apiFetch(`/api/sheets?id=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      if (!r.ok) throw new Error(await apiErrorMessage(r));
+      setRows((prev) => prev.filter((row) => row.id !== id));
+      setTotalCount((n) => Math.max(0, n - 1));
+      // The drawer may be open on the row that just went away.
+      setEditingId((cur) => (cur === id ? null : cur));
+      setDeletingId(null);
+      toast.success("הקבלה נמחקה");
+    } catch (e) {
+      toast.error("המחיקה נכשלה: " + (e as Error).message);
+    } finally {
+      setDeleteBusy(false);
+    }
+  }, [deletingId]);
 
   async function runFixDriveIds() {
     setFixingIds(true);
@@ -727,10 +773,23 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
   // Stable identity, or ReceiptCard's memo would be defeated by a fresh
   // closure on every render.
   const onEdit = useCallback((id: string) => setEditingId(id), []);
+  // Same reason as onEdit — ReceiptRow's memo depends on a stable identity.
+  const onDelete = useCallback((id: string) => setDeletingId(id), []);
 
   const editing = useMemo(
     () => (editingId ? rows.find((r) => r.id === editingId) ?? null : null),
     [editingId, rows],
+  );
+
+  const deleting = useMemo(
+    () => (deletingId ? rows.find((r) => r.id === deletingId) ?? null : null),
+    [deletingId, rows],
+  );
+  // Dedup writes `linkedTo` on duplicates; deleting their primary leaves those
+  // links pointing at nothing, so the dialog says so rather than cascading.
+  const deleteLinkedCount = useMemo(
+    () => (deletingId ? rows.filter((r) => r.linkedTo === deletingId).length : 0),
+    [deletingId, rows],
   );
 
   const driveLink = useCallback(
@@ -1116,15 +1175,18 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
                       values={uniqueValues[col.key] || []}
                     />
                   ))}
+                  {/* Deliberately outside COLUMNS: that array drives sorting,
+                      filtering and both exports, none of which apply here. */}
+                  {!readOnly && <TableHead>פעולות</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {paged.map((r) => (
-                  <ReceiptRow key={r.id} r={r} patch={patch} readOnly={readOnly} />
+                  <ReceiptRow key={r.id} r={r} patch={patch} readOnly={readOnly} onDelete={onDelete} />
                 ))}
                 {sorted.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={COLUMNS.length} className="p-6 text-center text-muted-foreground">
+                    <TableCell colSpan={COLUMNS.length + (readOnly ? 0 : 1)} className="p-6 text-center text-muted-foreground">
                       אין שורות.
                     </TableCell>
                   </TableRow>
@@ -1435,6 +1497,16 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
                 </div>
               </div>
               <DrawerFooter>
+                {!readOnly && (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={() => onDelete(editing.id)}
+                  >
+                    <Trash2 className="size-4" />
+                    מחק
+                  </Button>
+                )}
                 <DrawerClose asChild>
                   <Button variant="outline">סגור</Button>
                 </DrawerClose>
@@ -1443,6 +1515,16 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
           )}
         </DrawerContent>
       </Drawer>
+
+      <DeleteReceiptDialog
+        receipt={deleting}
+        open={deletingId !== null}
+        busy={deleteBusy}
+        linkedCount={deleteLinkedCount}
+        // A delete in flight must not be dismissed out from under itself.
+        onOpenChange={(o) => { if (!o && !deleteBusy) setDeletingId(null); }}
+        onConfirm={() => void confirmDelete()}
+      />
     </div>
   );
 }
