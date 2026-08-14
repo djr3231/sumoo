@@ -5,6 +5,7 @@ import { Toaster } from "sonner";
 import { Direction } from "radix-ui";
 import { SessionGuard } from "./SessionGuard";
 import { GlobalLoading } from "./GlobalLoading";
+import { WhatsNew } from "./WhatsNew";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   return (
@@ -17,6 +18,8 @@ export default function Providers({ children }: { children: React.ReactNode }) {
             page entry and tab switching. */}
         <SessionProvider refetchInterval={5 * 60}>
           <SessionGuard />
+          {/* Inside SessionProvider: it only shows to a signed-in user. */}
+          <WhatsNew />
           {children}
         </SessionProvider>
         <GlobalLoading />
