@@ -71,6 +71,27 @@ Large features are built as a **chain of handoff plans**, not one mega-plan:
    pre-existing: UploadZone.tsx:138) + build at batch end; visual/runtime E2E is
    always handed to the user.
 
+## What's-New Popup — ASK, never decide
+
+`components/WhatsNew.tsx` shows a one-time "מה חדש בסומו" dialog to signed-in
+users, keyed by the `RELEASE` constant at the top of the file and remembered in
+`localStorage` under `sumoo:whatsnew:seen`.
+
+**Its lifetime is deliberately undecided.** Do NOT retire it, refresh its copy,
+or bump `RELEASE` as a side effect of shipping something else. Before any
+release that touches user-visible behaviour, ask the user which they want:
+
+- **(a) leave it** — the current announcement keeps running for anyone who has
+  not dismissed it;
+- **(b) refresh it** — rewrite `ITEMS`/`RELEASE_LABEL` and bump `RELEASE`, which
+  makes the popup reappear for everyone, including users who dismissed the
+  previous one;
+- **(c) remove it** — delete the component and its mount in
+  `components/Providers.tsx`.
+
+The user may well want the same announcement to survive several releases, so
+never infer "this update is the one where it goes away".
+
 ## Shadcn Configuration (locked)
 The project's shadcn theme was generated with:
 
