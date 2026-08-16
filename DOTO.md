@@ -76,6 +76,19 @@ Another example: The payment of property taxes to the Harish Municipality is rec
   and `drive.readonly` is a RESTRICTED scope, which can trigger a third-party
   security assessment — weigh before doing it.
 
+- What's-New popup (`components/WhatsNew.tsx`, added 2026-08-14): open question at
+  every release — leave the current announcement running, refresh the copy and bump
+  `RELEASE`, or delete it. ASK the user; do not decide. Full protocol in CLAUDE.MD
+  under "What's-New Popup".
+
+- Two audit findings `npm audit fix` cannot resolve (2026-08-15, both high):
+  `xlsx` has no fix at all — the npm package is the abandoned SheetJS 0.18.5 line
+  (prototype pollution + ReDoS) and SheetJS now self-hosts, so this is a choice
+  between the vendor's own distribution and a different library. Two call sites:
+  `lib/parsers.ts:2`, `components/ReceiptTable.tsx:3`. `sharp` needs 0.35.3, a
+  breaking change, for vulnerabilities inherited from libvips. Everything else
+  was fixed inside the existing semver ranges.
+
 - vercel show logs of:
 
 ```
