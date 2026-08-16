@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { errorStatus, requireCapability } from "@/lib/accounts";
 import {
   appendReceipts,
+  deleteReceiptById,
   getAllReceipts,
   updateReceiptById,
 } from "@/lib/google";
@@ -81,6 +82,24 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "id is required" }, { status: 400 });
     }
     await updateReceiptById(token, spreadsheetId, body);
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    return NextResponse.json({ error: describe(err) }, { status: errorStatus(err) });
+  }
+}
+
+// DELETE /api/sheets?id=<uuid> — removes the row from the קבלות tab. The
+// receipt's Drive file is deliberately left alone: driveFileId is not 1:1 with
+// a row (a mixed-payment receipt yields several rows sharing one file), and a
+// Drive-imported receipt points at the user's own original file.
+export async function DELETE(req: Request) {
+  try {
+    const { token, spreadsheetId } = await requireCapability(CAPABILITY.EditReceipts, { ensure: false });
+    const id = new URL(req.url).searchParams.get("id");
+    if (!id) {
+      return NextResponse.json({ error: "id is required" }, { status: 400 });
+    }
+    await deleteReceiptById(token, spreadsheetId, id);
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json({ error: describe(err) }, { status: errorStatus(err) });

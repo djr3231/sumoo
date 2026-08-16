@@ -452,7 +452,7 @@ Filters AND sort that today live in headers should:
 - All existing labels preserved verbatim.
 - `npm run build` passes.
 - Run all DESIGN-SYSTEM grep checks — clean.
-- (per §7.1.5) Initial table load shows 6 row-shaped Skeletons; dedup + fix-drive-ids buttons show `Loader2` spinner; results surface as toast (success/error); inline cell edits remain inline — no toast/alert per edit.
+- (per §7.1.5) Initial table load shows 6 row-shaped Skeletons; dedup + fix-drive-ids buttons show `Loader2` spinner; results surface as toast (success/error); inline cell edits stay inline — no blocking overlay, no modal. **Superseded 2026-08-14:** a successful cell edit now confirms with a toast. Because `patch` fires per field blur, that toast MUST carry the fixed id `receipt-save` so repeated saves replace one bubble instead of stacking — a fresh toast per edit is still forbidden.
 
 **Hand off:** "Receipts page redone. Please verify (desktop + mobile): inline edit a row, change a category, run dedup, run fix-drive-ids, export CSV, export XLSX. All should match prior behavior."
 

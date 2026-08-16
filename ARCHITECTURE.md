@@ -62,7 +62,7 @@ Gemini's job is to **read** what's printed on the image — not to infer, recogn
 ┌──────────────────────────▼──────────────────────────────────────────┐
 │ Next.js API routes (Node runtime, runs on Vercel)                  │
 │   /api/auth/*    NextAuth Google OAuth                             │
-│   /api/sheets    GET/POST/PATCH receipts                           │
+│   /api/sheets    GET/POST/PATCH/DELETE receipts                    │
 │   /api/ocr       POST: image/PDF → Receipt[]                       │
 │   /api/dedup     POST: canonicalize + dedup pipeline               │
 │   /api/drive     GET: list folder contents                         │
@@ -202,6 +202,13 @@ Every endpoint returns JSON. Errors return `{ error: string }` with an HTTP erro
 - Body: `Partial<Receipt> & { id: string }`.
 - Side effect: updates only the supplied fields by id.
 - Returns: `{ ok: true }`.
+
+### `DELETE /api/sheets?id=<uuid>`
+- Auth: required (`CAPABILITY.EditReceipts`, same as PATCH).
+- Side effect: removes the row from `קבלות` via `deleteReceiptById` (`deleteDimension`, so the grid closes up — a cleared range would leave an id-less row and break the gap-sensitive `appendReceipts`).
+- The receipt's Drive file is **not** touched: `driveFileId` is not 1:1 with a row (mixed payments share one file), and Drive-imported receipts point at the user's own originals.
+- Does not cascade `linkedTo`. Deleting a primary leaves its linked rows pointing at a missing id; the UI warns before confirming.
+- Returns: `{ ok: true }`. Unknown id → 500 (`Row not found for id …`).
 
 ### `POST /api/ocr`
 - Auth: required.

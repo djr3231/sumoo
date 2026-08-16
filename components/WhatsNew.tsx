@@ -16,19 +16,22 @@ import {
 // popup again after a future update; leave it alone and the popup stays retired
 // for everyone who already dismissed it. See the what's-new section in
 // CLAUDE.MD before doing either.
-const RELEASE = "2026-08-14";
-const RELEASE_LABEL = "14.8.2026";
+const RELEASE = "2026-08-16";
+const RELEASE_LABEL = "16.8.2026";
 
 // sumoo:<area>:<thing>, the key convention from UploadZone.tsx.
 const STORAGE_KEY = "sumoo:whatsnew:seen";
 
+// One short line each, newest first — the list has to fit without scrolling.
 const ITEMS = [
-  '⚡ הקבלות נטענות הרבה יותר מהר. הטבלה נפתחת על התקופה הנוכחית בלבד, ומי שרוצה את הכול לוחץ על "כל הקבלות".',
-  "🔎 החיפוש כבר לא נתקע. הוא מחכה שתסיימו להקליד במקום לחשב מחדש על כל אות.",
-  "📄 הטבלה מחולקת לעמודים של 50 שורות, ועריכה של שורה או פתיחת כרטיס הן מיידיות.",
-  "⏳ עכשיו רואים מתי המערכת עובדת — פס דק בראש המסך בכל פעם שמשהו נשמר או נטען.",
-  "🔒 אם החיבור לגוגל פג, מקבלים הודעה ברורה ויציאה מסודרת במקום מסך שנתקע בשקט.",
-  "💾 קבלה נכנסת לרשימה רק אחרי ששמירה הצליחה באמת. אם משהו נכשל, הקובץ נשאר בתור ולא נעלם.",
+  "🗑️ אפשרות למחוק קבלות מהמערכת (התמונה נשארת ב-drive).",
+  "✅ אישור ויזואלי לשמירה אוטומטית מוצלחת.",
+  "⚡ טעינה מהירה — הטבלה נפתחת על התקופה הנוכחית.",
+  "🔎 החיפוש כבר לא נתקע בזמן הקלדה.",
+  "📄 הטבלה מחולקת לעמודים, והעריכה מיידית.",
+  "⏳ פס טעינה בראש המסך נראה כשהמערכת חושבת.",
+  "🔒 תוקף חיבור לגוגל שהסתיים מנתק אוטומטית מהמערכת.",
+  "💾 קבלה נכנסת לרשימה רק אחרי שמירה מוצלחת.",
 ];
 
 // localStorage read as an external store rather than useEffect + setState: the
