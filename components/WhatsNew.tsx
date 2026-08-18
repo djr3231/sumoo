@@ -37,7 +37,7 @@ const ITEMS = [
 
 // localStorage read as an external store rather than useEffect + setState: the
 // effect shape is what trips react-hooks/set-state-in-effect (the one accepted
-// warning in this repo lives at UploadZone.tsx:138), and this also gives an
+// warning in this repo lives at UploadZone.tsx:93), and this also gives an
 // SSR-safe first paint for free.
 const listeners = new Set<() => void>();
 
