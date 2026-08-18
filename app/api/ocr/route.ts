@@ -58,8 +58,12 @@ function asMediaType(
 // batch via /api/scan-context) to avoid a per-file Sheets read. When absent
 // the route reads them itself, as before.
 type ScanContext = { knownStores?: string[]; userCards?: string[] };
+// dryRun (upload only): extract and return the receipt WITHOUT touching Drive
+// or the stores tab. /check scans this way — a receipt that turns out to be one
+// the user already has must leave no trace behind, neither an orphan image nor
+// a phantom store count. Persisting is deferred to /api/receipt-save.
 type Body =
-  | ({ kind: "upload"; fileName: string; mediaType: string; base64: string; folderId?: string } & ScanContext)
+  | ({ kind: "upload"; fileName: string; mediaType: string; base64: string; folderId?: string; dryRun?: boolean } & ScanContext)
   | ({ kind: "drive"; driveFileId: string; fileName: string; mediaType: string } & ScanContext);
 
 function classifyMethod(
@@ -90,6 +94,8 @@ const DOC_TYPE_MAP: Record<ExtractedDocType, DocumentType> = {
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as Body;
+    // Hoisted: the store-registry gate below sits outside the "upload" narrowing.
+    const isDryRun = body.kind === "upload" && body.dryRun === true;
 
     let base64: string;
     let mediaType: string;
@@ -183,10 +189,11 @@ export async function POST(req: Request) {
       knownStores,
     });
 
-    // Auto-upload local files to Drive so they get a permanent link.
+    // Auto-upload local files to Drive so they get a permanent link. Skipped
+    // on a dry run — nothing is persisted until the user asks for it.
     // Honor a client-supplied folderId; otherwise the owner's folder on a
     // shared account, or our own "סומו - העלאות" on a personal one.
-    if (body.kind === "upload" && token && originalBuffer) {
+    if (body.kind === "upload" && token && originalBuffer && !isDryRun) {
       try {
         const folderId =
           body.folderId ??
@@ -291,8 +298,9 @@ export async function POST(req: Request) {
       });
     }
 
-    // Update stores list (use the storeName as recorded; should equal canonical when matched)
-    if (token && spreadsheetId && extracted.store_name) {
+    // Update stores list (use the storeName as recorded; should equal canonical
+    // when matched). Skipped on a dry run; /api/receipt-save does it instead.
+    if (token && spreadsheetId && extracted.store_name && !isDryRun) {
       try {
         const variant = extracted.matched_known_store ? undefined : extracted.store_name;
         await appendOrIncrementStore(
@@ -306,7 +314,14 @@ export async function POST(req: Request) {
       }
     }
 
-    return NextResponse.json({ ok: true, receipts });
+    return NextResponse.json({
+      ok: true,
+      receipts,
+      // Echoed back so a deferred save (/api/receipt-save) can run the store
+      // registry update this request skipped.
+      storeName: extracted.store_name,
+      matchedKnownStore: extracted.matched_known_store,
+    });
   } catch (err) {
     const capStatus = errorStatus(err);
     if (capStatus === 401 || capStatus === 403) {
