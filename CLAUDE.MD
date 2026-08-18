@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 npm run typecheck   # tsc --noEmit — run before every commit
-npm run lint        # eslint . — one accepted pre-existing warning: UploadZone.tsx:138
+npm run lint        # eslint . — one accepted pre-existing warning: UploadZone.tsx:93
 npm run build       # next build — gate at the end of a task batch
 npm run dev         # dev server — do NOT run it yourself (see Visual and Runtime Verification below)
 ```
@@ -68,7 +68,7 @@ Large features are built as a **chain of handoff plans**, not one mega-plan:
    base commit and branch so a fresh session can pick up mid-chain.
 5. **STOP-and-ASK** on any ambiguity, template surprise, or Hebrew string not in the
    plan's approved list. Verification gate per task: typecheck + lint (accepted
-   pre-existing: UploadZone.tsx:138) + build at batch end; visual/runtime E2E is
+   pre-existing: UploadZone.tsx:93) + build at batch end; visual/runtime E2E is
    always handed to the user.
 
 ## What's-New Popup — ASK, never decide
