@@ -42,6 +42,9 @@ export function MobileNav({ email, showFullNav }: MobileNavProps) {
           <Link href="/receipts" onClick={() => setOpen(false)} className="px-3 py-3 hover:bg-accent">
             קבלות
           </Link>
+          <Link href="/check" onClick={() => setOpen(false)} className="px-3 py-3 hover:bg-accent">
+            האם כבר סרקתי?
+          </Link>
           {showFullNav && (
             <>
               <Link href="/compare" onClick={() => setOpen(false)} className="px-3 py-3 hover:bg-accent">

@@ -44,6 +44,9 @@ export default async function Header() {
                 <Link href="/receipts" className="px-3 py-1.5 hover:bg-accent">
                   קבלות
                 </Link>
+                <Link href="/check" className="px-3 py-1.5 hover:bg-accent">
+                  האם כבר סרקתי?
+                </Link>
                 {showFullNav && (
                   <>
                     <Link href="/compare" className="px-3 py-1.5 hover:bg-accent">
