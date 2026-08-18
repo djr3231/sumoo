@@ -16,14 +16,15 @@ import {
 // popup again after a future update; leave it alone and the popup stays retired
 // for everyone who already dismissed it. See the what's-new section in
 // CLAUDE.MD before doing either.
-const RELEASE = "2026-08-16";
-const RELEASE_LABEL = "16.8.2026";
+const RELEASE = "2026-08-18";
+const RELEASE_LABEL = "18.8.2026";
 
 // sumoo:<area>:<thing>, the key convention from UploadZone.tsx.
 const STORAGE_KEY = "sumoo:whatsnew:seen";
 
 // One short line each, newest first — the list has to fit without scrolling.
 const ITEMS = [
+  "🔍 לא בטוח שסרקת? - מעכשיו תוכל לבדוק, ולהוסיף אם לא.",
   "🗑️ אפשרות למחוק קבלות מהמערכת (התמונה נשארת ב-drive).",
   "✅ אישור ויזואלי לשמירה אוטומטית מוצלחת.",
   "⚡ טעינה מהירה — הטבלה נפתחת על התקופה הנוכחית.",
