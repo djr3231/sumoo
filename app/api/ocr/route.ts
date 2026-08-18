@@ -6,10 +6,9 @@ import { extractReceipt } from "@/lib/ai";
 import {
   appendOrIncrementStore,
   downloadDriveFile,
-  ensureUploadFolder,
   getAllStores,
   getUserSettings,
-  uploadFileToDrive,
+  uploadReceiptImage,
 } from "@/lib/google";
 import {
   CAPABILITY,
@@ -194,30 +193,14 @@ export async function POST(req: Request) {
     // Honor a client-supplied folderId; otherwise the owner's folder on a
     // shared account, or our own "סומו - העלאות" on a personal one.
     if (body.kind === "upload" && token && originalBuffer && !isDryRun) {
-      try {
-        const folderId =
-          body.folderId ??
-          (isSharedAccount ? ownerUploadFolderId : await ensureUploadFolder(token));
-        if (!folderId) {
-          // Shared account whose owner has no registered upload folder yet.
-          // Deliberately NOT falling back to a name search: a file saved in
-          // the member's own Drive gives the owner a broken link. The row is
-          // still saved, just without an image. The next /api/family write
-          // backfills the id and the next account switch repairs the cookie.
-          console.warn("No upload folder for the active account — skipping Drive upload");
-        } else {
-          const uploaded = await uploadFileToDrive(
-            token,
-            folderId,
-            fileName,
-            originalBuffer,
-            body.mediaType || "image/jpeg",
-          );
-          driveFileId = uploaded.id;
-        }
-      } catch (e) {
-        console.warn("Drive auto-upload failed", e);
-      }
+      driveFileId = await uploadReceiptImage(token, {
+        folderId: body.folderId,
+        isSharedAccount,
+        ownerUploadFolderId,
+        fileName,
+        buffer: originalBuffer,
+        mimeType: body.mediaType || "image/jpeg",
+      });
     }
 
     // Prefer client-supplied cards (fetched once per batch). Only read the
