@@ -1095,6 +1095,53 @@ export async function uploadFileToDrive(
   return { id: res.data.id! };
 }
 
+// Resolve the destination folder and upload a scanned receipt image, returning
+// the new Drive file id — or null when the upload could not happen.
+//
+// Shared by the two screens that persist a scan: /api/ocr uploads inline during
+// a batch, /api/receipt-save uploads later, once the user has confirmed the
+// receipt is genuinely new. A Drive failure is deliberately non-fatal in both:
+// the row is still worth saving without an image.
+export async function uploadReceiptImage(
+  accessToken: string,
+  opts: {
+    folderId?: string;
+    isSharedAccount: boolean;
+    ownerUploadFolderId: string | null;
+    fileName: string;
+    buffer: Buffer;
+    mimeType: string;
+  },
+): Promise<string | null> {
+  try {
+    const folderId =
+      opts.folderId ??
+      (opts.isSharedAccount
+        ? opts.ownerUploadFolderId
+        : await ensureUploadFolder(accessToken));
+    if (!folderId) {
+      // Shared account whose owner has no registered upload folder yet.
+      // Deliberately NOT falling back to a name search: a file saved in the
+      // member's own Drive gives the owner a broken link. The row is still
+      // saved, just without an image. The next /api/family write backfills the
+      // id and the next account switch repairs the cookie.
+      console.warn("No upload folder for the active account — skipping Drive upload");
+      return null;
+    }
+    const uploaded = await uploadFileToDrive(
+      accessToken,
+      folderId,
+      opts.fileName,
+      opts.buffer,
+      opts.mimeType,
+    );
+    return uploaded.id;
+  } catch (e) {
+    console.warn("Drive auto-upload failed", e);
+    return null;
+  }
+}
+
 // Permanently deletes a file, bypassing trash (files.delete on an owned file
 // is a hard delete, not a trash move) — used to clean up the temp PDF-export
 // copy so it never lingers in Drive.

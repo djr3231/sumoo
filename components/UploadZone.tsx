@@ -17,6 +17,7 @@ import {
 import { Label } from "./ui/label";
 import { Loader2, Upload } from "lucide-react";
 import { apiFetch } from "@/lib/api-client";
+import { resizeToBase64 } from "@/lib/image-client";
 import { DEFAULT_STORE_NAME, type Receipt } from "@/lib/types";
 import { useSharedFiles } from "@/lib/use-shared-files";
 import { DriveFolderPicker, type FolderSelection } from "./DriveFolderPicker";
@@ -26,54 +27,7 @@ const FOLDER_STORAGE_KEY = "sumoo:upload:folder";
 type ScanContext = { knownStores?: string[]; userCards?: string[] };
 
 const CONCURRENCY = 2;
-const MAX_DIM = 1568;
 const MAX_CONSECUTIVE_OVERLOADS = 3;
-
-async function bufferToBase64(buf: ArrayBuffer): Promise<string> {
-  let binary = "";
-  const bytes = new Uint8Array(buf);
-  const chunk = 8192;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  return btoa(binary);
-}
-
-async function resizeToBase64(
-  file: File,
-): Promise<{ base64: string; mediaType: string }> {
-  if (!file.type.startsWith("image/")) {
-    return { base64: await bufferToBase64(await file.arrayBuffer()), mediaType: file.type || "application/octet-stream" };
-  }
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise<HTMLImageElement>((res, rej) => {
-      const i = new Image();
-      i.onload = () => res(i);
-      i.onerror = () => rej(new Error("image decode failed"));
-      i.src = url;
-    });
-    const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
-    const w = Math.max(1, Math.round(img.width * scale));
-    const h = Math.max(1, Math.round(img.height * scale));
-    const c = document.createElement("canvas");
-    c.width = w;
-    c.height = h;
-    const ctx = c.getContext("2d");
-    if (!ctx) throw new Error("canvas 2d unavailable");
-    ctx.drawImage(img, 0, 0, w, h);
-    const blob = await new Promise<Blob>((res, rej) =>
-      c.toBlob(
-        (b) => (b ? res(b) : rej(new Error("toBlob failed"))),
-        "image/jpeg",
-        0.85,
-      ),
-    );
-    return { base64: await bufferToBase64(await blob.arrayBuffer()), mediaType: "image/jpeg" };
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
 
 async function postOnce(url: string, body: unknown) {
   const res = await apiFetch(url, {
