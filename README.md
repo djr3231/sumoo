@@ -78,10 +78,10 @@ openssl rand -base64 32
 
 **דומיין ו-NextAuth — שתי הגדרות שחייבות להסכים ביניהן:**
 
-1. ב-Vercel, ל-Production: `NEXTAUTH_URL=https://chewie.ceo` — הדומיין שממנו
-   המשתמשים נכנסים בפועל, כולל הפרוטוקול ובלי סלאש בסוף.
-2. ב-Google Console → Credentials → Authorized redirect URIs:
-   `https://chewie.ceo/api/auth/callback/google`.
+1. ב-Vercel, ל-Production: `NEXTAUTH_URL` = הדומיין שמגיש בפועל את האתר אחרי כל
+   ההפניות של Vercel/רשם הדומיין, כולל הפרוטוקול ובלי סלאש בסוף.
+2. ב-Google Console → Credentials → Authorized redirect URIs: אותו דומיין בדיוק,
+   בתוספת `/api/auth/callback/google`.
 
 NextAuth v4 מחשב origin אחד לכל בקשה ובונה ממנו את הכל: ה-`redirect_uri` לגוגל,
 כתובת ה-callback, וכל הפניית שגיאה. ה-origin הוא הדומיין הנכנס רק כאשר משתנה
@@ -90,8 +90,15 @@ NextAuth v4 מחשב origin אחד לכל בקשה ובונה ממנו את הכ
 NextAuth לא מגדיר להן domain — ה-callback נכשל בבדיקת ה-state, והמשתמש נזרק מנותק
 לדומיין השני.
 
-`middleware.ts` מפנה כל בקשת פרודקשן לדומיין של `NEXTAUTH_URL`, כך שהפיצול הזה לא
-יכול לקרות. פריסות preview לא מושפעות.
+`middleware.ts` מפנה לדומיין של `NEXTAUTH_URL` בקשות פרודקשן שמגיעות לדומיין
+שנוצר על ידי Vercel (`*.vercel.app` — הכינוי של הפרויקט, כתובות של פריסות
+ספציפיות, וכינויי ענפים). כל דומיין אחר נשאר בלי טיפול בכוונה: את הזוג apex/www
+של דומיין מותאם מפנה Vercel או רשם הדומיין, ודעה שנייה מה-middleware מתנגשת
+בהפניה הזו ויוצרת לולאה אינסופית. פריסות preview לא מושפעות.
+
+חשוב: `NEXTAUTH_URL` חייב להיות בדיוק הדומיין שמגיש בפועל את האתר — אם Vercel
+מפנה apex ל-`www`, הערך הוא `https://www.chewie.ceo`, וזו גם הכתובת שצריכה להיות
+רשומה ב-Google Console.
 
 ## מבנה
 

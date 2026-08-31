@@ -2,21 +2,19 @@ import { NextResponse, type NextRequest } from "next/server";
 
 // Pins production to a single origin: the host in NEXTAUTH_URL.
 //
-// The deployment answers on both chewie.ceo and sumoo.vercel.app, and NextAuth
-// v4 derives the whole OAuth round trip — the Google redirect_uri, the callback
-// URL, and every error redirect — from one origin computed per request
-// (`detectOrigin` in next-auth/utils, consumed by core/init.ts). On Vercel that
-// origin is the incoming host only when the VERCEL system env var reaches the
-// runtime; otherwise it is NEXTAUTH_URL. Either way, a sign-in that starts on
-// one host and finishes on the other loses its state/PKCE cookies — those are
-// host-only, NextAuth sets no cookie domain — so the callback fails the state
-// check and dumps the user, signed out, on the other domain. One origin, no
-// split.
+// NextAuth v4 computes one origin per request (`detectOrigin` in
+// next-auth/utils, consumed by core/init) and derives the Google redirect_uri,
+// the callback URL and every error redirect from it. The deployment answers on
+// several hosts, and a sign-in that starts on one and finishes on another loses
+// its state/PKCE cookies — those are host-only, NextAuth sets no cookie domain —
+// so the callback fails its state check and drops the user, signed out, on the
+// wrong domain.
 //
-// Deliberately gated on NEXTAUTH_URL rather than VERCEL_ENV: a project that
-// does not expose Vercel's system env vars has no VERCEL_ENV either, and that
-// is exactly the configuration where the redirect matters most. Preview
-// deployments are left alone when VERCEL_ENV is available to identify them.
+// Only Vercel-generated hosts are redirected. A custom domain's apex/www pair is
+// the platform's business: Vercel (or the registrar) already redirects one to
+// the other, and a second opinion from here fights that redirect and loops —
+// which is exactly what happened when this file redirected www.chewie.ceo to the
+// apex while the apex was being sent back to www.
 
 const canonicalOrigin = (() => {
   const raw = process.env.NEXTAUTH_URL;
@@ -28,6 +26,14 @@ const canonicalOrigin = (() => {
   }
 })();
 
+// Project aliases (sumoo.vercel.app), deployment URLs (sumoo-<hash>.vercel.app)
+// and branch aliases. These are never the canonical host of a custom-domain
+// deployment, so redirecting away from them cannot bounce back.
+function isVercelHost(host: string) {
+  const name = host.split(":")[0];
+  return name === "vercel.app" || name.endsWith(".vercel.app");
+}
+
 export function middleware(request: NextRequest) {
   if (!canonicalOrigin) return NextResponse.next();
 
@@ -38,7 +44,9 @@ export function middleware(request: NextRequest) {
   if (!isProduction) return NextResponse.next();
 
   const host = request.headers.get("host")?.toLowerCase();
-  if (!host || host === canonicalOrigin.host.toLowerCase()) {
+  const canonicalHost = canonicalOrigin.host.toLowerCase();
+  if (!host || host === canonicalHost) return NextResponse.next();
+  if (!isVercelHost(host) || isVercelHost(canonicalHost)) {
     return NextResponse.next();
   }
 
@@ -53,6 +61,6 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   // /api/auth/* stays in scope on purpose: an OAuth callback that still lands
-  // on the wrong host continues to the right one with its query intact.
+  // on a Vercel host continues to the canonical one with its query intact.
   matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
