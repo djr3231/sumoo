@@ -74,8 +74,24 @@ openssl rand -base64 32
 
 ## פריסה
 
-`vercel deploy`. הוסף את אותו set משתני סביבה ב-Vercel, וכתובת redirect חדשה ב-Google
-Console: `https://<your>.vercel.app/api/auth/callback/google`.
+`vercel deploy`. הוסף את אותו set משתני סביבה ב-Vercel.
+
+**דומיין ו-NextAuth — שתי הגדרות שחייבות להסכים ביניהן:**
+
+1. ב-Vercel, ל-Production: `NEXTAUTH_URL=https://chewie.ceo` — הדומיין שממנו
+   המשתמשים נכנסים בפועל, כולל הפרוטוקול ובלי סלאש בסוף.
+2. ב-Google Console → Credentials → Authorized redirect URIs:
+   `https://chewie.ceo/api/auth/callback/google`.
+
+NextAuth v4 מחשב origin אחד לכל בקשה ובונה ממנו את הכל: ה-`redirect_uri` לגוגל,
+כתובת ה-callback, וכל הפניית שגיאה. ה-origin הוא הדומיין הנכנס רק כאשר משתנה
+המערכת `VERCEL` מגיע ל-runtime, ואחרת הוא `NEXTAUTH_URL`. כך או כך, התחברות
+שמתחילה בדומיין אחד ומסתיימת בשני מאבדת את עוגיות ה-state/PKCE — הן host-only,
+NextAuth לא מגדיר להן domain — ה-callback נכשל בבדיקת ה-state, והמשתמש נזרק מנותק
+לדומיין השני.
+
+`middleware.ts` מפנה כל בקשת פרודקשן לדומיין של `NEXTAUTH_URL`, כך שהפיצול הזה לא
+יכול לקרות. פריסות preview לא מושפעות.
 
 ## מבנה
 
