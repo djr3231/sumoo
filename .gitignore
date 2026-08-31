@@ -14,4 +14,8 @@ coverage
 .aider.*
 .opencode
 .superpowers
-graphify-out
+
+# Keep the reusable Graphify output, but not machine-local runtime state.
+graphify-out/.graphify_python
+graphify-out/.graphify_root
+graphify-out/memory/
