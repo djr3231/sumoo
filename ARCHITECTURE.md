@@ -456,7 +456,11 @@ Gemini is instructed to return one of the fixed `CATEGORIES` and one of the `EXT
 - **Branch strategy:** All work happens on feature branches off `main`. Preview deploys go up automatically.
 - **Env vars:** Set in Vercel project settings — they must match `.env.local.example` keys.
 - **Build:** `next build`. `npm run typecheck` is the first thing that should pass.
-- **One origin per environment.** Production `NEXTAUTH_URL` is `https://chewie.ceo`, and `https://chewie.ceo/api/auth/callback/google` is registered in Google Console. NextAuth v4 computes a single origin per request (`detectOrigin` → `core/init.ts`) and derives the OAuth `redirect_uri`, the callback URL, and every error redirect from it: the incoming host when Vercel's `VERCEL` system env var reaches the runtime, `NEXTAUTH_URL` otherwise. A sign-in that starts on one host and finishes on the other loses its state/PKCE cookies — host-only, no cookie domain — so the callback fails the state check and redirects the user, signed out, to `<other-host>/?error=OAuthCallback` (the sign-in page is `/`, see `lib/auth.ts`). `middleware.ts` 307-redirects every production request to the `NEXTAUTH_URL` host so the two hosts can never split one flow. It is a no-op when `NEXTAUTH_URL` is unset and on preview deploys; it is gated on `NEXTAUTH_URL` rather than `VERCEL_ENV` because a project that does not expose Vercel's system env vars has no `VERCEL_ENV` either — and that is the configuration where the redirect matters most.
+- The public Production origin is https://www.chewie.ceo. Vercel owns the
+  chewie.ceo to www.chewie.ceo 307 redirect. NextAuth receives
+  NEXTAUTH_URL=https://www.chewie.ceo in Production only, and Google Console
+  registers https://www.chewie.ceo/api/auth/callback/google. The application does
+  not canonicalize request hosts.
 
 ---
 
