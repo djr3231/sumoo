@@ -60,7 +60,10 @@ export function checkScannedReceipt(
 
   const ranked = pool
     .filter(isComparable)
-    .map((receipt) => ({ receipt, distance: receiptLineDistance(line, receipt) }))
+    .map((receipt) => ({
+      receipt,
+      distance: receiptLineDistance(line, receipt, { dateScope: "matching" }),
+    }))
     // Rows without an amount or a date cannot be near anything; offering them
     // as "most similar" would be noise.
     .filter((c): c is ScoredReceipt => c.distance !== null)
