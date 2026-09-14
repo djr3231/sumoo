@@ -203,7 +203,7 @@ git commit -m "feat(receipts): add billing date domain model"
 - New receipt rows round-trip all five source fields through A:T.
 - Every A:T read/write path validates P:T first, including cached personal accounts, family/shared accounts, `ensure: false` API routes, direct appends, PATCH, and dedup bulk updates.
 - Existing sheets receive missing P:T headers additively; expected headers are preserved and conflicting nonblank cells fail before receipt-row mutation.
-- Receipt row writes use literal-value semantics so ISO strings and printed billing-period text are not reinterpreted by Sheets.
+- Receipt row writes preserve the existing A:O `USER_ENTERED` semantics while transport-escaping non-empty P:T strings so source ISO strings and printed billing-period text remain literal.
 
 **Behavior preserved:**
 - Existing A:O headers and cells, UUID placement in column A, numeric amounts, linked rows, direct manual sheet edits, and rows with fewer than 20 cells.
@@ -310,7 +310,9 @@ Keep narrow UUID lookup ranges such as A2:A unchanged.
 
 - [ ] **Step 6: Preserve strings literally on receipt writes**
 
-For `appendReceipts`, `updateReceiptById`, and `bulkUpdateReceipts`, use `valueInputOption: "RAW"`. Values supplied as JavaScript numbers remain numeric, while ISO dates, comma-separated date lists, opaque ids, and a source period such as `07-08/26` remain literal strings.
+For `appendReceipts`, `updateReceiptById`, and `bulkUpdateReceipts`, preserve one atomic `valueInputOption: "USER_ENTERED"` receipt-data request. Before sending, prefix exactly one single quote to each non-empty string at indices 15–19 of the serialized 20-value row. This is a transport-only escape: Sheets removes the leading quote from the stored string value, so P:T source facts remain literal while A:O retains its established parsing behavior. Leave empty metadata cells empty, and prefix once even when the logical source string itself begins with a quote.
+
+Do not escape column E or strip quotes in `rowToReceipt`. Additive missing-header repair remains `RAW`.
 
 Do not change the value-input option of settings, stores, transactions, or unrelated sheet writes in this task.
 

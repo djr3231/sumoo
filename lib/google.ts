@@ -20,6 +20,7 @@ import {
   type Store,
   type UserSettings,
 } from "./types";
+import { normalizeReceiptDateFacts } from "./receipt-dates";
 
 function authClient(accessToken: string) {
   const oauth2 = new google.auth.OAuth2();
@@ -391,19 +392,92 @@ async function ensureTabs(accessToken: string, spreadsheetId: string) {
   await applyTabFormatting(sheets, spreadsheetId, tabsFromMeta(refreshed.data, true));
 }
 
+type MissingReceiptHeader = {
+  index: number;
+  column: "P" | "Q" | "R" | "S" | "T";
+  expected: string;
+};
+
+const RECEIPT_DATE_HEADER_COLUMNS: MissingReceiptHeader["column"][] = [
+  "P",
+  "Q",
+  "R",
+  "S",
+  "T",
+];
+
+function inspectReceiptHeaders(row: readonly unknown[]): MissingReceiptHeader[] {
+  const missing: MissingReceiptHeader[] = [];
+  for (const [offset, expected] of RECEIPT_HEADERS.slice(15).entries()) {
+    const index = offset + 15;
+    const actual = row[index];
+    if (actual === expected) continue;
+    if (actual === undefined || actual === null || (typeof actual === "string" && actual.trim() === "")) {
+      missing.push({ index, column: RECEIPT_DATE_HEADER_COLUMNS[offset], expected });
+      continue;
+    }
+    if (process.env.NODE_ENV === "development") {
+      console.warn("Receipt sheet header mismatch", {
+        column: RECEIPT_DATE_HEADER_COLUMNS[offset],
+        expected,
+        actual,
+      });
+    }
+    throw new Error("Receipt sheet headers are incompatible");
+  }
+  return missing;
+}
+
+async function writeMissingReceiptHeaders(
+  sheets: sheets_v4.Sheets,
+  spreadsheetId: string,
+  missing: readonly MissingReceiptHeader[],
+): Promise<void> {
+  if (missing.length === 0) return;
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: "RAW",
+      data: missing.map(({ column, expected }) => ({
+        range: `${SHEET_TAB_RECEIPTS}!${column}1`,
+        values: [[expected]],
+      })),
+    },
+  });
+}
+
+async function ensureReceiptHeaders(
+  sheets: sheets_v4.Sheets,
+  spreadsheetId: string,
+): Promise<void> {
+  const header = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_TAB_RECEIPTS}!A1:T1`,
+  });
+  const missing = inspectReceiptHeaders(header.data.values?.[0] ?? []);
+  await writeMissingReceiptHeaders(sheets, spreadsheetId, missing);
+}
+
 async function writeHeaders(accessToken: string, spreadsheetId: string) {
   const sheets = sheetsClient(accessToken);
   const get = await sheets.spreadsheets.values.batchGet({
     spreadsheetId,
     ranges: [
-      `${SHEET_TAB_RECEIPTS}!A1:Z1`,
+      `${SHEET_TAB_RECEIPTS}!A1:T1`,
       `${SHEET_TAB_TXNS}!A1:Z1`,
       `${SHEET_TAB_STORES}!A1:Z1`,
       `${SHEET_TAB_SETTINGS}!A1:Z1`,
     ],
   });
+  const receiptHeader = get.data.valueRanges?.[0]?.values?.[0] ?? [];
+  const receiptHeaderIsBlank = receiptHeader.every(
+    (cell) => cell === undefined || cell === null || (typeof cell === "string" && cell.trim() === ""),
+  );
+  const missingReceiptHeaders = receiptHeaderIsBlank
+    ? []
+    : inspectReceiptHeaders(receiptHeader);
   const data: sheets_v4.Schema$ValueRange[] = [];
-  if (!get.data.valueRanges?.[0]?.values?.length) {
+  if (receiptHeaderIsBlank) {
     data.push({
       range: `${SHEET_TAB_RECEIPTS}!A1`,
       values: [[...RECEIPT_HEADERS]],
@@ -433,6 +507,7 @@ async function writeHeaders(accessToken: string, spreadsheetId: string) {
       requestBody: { valueInputOption: "USER_ENTERED", data },
     });
   }
+  await writeMissingReceiptHeaders(sheets, spreadsheetId, missingReceiptHeaders);
 }
 
 function receiptToRow(r: Receipt): (string | number | boolean | null)[] {
@@ -452,10 +527,35 @@ function receiptToRow(r: Receipt): (string | number | boolean | null)[] {
     r.driveFileId ?? "",
     r.reviewed ? "TRUE" : "FALSE",
     r.notes ?? "",
+    r.issueDate ?? "",
+    r.billingPeriod ?? "",
+    r.dueDate ?? "",
+    (r.paymentDates ?? []).join(","),
+    (r.bankDebitDates ?? []).join(","),
   ];
 }
 
+function receiptToTransportRow(r: Receipt): (string | number | boolean | null)[] {
+  const row = receiptToRow(r);
+  for (let index = 15; index < 20; index++) {
+    const value = row[index];
+    if (typeof value === "string" && value !== "") {
+      row[index] = `'${value}`;
+    }
+  }
+  return row;
+}
+
 function rowToReceipt(row: any[]): Receipt {
+  const dateFacts = normalizeReceiptDateFacts({
+    issueDate: row[15],
+    billingPeriod: row[16],
+    dueDate: row[17],
+    paymentDates:
+      typeof row[18] === "string" && row[18] !== "" ? row[18].split(",") : [],
+    bankDebitDates:
+      typeof row[19] === "string" && row[19] !== "" ? row[19].split(",") : [],
+  });
   return {
     id: String(row[0] ?? ""),
     fileName: String(row[1] ?? ""),
@@ -478,6 +578,7 @@ function rowToReceipt(row: any[]): Receipt {
     driveFileId: row[12] ? String(row[12]) : null,
     reviewed: String(row[13]).toUpperCase() === "TRUE",
     notes: row[14] ? String(row[14]) : "",
+    ...dateFacts,
   };
 }
 
@@ -488,11 +589,12 @@ export async function appendReceipts(
 ) {
   if (receipts.length === 0) return;
   const sheets = sheetsClient(accessToken);
+  await ensureReceiptHeaders(sheets, spreadsheetId);
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `${SHEET_TAB_RECEIPTS}!A:O`,
+    range: `${SHEET_TAB_RECEIPTS}!A:T`,
     valueInputOption: "USER_ENTERED",
-    requestBody: { values: receipts.map(receiptToRow) },
+    requestBody: { values: receipts.map(receiptToTransportRow) },
   });
 }
 
@@ -501,11 +603,13 @@ export async function getAllReceipts(
   spreadsheetId: string,
 ): Promise<Receipt[]> {
   const sheets = sheetsClient(accessToken);
-  const r = await sheets.spreadsheets.values.get({
+  const r = await sheets.spreadsheets.values.batchGet({
     spreadsheetId,
-    range: `${SHEET_TAB_RECEIPTS}!A2:O`,
+    ranges: [`${SHEET_TAB_RECEIPTS}!A1:T1`, `${SHEET_TAB_RECEIPTS}!A2:T`],
   });
-  return (r.data.values || []).map(rowToReceipt);
+  const missing = inspectReceiptHeaders(r.data.valueRanges?.[0]?.values?.[0] ?? []);
+  await writeMissingReceiptHeaders(sheets, spreadsheetId, missing);
+  return (r.data.valueRanges?.[1]?.values || []).map(rowToReceipt);
 }
 
 export async function updateReceiptById(
@@ -515,7 +619,7 @@ export async function updateReceiptById(
 ) {
   const sheets = sheetsClient(accessToken);
   // Locate the row by reading the id column ALONE. This used to read the whole
-  // A:O tab to find one row, on every single field edit — the table autosaves
+  // A:T tab to find one row, on every single field edit — the table autosaves
   // per field, so a pass through the edit drawer cost one full-sheet read per
   // field. Two narrow reads beat one read of everything.
   const ids = await sheets.spreadsheets.values.get({
@@ -528,15 +632,20 @@ export async function updateReceiptById(
   // A2 is sheet row 2, so the sheet row number is offset + 2.
   const rowNumber = offset + 2;
 
-  const range = `${SHEET_TAB_RECEIPTS}!A${rowNumber}:O${rowNumber}`;
-  const current = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-  const existing = rowToReceipt(current.data.values?.[0] || []);
+  const range = `${SHEET_TAB_RECEIPTS}!A${rowNumber}:T${rowNumber}`;
+  const current = await sheets.spreadsheets.values.batchGet({
+    spreadsheetId,
+    ranges: [`${SHEET_TAB_RECEIPTS}!A1:T1`, range],
+  });
+  const missing = inspectReceiptHeaders(current.data.valueRanges?.[0]?.values?.[0] ?? []);
+  await writeMissingReceiptHeaders(sheets, spreadsheetId, missing);
+  const existing = rowToReceipt(current.data.valueRanges?.[1]?.values?.[0] || []);
   const merged: Receipt = { ...existing, ...patch };
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range,
     valueInputOption: "USER_ENTERED",
-    requestBody: { values: [receiptToRow(merged)] },
+    requestBody: { values: [receiptToTransportRow(merged)] },
   });
 }
 
@@ -550,7 +659,7 @@ export async function deleteReceiptById(
   id: string,
 ) {
   const sheets = sheetsClient(accessToken);
-  // Same narrow id-column read as updateReceiptById — no need to pull A:O to
+  // Same narrow id-column read as updateReceiptById — no need to pull A:T to
   // find one row.
   const ids = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -596,9 +705,11 @@ export async function bulkUpdateReceipts(
   const sheets = sheetsClient(accessToken);
   const all = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_TAB_RECEIPTS}!A:O`,
+    range: `${SHEET_TAB_RECEIPTS}!A:T`,
   });
   const rows = all.data.values || [];
+  const missing = inspectReceiptHeaders(rows[0] ?? []);
+  await writeMissingReceiptHeaders(sheets, spreadsheetId, missing);
   const indexById = new Map<string, number>();
   for (let i = 1; i < rows.length; i++) {
     const id = rows[i]?.[0];
@@ -611,8 +722,8 @@ export async function bulkUpdateReceipts(
     const existing = rowToReceipt(rows[idx]);
     const merged: Receipt = { ...existing, ...patch };
     data.push({
-      range: `${SHEET_TAB_RECEIPTS}!A${idx + 1}:O${idx + 1}`,
-      values: [receiptToRow(merged)],
+      range: `${SHEET_TAB_RECEIPTS}!A${idx + 1}:T${idx + 1}`,
+      values: [receiptToTransportRow(merged)],
     });
   }
   if (data.length === 0) return;
