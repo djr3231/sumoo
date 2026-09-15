@@ -26,6 +26,7 @@ import {
   listSheetTabs,
   moveDriveFile,
   uploadFileToDrive,
+  type GoogleRequestOptions,
 } from "@/lib/google";
 import { pickReportTab } from "@/lib/report/generate";
 import type { ReportPeriod } from "@/lib/types";
@@ -64,6 +65,17 @@ export interface PdfProgress {
   total?: number;
 }
 
+export interface PdfTelemetry {
+  stage: "cleanup";
+  outcome: "start" | "success" | "error";
+  category?: "deadline" | "delete";
+}
+
+export interface PdfBuildOptions {
+  sensitiveDeadlineAt: number;
+  onTelemetry?: (event: PdfTelemetry) => void;
+}
+
 // Approved Hebrew strings (reconstructed locally — see task brief "Names").
 const REPORT_FILE_PREFIX = "דוח דו-חודשי";
 const DOCS_SUBFOLDER = "מסמכים";
@@ -98,6 +110,10 @@ const PAGE_MARGIN_PT = 18; // 0.25in, matching exportSheetTabPdf's margins
 // before embedding (full-resolution photos were bloating the PDF to ~105MB).
 const IMAGE_MAX_DIMENSION_PX = 1500;
 const IMAGE_JPEG_QUALITY = 70;
+const SENSITIVE_REQUEST_TIMEOUT_MS = 30_000;
+const CLEANUP_TIMEOUT_MS = 15_000;
+const ATTACHMENT_DOWNLOAD_CONCURRENCY = 3;
+const RECEIPT_MOVE_CONCURRENCY = 4;
 
 // Same 0-based A1-range helpers as generate.ts (that file exports only
 // `pickReportTab`, so this is intentionally duplicated per the task brief).
@@ -206,38 +222,114 @@ async function appendFileAsPages(
   });
 }
 
-export async function buildReportPdfBundle(
+interface PersonalizedReportPage {
+  reportPdfBuffer: Buffer;
+  boxXPt: number;
+  boxYTopPt: number;
+  boxWPt: number;
+  boxHPt: number;
+}
+
+interface AttachmentInput {
+  name: string;
+  driveFileId: string;
+  mimeType?: string;
+}
+
+type AttachmentDownload =
+  | { ok: true; input: AttachmentInput; buffer: Buffer; mimeType: string }
+  | { ok: false; input: AttachmentInput };
+
+function abortForDeadline(controller: AbortController): void {
+  controller.abort(new DOMException("Operation deadline exceeded", "AbortError"));
+}
+
+async function runSensitiveRequest<T>(
+  phaseSignal: AbortSignal,
+  operation: (requestOptions: GoogleRequestOptions) => Promise<T>,
+): Promise<T> {
+  const requestController = new AbortController();
+  const requestTimer = setTimeout(
+    () => abortForDeadline(requestController),
+    SENSITIVE_REQUEST_TIMEOUT_MS,
+  );
+  try {
+    return await operation({
+      signal: AbortSignal.any([phaseSignal, requestController.signal]),
+      retry: false,
+    });
+  } finally {
+    clearTimeout(requestTimer);
+  }
+}
+
+async function deleteTemporaryReportCopy(
+  accessToken: string,
+  tempId: string,
+  emitTelemetry: (event: PdfTelemetry) => void,
+): Promise<void> {
+  const cleanupController = new AbortController();
+  const cleanupTimer = setTimeout(
+    () => abortForDeadline(cleanupController),
+    CLEANUP_TIMEOUT_MS,
+  );
+  emitTelemetry({ stage: "cleanup", outcome: "start" });
+  try {
+    await deleteDriveFile(accessToken, tempId, {
+      signal: cleanupController.signal,
+      retry: true,
+      retryConfig: { retry: 1 },
+    });
+    emitTelemetry({ stage: "cleanup", outcome: "success" });
+  } catch {
+    emitTelemetry({
+      stage: "cleanup",
+      outcome: "error",
+      category: cleanupController.signal.aborted ? "deadline" : "delete",
+    });
+    throw new Error("Temporary report cleanup failed");
+  } finally {
+    clearTimeout(cleanupTimer);
+  }
+}
+
+async function exportPersonalizedReportPage(
   accessToken: string,
   args: PdfExportArgs,
-  onProgress?: (p: PdfProgress) => void,
-): Promise<PdfExportResult> {
-  // A throwing progress listener must never break the bundle.
-  const emit = (p: PdfProgress) => {
-    try {
-      onProgress?.(p);
-    } catch {
-      /* ignore */
-    }
-  };
-  const skippedFiles: string[] = [];
+  tempName: string,
+  sensitiveDeadlineAt: number,
+  emitProgress: (progress: PdfProgress) => void,
+  emitTelemetry: (event: PdfTelemetry) => void,
+): Promise<PersonalizedReportPage> {
+  const phaseRemainingMs = sensitiveDeadlineAt - Date.now();
+  if (phaseRemainingMs <= 0) {
+    throw new Error("Sensitive report phase deadline exceeded");
+  }
 
-  // Stage 2: temp copy of the generated report Sheet — everything below runs
-  // in try/finally so the temp copy is always cleaned up, even on failure.
-  const reportName = `${REPORT_FILE_PREFIX} ${args.period.folderName}`;
-  const tempName = `${reportName} (זמני)`;
-  emit({ stage: "prepare" });
-  const tempId = await copyDriveFileAsSheet(
-    accessToken,
-    args.reportId,
-    tempName,
-    args.folders.periodId,
+  const phaseController = new AbortController();
+  const phaseTimer = setTimeout(
+    () => abortForDeadline(phaseController),
+    phaseRemainingMs,
   );
-
+  let tempId: string | null = null;
   try {
-    // Stage 3: fill personal fields on the TEMP copy only.
-    const tabs = await listSheetTabs(accessToken, tempId);
+    tempId = await runSensitiveRequest(phaseController.signal, (requestOptions) =>
+      copyDriveFileAsSheet(
+        accessToken,
+        args.reportId,
+        tempName,
+        args.folders.periodId,
+        requestOptions,
+      ),
+    );
+
+    const tabs = await runSensitiveRequest(phaseController.signal, (requestOptions) =>
+      listSheetTabs(accessToken, tempId as string, requestOptions),
+    );
     const reportTab = pickReportTab(tabs);
-    const grid = await getSheetGrid(accessToken, tempId, reportTab);
+    const grid = await runSensitiveRequest(phaseController.signal, (requestOptions) =>
+      getSheetGrid(accessToken, tempId as string, reportTab, false, requestOptions),
+    );
 
     const nameRow = findAnchorRow(grid, ANCHOR.name);
     if (nameRow === -1) throw new Error(`Missing anchor: "${ANCHOR.name}"`);
@@ -249,239 +341,329 @@ export async function buildReportPdfBundle(
       throw new Error(`Missing anchor: "${ANCHOR.address}"`);
     const phoneRow = findAnchorRow(grid, ANCHOR.phone);
     if (phoneRow === -1) throw new Error(`Missing anchor: "${ANCHOR.phone}"`);
-    // Signature row anchors the footer; date shares that footer row. Scanning
-    // for "תאריך:" starting at/after the signature row keeps the anchor
-    // robust against any earlier, unrelated "תאריך" cell higher in the sheet
-    // (kept simple per the brief — do not change the written value/column).
     const signatureRow = findAnchorRow(grid, ANCHOR.signature);
     if (signatureRow === -1)
       throw new Error(`Missing anchor: "${ANCHOR.signature}"`);
     const dateRow = findAnchorRow(grid, "תאריך:", signatureRow);
     if (dateRow === -1) throw new Error('Missing anchor: "תאריך:"');
 
-    await batchWriteCells(accessToken, tempId, [
-      {
-        range: rangeFor(reportTab, nameRow, COL.name),
-        values: [[args.personal.name]],
-      },
-      {
-        range: rangeFor(reportTab, caseNumberRow, COL.caseNumber),
-        values: [[args.personal.caseNumber]],
-      },
-      {
-        range: rangeFor(reportTab, addressRow, COL.address),
-        values: [[args.personal.address]],
-      },
-      {
-        range: rangeFor(reportTab, phoneRow, COL.phone),
-        values: [[args.personal.phone]],
-      }, // RAW preserves leading 0
-    ]);
-    // Real date value (USER_ENTERED), not RAW text — matches the b7ea971 convention.
-    await batchWriteCells(
-      accessToken,
-      tempId,
-      [
-        {
-          range: rangeFor(reportTab, dateRow, COL.date),
-          values: [[args.personal.date]],
-        },
-      ],
-      "USER_ENTERED",
+    // Resolve geometry before writing personal fields to minimize the time
+    // that the temporary Sheet contains them.
+    const metrics = await runSensitiveRequest(phaseController.signal, (requestOptions) =>
+      getSheetTabMetrics(accessToken, tempId as string, reportTab, requestOptions),
     );
-
-    // Stage 4: signature box geometry (pixels → PDF points, under fit-to-page).
-    // rowPx/colPx are 0-based arrays; the scanned row indexes them directly.
-    const metrics = await getSheetTabMetrics(accessToken, tempId, reportTab);
     const gid = metrics.sheetId;
     const sumPx = (arr: number[], count: number) =>
-      arr.slice(0, count).reduce((s, n) => s + n, 0);
+      arr.slice(0, count).reduce((sum, value) => sum + value, 0);
 
-    // Content extent = the VALUE extent of the already-fetched grid, extended
-    // through the signature columns/row: merged-cell values live in the top-
-    // left cell, so column H (the merge's right half) can hold no value in any
-    // row and would otherwise be excluded — which broke the RTL mirror once
-    // (x pushed off-page, E2E 2026-07-13).
+    // Content extent follows the fetched value grid but must include the
+    // signature row and both columns of its merged G:H cell. The right half of
+    // a merged cell has no value and would otherwise be omitted, which once
+    // pushed the mirrored RTL coordinate off-page.
     const usedRows = Math.max(grid.length, signatureRow + 1);
     const usedCols = Math.max(
-      grid.reduce((m, r) => Math.max(m, r.length), 0),
+      grid.reduce((max, row) => Math.max(max, row.length), 0),
       COL.signatureRight + 1,
     );
     const contentWpx = sumPx(metrics.colPx, usedCols);
     const contentHpx = sumPx(metrics.rowPx, usedRows);
-
-    let xPx = sumPx(metrics.colPx, COL.signatureLeft); // Σ colPx[0..5]
+    let xPx = sumPx(metrics.colPx, COL.signatureLeft);
     const wPx =
       (metrics.colPx[COL.signatureLeft] ?? 0) +
       (metrics.colPx[COL.signatureRight] ?? 0);
-    const yPx = sumPx(metrics.rowPx, signatureRow); // Σ rowPx[0..row-1]
+    const yPx = sumPx(metrics.rowPx, signatureRow);
     const hPx = metrics.rowPx[signatureRow] ?? 0;
 
-    // The export renders RTL sheets mirrored (column A at the RIGHT edge), so
-    // the from-left x must be mirrored. Verified against a real export
-    // (E2E 2026-07-13): the unmirrored stamp landed at ~75% from left — in the
-    // date area, the exact mirror image of its G:H target. The earlier vanish
-    // was the extent under-measure fixed above, not the mirror direction.
+    // Sheets exports RTL tabs mirrored, with column A at the right edge. The
+    // signature target therefore needs a mirrored from-left coordinate.
     if (metrics.rightToLeft) xPx = contentWpx - (xPx + wPx);
 
-    // scale=4 (fit-to-page) shrinks content by a computable factor:
-    // px→pt is 0.75 at 100% (96dpi→72pt); printable area = A4 − 0.25in margins.
     const PX_TO_PT = 0.75;
     const printableW = A4_WIDTH_PT - 2 * PAGE_MARGIN_PT;
     const printableH = A4_HEIGHT_PT - 2 * PAGE_MARGIN_PT;
-    const s = Math.min(
+    const scale = Math.min(
       printableW / (contentWpx * PX_TO_PT),
       printableH / (contentHpx * PX_TO_PT),
     );
 
-    // Slack-axis alignment (does Sheets center the axis that doesn't bind?) is
-    // undocumented. These are the E2E calibration constants — if the stamp
-    // shows a uniform offset, adjust ONLY these two (default 0 = top-left).
-    // E2E round 3 (2026-07-13): user measured the exact correction in
-    // Illustrator from the round-2 render: +60pt right, +7pt down.
+    // Measured in the 2026-07-13 visual calibration. If the stamp develops a
+    // uniform offset, adjust only these two values and re-run that runtime gate.
     const ALIGN_X_PT = 72;
     const ALIGN_Y_PT = 12;
-    const boxXPt = PAGE_MARGIN_PT + ALIGN_X_PT + xPx * PX_TO_PT * s;
-    const boxYTopPt = PAGE_MARGIN_PT + ALIGN_Y_PT + yPx * PX_TO_PT * s;
-    const boxWPt = wPx * PX_TO_PT * s;
-    const boxHPt = hPx * PX_TO_PT * s;
+    const boxXPt = PAGE_MARGIN_PT + ALIGN_X_PT + xPx * PX_TO_PT * scale;
+    const boxYTopPt = PAGE_MARGIN_PT + ALIGN_Y_PT + yPx * PX_TO_PT * scale;
+    const boxWPt = wPx * PX_TO_PT * scale;
+    const boxHPt = hPx * PX_TO_PT * scale;
 
-    // Stage 5: export the temp copy's report tab to PDF and stamp the signature.
-    emit({ stage: "export" });
-    const reportPdfBuffer = await exportSheetTabPdf(accessToken, tempId, gid);
-    const doc = await PDFDocument.load(reportPdfBuffer);
-    const page = doc.getPage(0);
-    const sigBuffer = decodeSignature(args.signaturePngBase64);
-    const sigImage = isPng(sigBuffer)
-      ? await doc.embedPng(sigBuffer)
-      : await doc.embedJpg(sigBuffer);
-    // A signature must straddle its line, not fit inside the one-row cell —
-    // one row is ~10pt after the fit factor, which rendered the stamp as a
-    // microscopic squiggle (E2E 2026-07-13). Give it three row-heights of
-    // vertical room, bottom-anchored to the cell bottom so the strokes sit ON
-    // the signature line and rise above it.
-    // Size calibration (E2E round 3, user-measured in Illustrator): the stamp
-    // is drawn at an EXACT height; width follows from the image's own aspect
-    // ratio — the ratio is never broken. Horizontally centered on the G:H
-    // cell (ALIGN_X included), bottom sitting on the cell's bottom line
-    // (ALIGN_Y included), so it straddles the signature line naturally.
-    const SIG_HEIGHT_PT = 60;
-    const sigWPt = SIG_HEIGHT_PT * (sigImage.width / sigImage.height);
-    const sigX = boxXPt + (boxWPt - sigWPt) / 2;
-    // pdf-lib's origin is bottom-left; the cell's bottom measured from the
-    // page top is boxYTopPt + boxHPt, so its pdf-lib y is pageH minus that.
-    const pageY = page.getHeight() - (boxYTopPt + boxHPt);
-    page.drawImage(sigImage, {
-      x: sigX,
-      y: pageY,
-      width: sigWPt,
-      height: SIG_HEIGHT_PT,
-    });
-
-    // Preview mode ends here: return the stamped page inline, upload nothing.
-    // The finally below still deletes the temp copy.
-    if (args.previewOnly) {
-      const previewBytes = await doc.save();
-      return {
-        pdf: null,
-        skippedFiles,
-        previewPdfBase64: Buffer.from(previewBytes).toString("base64"),
-      };
-    }
-
-    // Stage 6: append source documents (bank statements / salary slips).
-    const sourceFiles = await listDriveFolderImages(
-      accessToken,
-      args.folders.sourceId,
+    await runSensitiveRequest(phaseController.signal, (requestOptions) =>
+      batchWriteCells(
+        accessToken,
+        tempId as string,
+        [
+          {
+            range: rangeFor(reportTab, nameRow, COL.name),
+            values: [[args.personal.name]],
+          },
+          {
+            range: rangeFor(reportTab, caseNumberRow, COL.caseNumber),
+            values: [[args.personal.caseNumber]],
+          },
+          {
+            range: rangeFor(reportTab, addressRow, COL.address),
+            values: [[args.personal.address]],
+          },
+          {
+            range: rangeFor(reportTab, phoneRow, COL.phone),
+            values: [[args.personal.phone]],
+          },
+        ],
+        "RAW",
+        requestOptions,
+      ),
     );
-    emit({ stage: "sources", total: sourceFiles.length });
-    for (let i = 0; i < sourceFiles.length; i++) {
-      const f = sourceFiles[i];
-      emit({ stage: "sources", done: i + 1, total: sourceFiles.length });
-      try {
-        const { buffer, mimeType } = await downloadDriveFile(accessToken, f.id);
-        await appendFileAsPages(doc, buffer, mimeType);
-      } catch {
-        skippedFiles.push(f.name); // one bad/encrypted file must never fail the whole bundle
-      }
-    }
-
-    // Stage 7: append attached receipts, preserving the given order.
-    const allReceipts = await getAllReceipts(accessToken, args.spreadsheetId);
-    const byFileName = new Map(
-      allReceipts.map((r) => [r.fileName, r.driveFileId ?? null] as const),
+    await runSensitiveRequest(phaseController.signal, (requestOptions) =>
+      batchWriteCells(
+        accessToken,
+        tempId as string,
+        [
+          {
+            range: rangeFor(reportTab, dateRow, COL.date),
+            values: [[args.personal.date]],
+          },
+        ],
+        "USER_ENTERED",
+        requestOptions,
+      ),
     );
-    const resolvedReceipts: Array<{ fileName: string; driveFileId: string }> =
-      [];
-    for (const fileName of args.attachedReceiptFileNames) {
-      const driveFileId = byFileName.get(fileName);
-      if (!driveFileId) {
-        skippedFiles.push(fileName);
-        continue;
-      }
-      resolvedReceipts.push({ fileName, driveFileId });
-    }
-    emit({ stage: "receipts", total: resolvedReceipts.length });
-    for (let i = 0; i < resolvedReceipts.length; i++) {
-      const r = resolvedReceipts[i];
-      emit({ stage: "receipts", done: i + 1, total: resolvedReceipts.length });
-      try {
-        const { buffer, mimeType } = await downloadDriveFile(
+
+    emitProgress({ stage: "export" });
+    const reportPdfBuffer = await runSensitiveRequest(
+      phaseController.signal,
+      (requestOptions) =>
+        exportSheetTabPdf(
           accessToken,
-          r.driveFileId,
-        );
-        await appendFileAsPages(doc, buffer, mimeType);
-      } catch {
-        skippedFiles.push(r.fileName);
-      }
-    }
-
-    // Stage 8: move successfully-attached receipts to the docs subfolder.
-    // Runs AFTER the PDF bytes are assembled; per-file try/catch (a failed
-    // move must not fail the bundle).
-    const docsFolderId = await ensureDriveFolder(
-      accessToken,
-      DOCS_SUBFOLDER,
-      args.folders.periodId,
+          tempId as string,
+          gid,
+          requestOptions,
+        ),
     );
-    emit({ stage: "move", total: resolvedReceipts.length });
-    for (let i = 0; i < resolvedReceipts.length; i++) {
-      const r = resolvedReceipts[i];
-      emit({ stage: "move", done: i + 1, total: resolvedReceipts.length });
-      try {
-        await moveDriveFile(accessToken, r.driveFileId, docsFolderId);
-      } catch {
-        // best-effort — the PDF already has the receipt embedded
-      }
-    }
-
-    // Stage 9: save + upload (overwrite semantics).
-    emit({ stage: "upload" });
-    const pdfBytes = await doc.save();
-    const pdfBuffer = Buffer.from(pdfBytes);
-    // Every issued version is kept (no overwrite): the filename is prefixed with
-    // the filer's name. Strip path separators the name must not contain in a
-    // Drive filename; a same-named file just co-exists as a distinct Drive id.
-    const safeName = args.personal.name.replace(/[\\/]/g, " ").trim();
-    const pdfName = `${safeName}- ${reportName}.pdf`;
-    const uploaded = await uploadFileToDrive(
-      accessToken,
-      args.folders.periodId,
-      pdfName,
-      pdfBuffer,
-      "application/pdf",
-    );
-
-    return {
-      pdf: {
-        id: uploaded.id,
-        url: `https://drive.google.com/file/d/${uploaded.id}/view`,
-      },
-      skippedFiles,
-    };
+    return { reportPdfBuffer, boxXPt, boxYTopPt, boxWPt, boxHPt };
   } finally {
-    // Temp copy must die even on failure — it's the only place personal
-    // details/signature ever touch a Sheet.
-    await deleteDriveFile(accessToken, tempId);
+    clearTimeout(phaseTimer);
+    if (tempId) {
+      await deleteTemporaryReportCopy(accessToken, tempId, emitTelemetry);
+    }
   }
+}
+
+async function appendAttachmentsInOrder(
+  doc: PDFDocument,
+  accessToken: string,
+  inputs: AttachmentInput[],
+  onCompleted: (completed: number) => void,
+): Promise<string[]> {
+  const skippedFiles: string[] = [];
+  let completed = 0;
+  // Hold at most three downloaded attachment buffers at once. PDFDocument and
+  // final serialization memory still scale with the complete bundle size.
+  for (let offset = 0; offset < inputs.length; offset += ATTACHMENT_DOWNLOAD_CONCURRENCY) {
+    const batch = inputs.slice(offset, offset + ATTACHMENT_DOWNLOAD_CONCURRENCY);
+    const downloads: AttachmentDownload[] = await Promise.all(
+      batch.map(async (input): Promise<AttachmentDownload> => {
+        try {
+          const { buffer, mimeType } = await downloadDriveFile(
+            accessToken,
+            input.driveFileId,
+            input.mimeType,
+          );
+          return { ok: true, input, buffer, mimeType };
+        } catch {
+          return { ok: false, input };
+        }
+      }),
+    );
+    for (const download of downloads) {
+      if (download.ok) {
+        try {
+          await appendFileAsPages(doc, download.buffer, download.mimeType);
+        } catch {
+          skippedFiles.push(download.input.name);
+        }
+      } else {
+        skippedFiles.push(download.input.name);
+      }
+      completed += 1;
+      onCompleted(completed);
+    }
+  }
+  return skippedFiles;
+}
+
+export async function buildReportPdfBundle(
+  accessToken: string,
+  args: PdfExportArgs,
+  options: PdfBuildOptions,
+  onProgress?: (progress: PdfProgress) => void,
+): Promise<PdfExportResult> {
+  const emitProgress = (progress: PdfProgress) => {
+    try {
+      onProgress?.(progress);
+    } catch {
+      // Progress must never change the export outcome.
+    }
+  };
+  const emitTelemetry = (event: PdfTelemetry) => {
+    try {
+      options.onTelemetry?.(event);
+    } catch {
+      // Telemetry must never prevent cleanup or change the export outcome.
+    }
+  };
+  const skippedFiles: string[] = [];
+  const reportName = `${REPORT_FILE_PREFIX} ${args.period.folderName}`;
+  const tempName = `${reportName} (זמני)`;
+
+  emitProgress({ stage: "prepare" });
+  const personalizedPage = await exportPersonalizedReportPage(
+    accessToken,
+    args,
+    tempName,
+    options.sensitiveDeadlineAt,
+    emitProgress,
+    emitTelemetry,
+  );
+
+  // The personalized temporary Sheet is already deleted before local stamping
+  // or any attachment, move, save, and upload work begins.
+  const doc = await PDFDocument.load(personalizedPage.reportPdfBuffer);
+  const page = doc.getPage(0);
+  const sigBuffer = decodeSignature(args.signaturePngBase64);
+  const sigImage = isPng(sigBuffer)
+    ? await doc.embedPng(sigBuffer)
+    : await doc.embedJpg(sigBuffer);
+
+  // The signature is intentionally drawn at the calibrated fixed height; its
+  // width retains the source aspect ratio. This makes it straddle the line
+  // instead of shrinking into the single-row target cell.
+  const SIG_HEIGHT_PT = 60;
+  const sigWPt = SIG_HEIGHT_PT * (sigImage.width / sigImage.height);
+  const sigX = personalizedPage.boxXPt + (personalizedPage.boxWPt - sigWPt) / 2;
+  const pageY =
+    page.getHeight() -
+    (personalizedPage.boxYTopPt + personalizedPage.boxHPt);
+  page.drawImage(sigImage, {
+    x: sigX,
+    y: pageY,
+    width: sigWPt,
+    height: SIG_HEIGHT_PT,
+  });
+
+  if (args.previewOnly) {
+    const previewBytes = await doc.save();
+    return {
+      pdf: null,
+      skippedFiles,
+      previewPdfBase64: Buffer.from(previewBytes).toString("base64"),
+    };
+  }
+
+  emitProgress({ stage: "sources" });
+  const sourceFiles = await listDriveFolderImages(
+    accessToken,
+    args.folders.sourceId,
+  );
+  emitProgress({ stage: "sources", total: sourceFiles.length });
+  skippedFiles.push(
+    ...(await appendAttachmentsInOrder(
+      doc,
+      accessToken,
+      // Preserve the current order returned by Drive; do not introduce a new
+      // cross-export ordering contract here.
+      sourceFiles.map((file) => ({
+        name: file.name,
+        driveFileId: file.id,
+        mimeType: file.mimeType,
+      })),
+      (done) => emitProgress({ stage: "sources", done, total: sourceFiles.length }),
+    )),
+  );
+
+  emitProgress({ stage: "receipts" });
+  const allReceipts = await getAllReceipts(accessToken, args.spreadsheetId);
+  const byFileName = new Map(
+    allReceipts.map((receipt) => [receipt.fileName, receipt.driveFileId ?? null] as const),
+  );
+  const resolvedReceipts: AttachmentInput[] = [];
+  for (const fileName of args.attachedReceiptFileNames) {
+    const driveFileId = byFileName.get(fileName);
+    if (!driveFileId) {
+      skippedFiles.push(fileName);
+      continue;
+    }
+    resolvedReceipts.push({ name: fileName, driveFileId });
+  }
+  emitProgress({ stage: "receipts", total: resolvedReceipts.length });
+  skippedFiles.push(
+    ...(await appendAttachmentsInOrder(
+      doc,
+      accessToken,
+      resolvedReceipts,
+      (done) =>
+        emitProgress({ stage: "receipts", done, total: resolvedReceipts.length }),
+    )),
+  );
+
+  // Preserve the existing product behavior: move every resolved receipt,
+  // including one whose attachment append failed.
+  emitProgress({ stage: "move" });
+  const docsFolderId = await ensureDriveFolder(
+    accessToken,
+    DOCS_SUBFOLDER,
+    args.folders.periodId,
+  );
+  emitProgress({ stage: "move", total: resolvedReceipts.length });
+  let moved = 0;
+  for (
+    let offset = 0;
+    offset < resolvedReceipts.length;
+    offset += RECEIPT_MOVE_CONCURRENCY
+  ) {
+    const batch = resolvedReceipts.slice(
+      offset,
+      offset + RECEIPT_MOVE_CONCURRENCY,
+    );
+    await Promise.all(
+      batch.map(async (receipt) => {
+        try {
+          await moveDriveFile(accessToken, receipt.driveFileId, docsFolderId);
+        } catch {
+          // Best effort: move failure must not fail the completed PDF bundle.
+        } finally {
+          moved += 1;
+          emitProgress({ stage: "move", done: moved, total: resolvedReceipts.length });
+        }
+      }),
+    );
+  }
+
+  emitProgress({ stage: "upload" });
+  const pdfBytes = await doc.save();
+  const pdfBuffer = Buffer.from(pdfBytes);
+  const safeName = args.personal.name.replace(/[\\/]/g, " ").trim();
+  const pdfName = `${safeName}- ${reportName}.pdf`;
+  const uploaded = await uploadFileToDrive(
+    accessToken,
+    args.folders.periodId,
+    pdfName,
+    pdfBuffer,
+    "application/pdf",
+  );
+
+  return {
+    pdf: {
+      id: uploaded.id,
+      url: `https://drive.google.com/file/d/${uploaded.id}/view`,
+    },
+    skippedFiles,
+  };
 }

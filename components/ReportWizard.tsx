@@ -85,6 +85,98 @@ const STEPS = [
   "הפקת דוח",
 ] as const;
 
+const PDF_FAILURE_MESSAGE = "הנפקת ה-PDF נכשלה";
+const PDF_STREAM_INTERRUPTED =
+  "החיבור לשרת הסתיים לפני שהנפקת ה-PDF הושלמה.";
+
+interface PdfStreamFinal {
+  ok?: boolean;
+  pdf?: { id: string; url: string } | null;
+  skippedFiles?: string[];
+  previewPdfBase64?: string;
+  error?: string;
+}
+
+type PdfStreamEvent =
+  | { kind: "progress"; progress: PdfProgress }
+  | { kind: "final"; final: PdfStreamFinal };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parsePdfStreamLine(line: string): PdfStreamEvent {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    throw new Error(PDF_FAILURE_MESSAGE);
+  }
+  if (!isRecord(parsed)) throw new Error(PDF_FAILURE_MESSAGE);
+
+  if (isRecord(parsed.progress)) {
+    const { stage, done, total } = parsed.progress;
+    if (
+      ![
+        "prepare",
+        "export",
+        "sources",
+        "receipts",
+        "move",
+        "upload",
+      ].includes(String(stage)) ||
+      (done !== undefined && typeof done !== "number") ||
+      (total !== undefined && typeof total !== "number")
+    ) {
+      throw new Error(PDF_FAILURE_MESSAGE);
+    }
+    return {
+      kind: "progress",
+      progress: {
+        stage: stage as PdfProgress["stage"],
+        ...(typeof done === "number" ? { done } : {}),
+        ...(typeof total === "number" ? { total } : {}),
+      },
+    };
+  }
+
+  const validError = typeof parsed.error === "string";
+  const validSuccess = parsed.ok === true;
+  if (!validError && !validSuccess) throw new Error(PDF_FAILURE_MESSAGE);
+  if (
+    parsed.pdf !== undefined &&
+    parsed.pdf !== null &&
+    (!isRecord(parsed.pdf) ||
+      typeof parsed.pdf.id !== "string" ||
+      typeof parsed.pdf.url !== "string")
+  ) {
+    throw new Error(PDF_FAILURE_MESSAGE);
+  }
+  if (
+    parsed.skippedFiles !== undefined &&
+    (!Array.isArray(parsed.skippedFiles) ||
+      !parsed.skippedFiles.every((value) => typeof value === "string"))
+  ) {
+    throw new Error(PDF_FAILURE_MESSAGE);
+  }
+  if (
+    parsed.previewPdfBase64 !== undefined &&
+    typeof parsed.previewPdfBase64 !== "string"
+  ) {
+    throw new Error(PDF_FAILURE_MESSAGE);
+  }
+  return {
+    kind: "final",
+    final: {
+      ok: validSuccess,
+      error: validError ? (parsed.error as string) : undefined,
+      pdf: parsed.pdf as PdfStreamFinal["pdf"],
+      skippedFiles: parsed.skippedFiles as string[] | undefined,
+      previewPdfBase64: parsed.previewPdfBase64 as string | undefined,
+    },
+  };
+}
+
 // ISO YYYY-MM-DD → DD/MM/YYYY for display (— when absent).
 function fmtDate(d?: string | null): string {
   return d ? d.split("-").reverse().join("/") : "—";
@@ -1052,55 +1144,81 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
       const contentType = res.headers.get("Content-Type") ?? "";
       if (contentType.includes("application/json")) {
         // Pre-stream failure (400 guard / early 500) — plain JSON path.
-        const data = await res.json();
-        throw new Error(data.error || `HTTP ${res.status}`);
+        let data: unknown;
+        try {
+          data = await res.json();
+        } catch {
+          throw new Error(PDF_FAILURE_MESSAGE);
+        }
+        throw new Error(
+          isRecord(data) && typeof data.error === "string"
+            ? data.error
+            : PDF_FAILURE_MESSAGE,
+        );
       }
-      if (!res.body) throw new Error(`HTTP ${res.status}`);
+      if (!res.body) throw new Error(PDF_STREAM_INTERRUPTED);
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffered = "";
-      let final:
-        | {
-            ok?: boolean;
-            pdf?: { id: string; url: string } | null;
-            skippedFiles?: string[];
-            previewPdfBase64?: string;
-            error?: string;
-          }
-        | null = null;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffered += decoder.decode(value, { stream: true });
-        let nl: number;
-        while ((nl = buffered.indexOf("\n")) !== -1) {
-          const line = buffered.slice(0, nl).trim();
-          buffered = buffered.slice(nl + 1);
-          if (!line) continue;
-          const evt = JSON.parse(line) as {
-            progress?: PdfProgress;
-            ok?: boolean;
-            pdf?: { id: string; url: string };
-            skippedFiles?: string[];
-            error?: string;
-          };
-          if (evt.progress) setPdfProgress(evt.progress);
-          else final = evt;
+      let final: PdfStreamFinal | null = null;
+      const consumeLine = (line: string): PdfStreamFinal | null => {
+        if (!line.trim()) return null;
+        const event = parsePdfStreamLine(line);
+        if (event.kind === "progress") {
+          setPdfProgress(event.progress);
+          return null;
         }
+        return event.final;
+      };
+      try {
+        for (;;) {
+          let chunk: ReadableStreamReadResult<Uint8Array>;
+          try {
+            chunk = await reader.read();
+          } catch {
+            if (final) break;
+            throw new Error(PDF_STREAM_INTERRUPTED);
+          }
+          if (chunk.done) {
+            buffered += decoder.decode();
+            if (buffered.trim()) final = consumeLine(buffered);
+            break;
+          }
+          buffered += decoder.decode(chunk.value, { stream: true });
+          let newlineIndex: number;
+          while ((newlineIndex = buffered.indexOf("\n")) !== -1) {
+            const line = buffered.slice(0, newlineIndex);
+            buffered = buffered.slice(newlineIndex + 1);
+            const lineFinal = consumeLine(line);
+            if (lineFinal) final = lineFinal;
+            if (final) break;
+          }
+          if (final) break;
+        }
+      } finally {
+        reader.releaseLock();
       }
-      if (!final || final.error || !final.ok) {
-        // Stream ended without a success verdict (server error or cut stream).
-        throw new Error(final?.error || `HTTP ${res.status}`);
+      if (!final) throw new Error(PDF_STREAM_INTERRUPTED);
+      if (final.error || !final.ok) {
+        throw new Error(final.error || PDF_FAILURE_MESSAGE);
       }
       if (final.previewPdfBase64) {
         // Calibration preview: open the stamped page in a new tab and keep the
         // dialog open (with its filled fields) for the next round.
-        const bytes = Uint8Array.from(atob(final.previewPdfBase64), (c) => c.charCodeAt(0));
-        const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
-        window.open(url, "_blank", "noopener");
+        try {
+          const bytes = Uint8Array.from(atob(final.previewPdfBase64), (c) =>
+            c.charCodeAt(0),
+          );
+          const url = URL.createObjectURL(
+            new Blob([bytes], { type: "application/pdf" }),
+          );
+          window.open(url, "_blank", "noopener");
+        } catch {
+          throw new Error(PDF_FAILURE_MESSAGE);
+        }
         return;
       }
-      if (!final.pdf) throw new Error(`HTTP ${res.status}`);
+      if (!final.pdf) throw new Error(PDF_FAILURE_MESSAGE);
       setPdfResult({ url: final.pdf.url, skippedFiles: final.skippedFiles ?? [] });
       setPdfDialogOpen(false);
     } catch (e) {
@@ -2740,9 +2858,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
                 ) : null}
 
                 {pdfError ? (
-                  <p className="text-sm text-destructive">
-                    הנפקת ה-PDF נכשלה: {pdfError}
-                  </p>
+                  <p className="text-sm text-destructive">{pdfError}</p>
                 ) : null}
 
                 <PdfExportDialog
@@ -2750,6 +2866,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
                   onOpenChange={setPdfDialogOpen}
                   busy={pdfBusy}
                   progress={pdfProgress}
+                  error={pdfError}
                   onSubmit={handlePdfExport}
                 />
               </div>
