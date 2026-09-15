@@ -778,16 +778,20 @@ export async function searchDriveFiles(
 export async function downloadDriveFile(
   accessToken: string,
   fileId: string,
+  knownMimeType?: string,
 ): Promise<{ buffer: Buffer; mimeType: string }> {
   const drive = driveClient(accessToken);
-  const meta = await drive.files.get({ fileId, fields: "mimeType" });
+  const mimeType = knownMimeType
+    ? knownMimeType
+    : (await drive.files.get({ fileId, fields: "mimeType" })).data.mimeType ||
+      "application/octet-stream";
   const res = await drive.files.get(
     { fileId, alt: "media" },
     { responseType: "arraybuffer" },
   );
   return {
     buffer: Buffer.from(res.data as ArrayBuffer),
-    mimeType: meta.data.mimeType || "application/octet-stream",
+    mimeType,
   };
 }
 
@@ -931,6 +935,15 @@ export async function findDriveFileInFolder(
 // Generic Drive/Sheets helpers (report generator — Task 5 builds on these)
 // ============================================================================
 
+// Application-owned cancellation/retry options for the small set of report
+// helpers that participate in the sensitive temporary-Sheet phase. Deliberately
+// excludes Gaxios `timeout`: the caller owns real AbortSignal deadlines.
+export interface GoogleRequestOptions {
+  signal?: AbortSignal;
+  retry?: boolean;
+  retryConfig?: { retry?: number };
+}
+
 // Copy a Drive file into a folder, converting it to a native Google Sheet
 // (required: the report template is an .xlsx, which Sheets API cannot edit).
 export async function copyDriveFileAsSheet(
@@ -938,17 +951,21 @@ export async function copyDriveFileAsSheet(
   fileId: string,
   name: string,
   parentId: string,
+  requestOptions?: GoogleRequestOptions,
 ): Promise<string> {
   const drive = driveClient(accessToken);
-  const res = await drive.files.copy({
-    fileId,
-    requestBody: {
-      name,
-      parents: [parentId],
-      mimeType: "application/vnd.google-apps.spreadsheet",
+  const res = await drive.files.copy(
+    {
+      fileId,
+      requestBody: {
+        name,
+        parents: [parentId],
+        mimeType: "application/vnd.google-apps.spreadsheet",
+      },
+      fields: "id",
     },
-    fields: "id",
-  });
+    requestOptions,
+  );
   return res.data.id!;
 }
 
@@ -976,12 +993,16 @@ export async function createSpreadsheetInFolder(
 export async function listSheetTabs(
   accessToken: string,
   spreadsheetId: string,
+  requestOptions?: GoogleRequestOptions,
 ): Promise<Array<{ sheetId: number; title: string }>> {
   const sheets = sheetsClient(accessToken);
-  const res = await sheets.spreadsheets.get({
-    spreadsheetId,
-    fields: "sheets(properties(sheetId,title))",
-  });
+  const res = await sheets.spreadsheets.get(
+    {
+      spreadsheetId,
+      fields: "sheets(properties(sheetId,title))",
+    },
+    requestOptions,
+  );
   return (res.data.sheets ?? []).map((s) => ({
     sheetId: s.properties!.sheetId!,
     title: s.properties!.title!,
@@ -996,13 +1017,17 @@ export async function getSheetGrid(
   spreadsheetId: string,
   tabTitle: string,
   unformatted = false,
+  requestOptions?: GoogleRequestOptions,
 ): Promise<string[][]> {
   const sheets = sheetsClient(accessToken);
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `'${tabTitle.replace(/'/g, "''")}'`,
-    valueRenderOption: unformatted ? "UNFORMATTED_VALUE" : "FORMATTED_VALUE",
-  });
+  const res = await sheets.spreadsheets.values.get(
+    {
+      spreadsheetId,
+      range: `'${tabTitle.replace(/'/g, "''")}'`,
+      valueRenderOption: unformatted ? "UNFORMATTED_VALUE" : "FORMATTED_VALUE",
+    },
+    requestOptions,
+  );
   return (res.data.values ?? []).map((row) => row.map((c) => String(c ?? "")));
 }
 
@@ -1018,12 +1043,16 @@ export async function batchWriteCells(
   spreadsheetId: string,
   data: Array<{ range: string; values: (string | number)[][] }>,
   valueInputOption: "RAW" | "USER_ENTERED" = "RAW",
+  requestOptions?: GoogleRequestOptions,
 ): Promise<void> {
   const sheets = sheetsClient(accessToken);
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId,
-    requestBody: { valueInputOption, data },
-  });
+  await sheets.spreadsheets.values.batchUpdate(
+    {
+      spreadsheetId,
+      requestBody: { valueInputOption, data },
+    },
+    requestOptions,
+  );
 }
 
 // Write Google-Drive smart chips ("file chips") into individual cells.
@@ -1145,9 +1174,13 @@ export async function uploadReceiptImage(
 // Permanently deletes a file, bypassing trash (files.delete on an owned file
 // is a hard delete, not a trash move) — used to clean up the temp PDF-export
 // copy so it never lingers in Drive.
-export async function deleteDriveFile(accessToken: string, fileId: string): Promise<void> {
+export async function deleteDriveFile(
+  accessToken: string,
+  fileId: string,
+  requestOptions?: GoogleRequestOptions,
+): Promise<void> {
   const drive = driveClient(accessToken);
-  await drive.files.delete({ fileId });
+  await drive.files.delete({ fileId }, requestOptions);
 }
 
 // Moves a file to a new parent folder. Drive files.update has no "move"
@@ -1180,13 +1213,17 @@ export async function getSheetTabMetrics(
   accessToken: string,
   spreadsheetId: string,
   tabTitle: string,
+  requestOptions?: GoogleRequestOptions,
 ): Promise<{ sheetId: number; rightToLeft: boolean; rowPx: number[]; colPx: number[] }> {
   const sheets = sheetsClient(accessToken);
-  const res = await sheets.spreadsheets.get({
-    spreadsheetId,
-    fields:
-      "sheets(properties(sheetId,title,rightToLeft),data(rowMetadata(pixelSize),columnMetadata(pixelSize)))",
-  });
+  const res = await sheets.spreadsheets.get(
+    {
+      spreadsheetId,
+      fields:
+        "sheets(properties(sheetId,title,rightToLeft),data(rowMetadata(pixelSize),columnMetadata(pixelSize)))",
+    },
+    requestOptions,
+  );
   const sheet = (res.data.sheets ?? []).find((s) => s.properties?.title === tabTitle);
   if (!sheet) throw new Error(`Sheet tab not found: ${tabTitle}`);
   const data = sheet.data?.[0];
@@ -1209,6 +1246,7 @@ export async function exportSheetTabPdf(
   accessToken: string,
   spreadsheetId: string,
   gid: number,
+  requestOptions?: Pick<GoogleRequestOptions, "signal">,
 ): Promise<Buffer> {
   const url =
     `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=pdf&gid=${gid}` +
@@ -1216,6 +1254,7 @@ export async function exportSheetTabPdf(
     `&top_margin=0.25&bottom_margin=0.25&left_margin=0.25&right_margin=0.25`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
+    signal: requestOptions?.signal,
   });
   if (!res.ok) {
     throw new Error(`Sheet tab PDF export failed: ${res.status} ${res.statusText}`);

@@ -50,7 +50,7 @@
 - `buildReportPdfBundle(...)` consumes that result only after the helper's cleanup has completed.
 - No existing result shape or HTTP contract changes.
 
-- [ ] **Step 1: Add bounded Google request options**
+- [x] **Step 1: Add bounded Google request options**
 
 In `lib/google.ts`, define:
 
@@ -68,7 +68,7 @@ combined deadline. Existing callers omit the parameter and retain their
 behavior. Do not expose `timeout` because the installed Gaxios implementation
 can replace an already-aborted signal when that option is present.
 
-- [ ] **Step 2: Define phase and cleanup policies**
+- [x] **Step 2: Define phase and cleanup policies**
 
 In the route, record handler entry before request parsing. After authorization,
 derive `sensitiveDeadlineAt` as:
@@ -104,7 +104,7 @@ add a manual retry loop. A thrown 404 is not success. Cleanup failure blocks
 continuation and takes precedence over a simultaneous preparation failure;
 logs and responses remain generic.
 
-- [ ] **Step 3: Isolate and minimize personalized Sheet work**
+- [x] **Step 3: Isolate and minimize personalized Sheet work**
 
 Move temporary-copy creation, field writes, grid/metric reads, geometry calculation, and `exportSheetTabPdf` into `exportPersonalizedReportPage`. Use `let tempId: string | null = null` and this lifecycle:
 
@@ -125,11 +125,11 @@ before writing any personal field. Only then perform the two writes and export.
 Every Google call receives fresh combined phase/request options. The `finally`
 deletion uses the independent cleanup signal and retry options.
 
-- [ ] **Step 4: Stamp only after cleanup**
+- [x] **Step 4: Stamp only after cleanup**
 
 In `buildReportPdfBundle`, await `exportPersonalizedReportPage`, then load the returned bytes, decode/embed/draw the signature, and preserve the current preview behavior. Verify by code inspection that attachment processing is reachable only after temp deletion resolves.
 
-- [ ] **Step 5: Run focused static checks**
+- [x] **Step 5: Run focused static checks**
 
 Run:
 
@@ -154,11 +154,11 @@ Expected: all commands exit 0.
 - Add private constants `ATTACHMENT_DOWNLOAD_CONCURRENCY = 3` and `RECEIPT_MOVE_CONCURRENCY = 4`.
 - Add private ordered-batch helpers; do not export a new generic concurrency API.
 
-- [ ] **Step 1: Remove redundant source metadata calls**
+- [x] **Step 1: Remove redundant source metadata calls**
 
 Update `downloadDriveFile` so it skips `drive.files.get({ fields: "mimeType" })` when `knownMimeType` is supplied and returns that supplied type with the media buffer. Existing two-argument callers keep current behavior.
 
-- [ ] **Step 2: Add ordered download batches**
+- [x] **Step 2: Add ordered download batches**
 
 Create a private helper in `lib/report/pdf.ts` that slices inputs into batches of three. Each download promise catches its own failure and resolves to an explicit success/failure result before `Promise.all`; never catch only around the whole batch. Append each result sequentially in original input order, record skips, and advance progress after each item. Release one batch before starting the next.
 
@@ -169,7 +169,7 @@ by bytes; the accumulated PDF and final serialization still scale with total
 input size. Preserve the existing Drive-returned source order without adding
 `orderBy`.
 
-- [ ] **Step 3: Add bounded receipt moves**
+- [x] **Step 3: Add bounded receipt moves**
 
 Move receipts in batches of four with `Promise.all`. Keep per-file try/catch and best-effort semantics. Increment and emit the completed counter in each settled worker; never log or expose the file name. Preserve moving every resolved receipt, including one whose attachment append failed, and correct the existing inaccurate "successfully-attached" comment.
 
@@ -179,7 +179,7 @@ Do not claim that per-invocation concurrency is a global quota guarantee;
 fixed operations, pagination, batch metadata reads, conditional parent
 updates, and retries remain separate contributors.
 
-- [ ] **Step 4: Run focused static checks**
+- [x] **Step 4: Run focused static checks**
 
 Run:
 
@@ -206,7 +206,7 @@ Expected: all commands exit 0.
 - `pdfError` stores a complete user-facing message.
 - The NDJSON success shape remains unchanged.
 
-- [ ] **Step 1: Add privacy-safe route telemetry**
+- [x] **Step 1: Add privacy-safe route telemetry**
 
 Track time from handler entry and the latest stage. Emit each stage before its first operation, then emit again when a listing/read makes its total available. For every client progress event, send the existing NDJSON object and log only `{ stage, done, total, elapsedMs }`. Add an internal telemetry callback for cleanup start/success/error without adding `cleanup` to `PdfProgress`. Log final success/error with outcome, latest stage, elapsed time, and at most a stable error category plus numeric HTTP status. Never serialize or log a caught exception message, raw exception object, Google request URL, or request body in any environment. The builder treats telemetry callback failures as no-ops so logging cannot prevent cleanup, mask its outcome, or turn success into failure.
 
@@ -226,7 +226,7 @@ Return the stable existing message only for local `UnauthenticatedError` and
 unexpected error receive the approved generic public message. Apply the same
 production logging allowlist to this catch.
 
-- [ ] **Step 2: Replace the `HTTP 200` fallback**
+- [x] **Step 2: Replace the `HTTP 200` fallback**
 
 Handle every terminal path around the reader:
 
@@ -246,11 +246,11 @@ on their existing path. Do not infer a timeout specifically because a network
 cut produces the same observable client state. Once a valid terminal verdict
 exists, a later read rejection must not replace it.
 
-- [ ] **Step 3: Render failure inside the open dialog**
+- [x] **Step 3: Render failure inside the open dialog**
 
 Pass `pdfError` into `PdfExportDialog`. Render a `text-sm text-destructive` paragraph inside the dialog while retaining the existing post-dialog error location. Both locations display the complete message without prepending a second failure label.
 
-- [ ] **Step 4: Run focused static checks**
+- [x] **Step 4: Run focused static checks**
 
 Run:
 
@@ -269,7 +269,7 @@ Expected: all commands exit 0.
 **Files:**
 - Modify: `docs/superpowers/plans/2026-09-15-report-pdf-timeout.md` (checkbox ledger only)
 
-- [ ] **Step 1: Run repository verification**
+- [x] **Step 1: Run repository verification**
 
 Run:
 
@@ -282,19 +282,19 @@ git diff --check
 
 Expected: typecheck and build exit 0. Full lint may contain only the accepted pre-existing `components/UploadZone.tsx:93` error; any new error blocks completion.
 
-- [ ] **Step 2: Inspect scope and privacy**
+- [x] **Step 2: Inspect scope and privacy**
 
 Compare the branch against `b96a60f`. Confirm no dependency changes, no report-content changes, no personal/file identifiers in new logs, unchanged `maxDuration = 300`, preserved current Drive-returned source order, deterministic receipt order, and temp cleanup before attachment processing. Confirm each sensitive Google request receives the application-owned combined phase/per-request signal with SDK retries disabled, while cleanup receives its independent application deadline and bounded SDK retry policy.
 
-- [ ] **Step 3: Request the second Astra review**
+- [x] **Step 3: Request the second Astra review**
 
 Give Astra the spec, this plan, base SHA, full implementation diff, and verification output. Require explicit findings by severity and an assessment of timeout reduction, cleanup safety, ordering, memory bounds, error semantics, privacy, and conformance with the declared no-test constraint.
 
-- [ ] **Step 4: Address review findings and re-run affected verification**
+- [x] **Step 4: Address review findings and re-run affected verification**
 
 Fix every Critical or Important finding. Re-run focused checks and then the full verification commands. Re-request clarification from Astra if a finding is technically unsupported.
 
-- [ ] **Step 5: Stage and stop before the final commit**
+- [x] **Step 5: Stage and stop before the final commit**
 
 Stage the implementation and ledger update. Present the staged diff summary, fresh verification evidence, Astra review, any addressed findings, and proposed commit:
 
