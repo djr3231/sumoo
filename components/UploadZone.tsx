@@ -364,7 +364,7 @@ export function UploadZone() {
               <tr>
                 <th className="text-right p-2">שם חנות</th>
                 <th className="text-right p-2">סכום</th>
-                <th className="text-right p-2">תאריך</th>
+                <th className="text-right p-2">תאריך התאמה</th>
                 <th className="text-right p-2">קטגוריה</th>
                 <th className="text-right p-2">סוג</th>
                 <th className="text-right p-2">קובץ</th>

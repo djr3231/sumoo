@@ -15,6 +15,7 @@ import {
   type ExtractedMethod,
   type GovExpenseCategory,
 } from "./types";
+import { normalizeReceiptDateFacts } from "./receipt-dates";
 
 const OCR_MODEL = "gemini-2.5-pro";
 const UTIL_MODEL = "gemini-2.5-flash";
@@ -79,7 +80,11 @@ export interface ExtractedPayment {
 export interface ExtractedReceipt {
   store_name: string | null;
   matched_known_store: boolean;
-  date: string | null;
+  issue_date: string | null;
+  billing_period: string | null;
+  due_date: string | null;
+  payment_dates: string[];
+  bank_debit_dates: string[];
   category: Category;
   document_type: ExtractedDocType;
   confidence: Confidence;
@@ -92,7 +97,32 @@ const RECEIPT_SCHEMA = {
   properties: {
     store_name: { type: SchemaType.STRING, nullable: true },
     matched_known_store: { type: SchemaType.BOOLEAN },
-    date: { type: SchemaType.STRING, nullable: true, description: "YYYY-MM-DD" },
+    issue_date: {
+      type: SchemaType.STRING,
+      nullable: true,
+      description: "YYYY-MM-DD or null",
+    },
+    billing_period: {
+      type: SchemaType.STRING,
+      nullable: true,
+      description: "printed source text or null",
+    },
+    due_date: {
+      type: SchemaType.STRING,
+      nullable: true,
+      description: "YYYY-MM-DD or null",
+    },
+    payment_dates: {
+      type: SchemaType.ARRAY,
+      items: { type: SchemaType.STRING },
+      description: "every explicit completed-payment date as YYYY-MM-DD",
+    },
+    bank_debit_dates: {
+      type: SchemaType.ARRAY,
+      items: { type: SchemaType.STRING },
+      description:
+        "every explicit scheduled bank-account debit or not-before anchor as YYYY-MM-DD",
+    },
     category: { type: SchemaType.STRING, enum: [...CATEGORIES] as string[] },
     document_type: {
       type: SchemaType.STRING,
@@ -119,7 +149,11 @@ const RECEIPT_SCHEMA = {
   required: [
     "store_name",
     "matched_known_store",
-    "date",
+    "issue_date",
+    "billing_period",
+    "due_date",
+    "payment_dates",
+    "bank_debit_dates",
     "category",
     "document_type",
     "confidence",
@@ -139,13 +173,22 @@ Every field you return MUST come from text you can visually read in the image.
   - Do NOT use geographic / location knowledge ("this looks like a fuel station near a junction I know").
   - If the image clearly shows "מאפית הצבי" → return "מאפית הצבי", even if your category guess is "fuel".
   - A verbatim OCR reading that looks slightly garbled is correct. A plausible-sounding invented name is WRONG.
-- **total_amount, date, card_last4**: same rule — only what you can physically see printed on the image. Never inferred, calculated, or remembered.
+- **total_amount, receipt date facts, card_last4**: same rule — only what you can physically see printed on the image. Never inferred, calculated, or remembered.
 - If you "recognise" the receipt as belonging to a known chain but cannot actually read the chain name on the image → store_name=null. Do not fill it in from memory.
 
 ## General rules
 1. Amounts are always positive and include VAT. There are no credits.
-2. If a field is unreadable, return null. **Prefer null over guessing.** Never invent stores, amounts, or dates.
-3. Date format: YYYY-MM-DD only. Convert from dd/mm/yyyy or dd.mm.yy. If absent → null. Valid years: 2018–2030. If the year you extracted falls outside this range (e.g., 1990, 2010, 2044), it is almost certainly an OCR error on a recent Israeli receipt — return null for the entire date rather than reporting a nonsensical year.
+2. If a scalar field is unreadable, return null; if a date list has no readable entries, return []. **Prefer null or [] over guessing.** Never invent stores, amounts, or dates.
+3. Date values use YYYY-MM-DD only. Convert from dd/mm/yyyy or dd.mm.yy. Valid years: 2018–2030. If the year you extracted falls outside this range (e.g., 1990, 2010, 2044), it is almost certainly an OCR error on a recent Israeli receipt — omit that date rather than reporting a nonsensical year.
+
+## Receipt date facts
+- **issue_date**: printed preparation, edit, invoice, or issue dates; for an ordinary point-of-sale receipt, use its printed receipt date.
+- **billing_period**: copy the printed source text exactly. Never expand it into invented day boundaries.
+- **due_date**: include only an explicit payment deadline. A bank-account debit label is not a deadline unless the document explicitly gives both roles.
+- **payment_dates**: include every date explicitly tied to a completed tender or receipt of funds, including receipts/payment tables and completed Bit, card, cash, or transfer rows.
+- **bank_debit_dates**: include every explicit scheduled account-charge date. "Not before DATE" contributes DATE itself, not the next day.
+- A standing-order payment method alone contributes no date.
+- Missing or unreadable facts return null or [].
 
 ## Image orientation — important
 Images may be rotated 90° (CW or CCW) or 180°. Always mentally rotate the image until the Hebrew text reads correctly (right-to-left as expected) before extracting any data. If you cannot orient the image, return null fields rather than guessing.
@@ -197,7 +240,7 @@ receipts) — use "שונות" whenever nothing clearly fits.
 - "כלי בית ותחזוקה" — household goods, cleaning supplies, home-maintenance and repair items.
 
 ## confidence
-- high = all four fields (store, total amount, date, category) are confidently filled.
+- high = store, total amount, relevant readable date facts, and category are confidently filled.
 - med = one or two fields are null/uncertain.
 - low = most fields null or image is too blurred.
 
@@ -268,6 +311,18 @@ export async function extractReceipt(args: {
   if (!Array.isArray(out.payments)) {
     out.payments = [];
   }
+  const dateFacts = normalizeReceiptDateFacts({
+    issueDate: out.issue_date,
+    billingPeriod: out.billing_period,
+    dueDate: out.due_date,
+    paymentDates: out.payment_dates,
+    bankDebitDates: out.bank_debit_dates,
+  });
+  out.issue_date = dateFacts.issueDate;
+  out.billing_period = dateFacts.billingPeriod;
+  out.due_date = dateFacts.dueDate;
+  out.payment_dates = dateFacts.paymentDates;
+  out.bank_debit_dates = dateFacts.bankDebitDates;
   return out;
 }
 

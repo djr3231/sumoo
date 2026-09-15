@@ -38,7 +38,7 @@ Any function that maps from a const-enum input to an output must be a `switch` s
 
 ### 1.4 OCR is the only source of truth for receipt content
 
-Gemini's job is to **read** what's printed on the image — not to infer, recognize, or remember. The prompt enforces this aggressively: store names, totals, dates, and card last-4s must come from text the model can visually see. If the model can't read a field, it returns `null` rather than guessing.
+Gemini's job is to **read** what's printed on the image or PDF — not to infer, recognize, or remember. The prompt enforces this aggressively: store names, totals, dates, and card last-4s must come from text the model can visually see. If the model can't read a field, it returns `null` rather than guessing.
 
 **Corollary:** Anti-hallucination rules are part of the architecture, not optimizations. Loosening them invites bad data.
 
@@ -99,18 +99,19 @@ Pure declarations: enums, type aliases, interfaces, sheet schema constants. No I
 
 **Rule:** Adding a new domain concept (a new payment method, a new sheet tab, a new column) starts here. The rest of the codebase follows.
 
-### Layer 2: `lib/{google,ai,places,parsers,match,utils,auth}.ts` — services
+### Layer 2: `lib/{google,ai,places,parsers,match,receipt-dates,utils,auth}.ts` — services
 
 Each module owns one external integration or one piece of business logic. They depend on `lib/types.ts` and on each other only where necessary.
 
 | Module        | Responsibility                                                    | Allowed dependencies         |
 | ------------- | ----------------------------------------------------------------- | ---------------------------- |
 | `auth.ts`     | NextAuth config, Google OAuth scopes, token refresh               | `next-auth`, `next-auth/providers/google` |
-| `google.ts`   | All Drive + Sheets calls. The only file that imports `googleapis` | `googleapis`, `lib/types`    |
-| `ai.ts`       | All Gemini calls + prompts + JSON schemas                         | `@google/generative-ai`, `lib/types` |
+| `google.ts`   | All Drive + Sheets calls. The only file that imports `googleapis` | `googleapis`, `lib/types`, `lib/receipt-dates`    |
+| `ai.ts`       | All Gemini calls + prompts + JSON schemas                         | `@google/generative-ai`, `lib/types`, `lib/receipt-dates` |
 | `places.ts`   | Google Places (New) Text Search wrapper                           | `fetch`, `lib/types`         |
 | `parsers.ts`  | CSV/XLSX bank statement parsing                                   | `xlsx`, `lib/types`          |
-| `match.ts`    | Bank-txn ↔ receipt matching algorithm                             | `lib/types`                  |
+| `match.ts`    | Bank-txn ↔ receipt matching algorithm                             | `lib/types`, `lib/receipt-dates`                  |
+| `receipt-dates.ts` | Receipt date validation, matching-date derivation, and candidate-anchor sets | `lib/types`                  |
 | `utils.ts`    | Pure helpers (formatILS, formatDate, cn, chunk, pMapLimit)        | `clsx`, `tailwind-merge`     |
 
 **Rules:**
@@ -141,15 +142,43 @@ Client components (`components/*.tsx`) are stateful UI. They fetch from `/api/*`
 
 All tabs are RTL (`rightToLeft: true`), first row is frozen and bold, with `setBasicFilter` applied.
 
-### 4.2 Receipt schema — 15 columns
+### 4.2 Receipt schema — 20 columns (A:T)
 
 The `RECEIPT_HEADERS` array in `lib/types.ts` defines the column order. The `Receipt` TypeScript interface defines the in-memory shape. The mapping between them lives in `receiptToRow` / `rowToReceipt` in `lib/google.ts`.
+
+Columns A:O are the legacy receipt schema and remain unchanged. Columns P:T add the receipt date facts:
+
+| Column | Receipt field | Header |
+| ------ | ------------- | ------ |
+| P      | `issueDate` | `תאריך הפקה` |
+| Q      | `billingPeriod` | `תקופת חשבון` |
+| R      | `dueDate` | `מועד אחרון לתשלום` |
+| S      | `paymentDates` | `מועדי תשלום בפועל` |
+| T      | `bankDebitDates` | `מועדי חיוב בנק` |
+
+Rows shorter than A:T are valid historical data: `rowToReceipt` loads absent or empty P:T cells as absent/empty metadata. The schema extension is additive; it does not reinterpret or reorder A:O.
 
 **Critical invariants:**
 - Column A is always the UUID. `appendReceipts` is gap-sensitive (Google Sheets' `values.append` skips past trailing empty rows in column A). Never write a row without an id in A.
 - Mixed payments produce N linked rows: the first row holds the canonical id, the others have `linkedTo = primaryId`.
 - `totalReceiptAmount` is the receipt's grand total. `amount` is this line's portion (equal to total for single-payment receipts).
 - `driveFileId` (column M) is the only link back to the original image. Without it, the "view image" button doesn't work — but the row is still valid data.
+
+#### Receipt date facts and the matching date
+
+`lib/receipt-dates.ts` is a pure module with a type-only dependency on `lib/types.ts`. It validates and normalizes extracted date facts, derives the canonical editable `Receipt.date`, and supplies the date sets used for candidate ranking and split anchors. Extracted ISO dates are valid only for years 2018–2030; list fields are normalized to distinct sorted dates.
+
+The canonical `Receipt.date` precedence is:
+
+1. earliest completed-payment date
+2. earliest scheduled bank-debit date
+3. due date
+4. issue date
+5. `null`
+
+`Receipt.date` is the editable matching date. The source facts remain distinct: `issueDate`, `billingPeriod`, `dueDate`, `paymentDates`, and `bankDebitDates` are not collapsed into it. The arrays retain every distinct valid explicit date. Manual edits to `Receipt.date` do not rewrite those source facts. Period filters and automatic matching use `Receipt.date`.
+
+Automatic matching remains one-to-one: each receipt can be consumed by at most one automatically matched line. Candidate ranking may consult the canonical, completed-payment, and bank-debit dates. Relaxed split admission requires at least two unique printed transaction anchors and a user-confirmed `keepAvailable` attachment. No amount division or automatic one-to-many attachment is allowed.
 
 ### 4.3 Settings schema
 
@@ -216,7 +245,8 @@ Every endpoint returns JSON. Errors return `{ error: string }` with an HTTP erro
   - `{ kind: "upload", fileName, mediaType, base64 }`
   - `{ kind: "drive", driveFileId, fileName, mediaType }`
 - Side effects:
-  - Calls Gemini 2.5 Pro to extract receipt fields.
+  - Sends the image or PDF directly to Gemini 2.5 Pro to extract printed receipt fields and source date facts.
+  - Derives the editable matching date on the server with `lib/receipt-dates.ts`; Gemini does not choose a generic matching date.
   - For `kind: "upload"`, uploads original to user's Drive folder.
   - Increments store-count in `חנויות` tab.
   - Does NOT write the receipt — the client does that via `POST /api/sheets`.
@@ -312,6 +342,8 @@ Sharing the env-var-pinned spreadsheet between Google accounts requires manually
 ### 7.3 Dates
 
 ISO `YYYY-MM-DD` is the wire and storage format. `formatDate(iso)` in `lib/utils.ts` is the only place that converts to display format. Israeli display format is `DD/MM/YYYY`.
+
+Receipt extraction keeps issue date, billing period, due date, completed-payment dates, and scheduled bank-debit dates as separate source facts. `lib/receipt-dates.ts` derives the editable canonical `Receipt.date` using the precedence documented in §4.2. Period filtering and automatic matching use that canonical date; candidate ranking may use the additional payment/debit dates, while relaxed split admission is user-confirmed and requires multiple printed transaction anchors.
 
 ### 7.4 Error responses from API routes
 
@@ -470,7 +502,7 @@ Gemini is instructed to return one of the fixed `CATEGORIES` and one of the `EXT
 | ----------------------------------------- | ----------------------------------------------------------- |
 | Add a new payment method                  | `lib/types.ts` (both `EXTRACTED_METHOD` and `PAYMENT_METHOD`) → `lib/ai.ts` (add prompt bullet) → `app/api/ocr/route.ts` (add `case` to `classifyMethod`) |
 | Add a new category                        | `lib/types.ts` (`CATEGORIES`) → `lib/ai.ts` (extend the category section of `RECEIPT_SYSTEM`) — that's all, schema picks it up |
-| Add a new column to the receipts tab      | `lib/types.ts` (`RECEIPT_HEADERS` + `Receipt`) → `lib/google.ts` (`receiptToRow` + `rowToReceipt`) → `components/ReceiptTable.tsx` (column def) → backfill `lib/ai.ts` if Gemini needs to extract it |
+| Add a new column to the receipts tab      | `lib/types.ts` (`RECEIPT_HEADERS` + `Receipt`) → `lib/google.ts` (`receiptToRow` + `rowToReceipt`, A:T persistence, and additive P:T header validation where receipt rows are read or persisted) → `components/ReceiptTable.tsx` (column def) → backfill `lib/ai.ts` if Gemini needs to extract it |
 | Add a new setting (key/value)             | `lib/types.ts` (`SETTINGS_KEY` + extend `UserSettings`) → `lib/google.ts` (`getUserSettings` / `writeUserSettings`) → `app/api/settings/route.ts` (validation) → `components/SettingsForm.tsx` (UI) |
 | Add a new sheet tab                       | `lib/types.ts` (`SHEET_TAB_*` constant) → `lib/google.ts` (`tabsFromMeta` + `ensureTabs` + new read/write helpers + add to spreadsheet creation) |
 | Add a new API route                       | `app/api/<route>/route.ts` — must use `requireCapability` for auth, return JSON with `errorStatus(err)`, set `runtime = "nodejs"` |
@@ -513,6 +545,7 @@ Gemini is instructed to return one of the fixed `CATEGORIES` and one of the `EXT
 | `lib/ai.ts`                           | Gemini calls + prompts + schemas                                 |
 | `lib/places.ts`                       | Places (New) wrapper                                             |
 | `lib/match.ts`                        | Bank-txn ↔ receipt matching                                      |
+| `lib/receipt-dates.ts`                | Pure receipt date validation, canonical matching-date derivation, and candidate anchors |
 | `lib/parsers.ts`                      | CSV/XLSX parsing                                                 |
 | `lib/utils.ts`                        | Pure helpers                                                     |
 | `public/manifest.json`                | PWA manifest                                                     |
