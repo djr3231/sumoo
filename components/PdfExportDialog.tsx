@@ -21,6 +21,7 @@ export interface PdfExportDialogProps {
   onOpenChange: (open: boolean) => void;
   busy: boolean;
   progress: PdfProgress | null;
+  error: string | null;
   onSubmit: (payload: {
     personal: PersonalDetails;
     signaturePngBase64: string;
@@ -63,10 +64,12 @@ function progressLabel(p: PdfProgress): string {
 function PdfExportForm({
   busy,
   progress,
+  error,
   onSubmit,
 }: {
   busy: boolean;
   progress: PdfProgress | null;
+  error: string | null;
   onSubmit: (payload: {
     personal: PersonalDetails;
     signaturePngBase64: string;
@@ -133,6 +136,7 @@ function PdfExportForm({
           <SignatureField value={sig} onChange={setSig} />
         </div>
       </div>
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
       <DialogFooter>
         {busy && progress ? (
           <p className="me-auto self-center text-sm text-muted-foreground">
@@ -175,7 +179,14 @@ function PdfExportForm({
   );
 }
 
-export function PdfExportDialog({ open, onOpenChange, busy, progress, onSubmit }: PdfExportDialogProps) {
+export function PdfExportDialog({
+  open,
+  onOpenChange,
+  busy,
+  progress,
+  error,
+  onSubmit,
+}: PdfExportDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -185,7 +196,14 @@ export function PdfExportDialog({ open, onOpenChange, busy, progress, onSubmit }
             הפרטים ישמשו להנפקה חד-פעמית ולא יישמרו במערכת.
           </DialogDescription>
         </DialogHeader>
-        {open && <PdfExportForm busy={busy} progress={progress} onSubmit={onSubmit} />}
+        {open && (
+          <PdfExportForm
+            busy={busy}
+            progress={progress}
+            error={error}
+            onSubmit={onSubmit}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );
