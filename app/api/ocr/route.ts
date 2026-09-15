@@ -3,6 +3,7 @@ import sharp from "sharp";
 import { v4 as uuidv4 } from "uuid";
 import { errorStatus, requireCapability } from "@/lib/accounts";
 import { extractReceipt } from "@/lib/ai";
+import { deriveMatchingDate, type ReceiptDateFacts } from "@/lib/receipt-dates";
 import {
   appendOrIncrementStore,
   downloadDriveFile,
@@ -217,6 +218,15 @@ export async function POST(req: Request) {
         : []);
     const docType = DOC_TYPE_MAP[extracted.document_type] ?? DOCUMENT_TYPE.Unknown;
     const totalAmount = extracted.total_amount ?? null;
+    const dateFacts: ReceiptDateFacts = {
+      issueDate: extracted.issue_date,
+      billingPeriod: extracted.billing_period,
+      dueDate: extracted.due_date,
+      paymentDates: extracted.payment_dates,
+      bankDebitDates: extracted.bank_debit_dates,
+    };
+    const receiptDate = deriveMatchingDate(dateFacts);
+    const receiptDates = { date: receiptDate, ...dateFacts };
 
     // Build receipts: split mixed payments into multiple linked rows
     const receipts: Receipt[] = [];
@@ -229,7 +239,7 @@ export async function POST(req: Request) {
         driveFileId,
         storeName: extracted.store_name,
         amount: totalAmount,
-        date: extracted.date,
+        ...receiptDates,
         category: extracted.category,
         documentType: docType,
         paymentMethod: PAYMENT_METHOD.Unknown,
@@ -247,7 +257,7 @@ export async function POST(req: Request) {
         driveFileId,
         storeName: extracted.store_name,
         amount: p.amount,
-        date: extracted.date,
+        ...receiptDates,
         category: extracted.category,
         documentType: docType,
         paymentMethod: classifyMethod(p.method, p.card_last4, userCards),
@@ -267,7 +277,7 @@ export async function POST(req: Request) {
           driveFileId,
           storeName: extracted.store_name,
           amount: p.amount,
-          date: extracted.date,
+          ...receiptDates,
           category: extracted.category,
           documentType: docType,
           paymentMethod: classifyMethod(p.method, p.card_last4, userCards),

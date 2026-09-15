@@ -1,4 +1,5 @@
 import type { BankTxn, Receipt } from "./types";
+import { receiptCandidateDates, receiptTransactionAnchors } from "./receipt-dates";
 
 export interface MatchResult {
   matched: Array<{ receipt: Receipt; txn: BankTxn }>;
@@ -44,13 +45,15 @@ function similarity(a: string | null, b: string | null): number {
   return 1 - dist / maxLen;
 }
 
+export const DEFAULT_MATCH_DAYS_TOL = 3;
+
 export function matchTxnsToReceipts(
   txns: BankTxn[],
   receipts: Receipt[],
   opts: { amountTolerancePct?: number; daysTolerance?: number } = {},
 ): MatchResult {
   const amountTolerancePct = opts.amountTolerancePct ?? 0.005;
-  const daysTolerance = opts.daysTolerance ?? 3;
+  const daysTolerance = opts.daysTolerance ?? DEFAULT_MATCH_DAYS_TOL;
 
   const usedReceipts = new Set<string>();
   const matched: MatchResult["matched"] = [];
@@ -108,7 +111,7 @@ export function matchReceiptsToLines(
   opts: { amountTolerancePct?: number; daysTolerance?: number } = {},
 ): ReceiptLineMatch {
   const amountTolerancePct = opts.amountTolerancePct ?? 0.005;
-  const daysTolerance = opts.daysTolerance ?? 3;
+  const daysTolerance = opts.daysTolerance ?? DEFAULT_MATCH_DAYS_TOL;
   const used = new Set<string>();
   const byLine: Array<Receipt | null> = lines.map(() => null);
 
@@ -158,15 +161,49 @@ export interface CandidateDistance {
 export function receiptLineDistance(
   line: { date?: string | null; amount: number | null; description: string | null },
   r: Receipt,
+  options?: { dateScope?: "candidate" | "matching" },
 ): CandidateDistance | null {
-  if (r.amount === null || !r.date || line.amount === null || !line.date) return null;
+  if (r.amount === null || line.amount === null) return null;
+
+  const [lineDate] = receiptCandidateDates({
+    date: line.date ?? null,
+    paymentDates: [],
+    bankDebitDates: [],
+  });
+  const receiptDates = options?.dateScope === "matching"
+    ? receiptCandidateDates({ date: r.date, paymentDates: [], bankDebitDates: [] })
+    : receiptCandidateDates(r);
+
+  if (!lineDate || receiptDates.length === 0) return null;
+
   const amountDiff = Math.abs(Math.abs(line.amount) - Math.abs(r.amount));
   return {
     amountDiff,
-    daysDiff: daysBetween(line.date, r.date),
+    daysDiff: Math.min(...receiptDates.map((receiptDate) => daysBetween(lineDate, receiptDate))),
     sameAmount: amountDiff <= AMOUNT_EXACT_TOL,
     nameRelated: similarity(line.description, r.storeName) >= NAME_SIMILARITY_MIN,
   };
+}
+
+export function isManualSplitCandidate(
+  line: { date?: string | null; description: string | null },
+  receipt: Receipt,
+): boolean {
+  const transactionAnchors = receiptTransactionAnchors(receipt);
+  if (transactionAnchors.length < 2) return false;
+
+  const [lineDate] = receiptCandidateDates({
+    date: line.date ?? null,
+    paymentDates: [],
+    bankDebitDates: [],
+  });
+  if (!lineDate || similarity(line.description, receipt.storeName) < NAME_SIMILARITY_MIN) {
+    return false;
+  }
+
+  return Math.min(
+    ...transactionAnchors.map((transactionAnchor) => daysBetween(lineDate, transactionAnchor)),
+  ) <= DEFAULT_MATCH_DAYS_TOL;
 }
 
 // Lexicographic ordering: nulls last; same-amount lines first, ordered by day

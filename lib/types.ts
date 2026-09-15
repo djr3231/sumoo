@@ -326,6 +326,11 @@ export interface Receipt {
   storeName: string | null;
   amount: number | null;
   date: string | null;
+  issueDate?: string | null;
+  billingPeriod?: string | null;
+  dueDate?: string | null;
+  paymentDates?: string[];
+  bankDebitDates?: string[];
   category: Category;
   documentType: DocumentType;
   paymentMethod: PaymentMethod;
@@ -383,6 +388,11 @@ export const RECEIPT_HEADERS: ReadonlyArray<string> = [
   "drive_file_id",
   "נבדק ידנית",
   "הערות",
+  "תאריך הפקה",
+  "תקופת חשבון",
+  "מועד אחרון לתשלום",
+  "מועדי תשלום בפועל",
+  "מועדי חיוב בנק",
 ];
 
 export const TXN_HEADERS: ReadonlyArray<string> = [

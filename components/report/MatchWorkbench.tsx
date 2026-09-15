@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/tooltip";
 import type { Receipt } from "@/lib/types";
 import {
-  compareCandidates, receiptLineDistance, type CandidateDistance,
+  compareCandidates, isManualSplitCandidate, receiptLineDistance, type CandidateDistance,
 } from "@/lib/match";
 import type { CategorizedExpense } from "@/lib/report/process";
 
@@ -67,7 +67,11 @@ export function MatchWorkbench({
           .toLowerCase()
           .includes(query);
       }
-      return showAll || (d !== null && d.sameAmount && d.nameRelated);
+      return (
+        showAll ||
+        (d !== null && d.sameAmount && d.nameRelated) ||
+        (splitMode && isManualSplitCandidate(e, receipt))
+      );
     });
 
   const sortVal = (r: { e: CategorizedExpense; d: CandidateDistance | null }, key: SortKey) => {
@@ -193,6 +197,16 @@ export function MatchWorkbench({
                 <p className="text-sm text-muted-foreground">
                   {fmtDate(receipt.date)} · {receipt.paymentMethod}
                 </p>
+                {receipt.paymentDates?.length ? (
+                  <p className="text-sm text-muted-foreground">
+                    מועדי תשלום בפועל: {receipt.paymentDates.map(fmtDate).join(", ")}
+                  </p>
+                ) : null}
+                {receipt.bankDebitDates?.length ? (
+                  <p className="text-sm text-muted-foreground">
+                    מועדי חיוב בנק: {receipt.bankDebitDates.map(fmtDate).join(", ")}
+                  </p>
+                ) : null}
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-semibold tabular-nums">

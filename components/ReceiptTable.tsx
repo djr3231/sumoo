@@ -129,7 +129,7 @@ const COLUMNS: ColumnDef[] = [
   { key: "amount",             label: "סכום",          filterable: false, getValue: (r) => (r.amount === null ? "" : String(r.amount)) },
   { key: "totalReceiptAmount", label: "סך הקבלה",      filterable: false, getValue: (r) => (r.totalReceiptAmount == null ? "" : String(r.totalReceiptAmount)) },
   { key: "paymentMethod",      label: "אמצעי תשלום",   filterable: true,  getValue: (r) => r.paymentMethod ?? PAYMENT_METHOD.Unknown },
-  { key: "date",               label: "תאריך",         filterable: false, getValue: (r) => r.date ?? "" },
+  { key: "date",               label: "תאריך התאמה",   filterable: false, getValue: (r) => r.date ?? "" },
   { key: "category",           label: "קטגוריה",       filterable: true,  getValue: (r) => r.category },
   { key: "documentType",       label: "סוג מסמך",      filterable: true,  getValue: (r) => r.documentType },
   { key: "fileName",           label: "קובץ",          filterable: false, getValue: (r) => r.fileName },
@@ -175,6 +175,28 @@ function PaymentMethodIcon({ method }: { method: PaymentMethod }) {
     case PAYMENT_METHOD.Other: return <MoreHorizontal {...props} />;
     default: return <HelpCircle {...props} />;
   }
+}
+
+function ReceiptSourceFacts({ receipt }: { receipt: Receipt }) {
+  const paymentDates = receipt.paymentDates ?? [];
+  const bankDebitDates = receipt.bankDebitDates ?? [];
+  if (!receipt.issueDate && !receipt.billingPeriod && !receipt.dueDate && paymentDates.length === 0 && bankDebitDates.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-1 text-sm text-muted-foreground">
+      {receipt.issueDate && <div>תאריך הפקה: {formatDate(receipt.issueDate)}</div>}
+      {receipt.billingPeriod && <div>תקופת חשבון: {receipt.billingPeriod}</div>}
+      {receipt.dueDate && <div>מועד אחרון לתשלום: {formatDate(receipt.dueDate)}</div>}
+      {paymentDates.length > 0 && (
+        <div>מועדי תשלום בפועל: {paymentDates.map((date) => formatDate(date)).join(", ")}</div>
+      )}
+      {bankDebitDates.length > 0 && (
+        <div>מועדי חיוב בנק: {bankDebitDates.map((date) => formatDate(date)).join(", ")}</div>
+      )}
+    </div>
+  );
 }
 
 function DocTypeBadge({ type }: { type: DocumentType }) {
@@ -320,6 +342,7 @@ const ReceiptRow = memo(function ReceiptRow({
                       <div className="text-[10px] text-muted-foreground">
                         {formatDate(r.date)}
                       </div>
+                      <ReceiptSourceFacts receipt={r} />
                     </TableCell>
                     <TableCell>
                       <Select
@@ -744,7 +767,18 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
     return mainRows.filter((r) => {
       if (debouncedSearch) {
         const t = debouncedSearch.toLowerCase();
-        const hay = [r.fileName, r.storeName, r.notes, r.date, String(r.amount)]
+        const hay = [
+          r.fileName,
+          r.storeName,
+          r.notes,
+          r.date,
+          String(r.amount),
+          r.issueDate,
+          r.billingPeriod,
+          r.dueDate,
+          ...(r.paymentDates ?? []),
+          ...(r.bankDebitDates ?? []),
+        ]
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
@@ -806,8 +840,9 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
   function downloadCSV() {
     const headers = [
       "שם חנות", "סכום", "סך הקבלה", "אמצעי תשלום", "4 ספרות",
-      "תאריך", "קטגוריה", "שם קובץ", "לינק לתמונה",
+      "תאריך התאמה", "קטגוריה", "שם קובץ", "לינק לתמונה",
       "סוג מסמך", "מקושר ל", "confidence", "נבדק ידנית", "הערות",
+      "תאריך הפקה", "תקופת חשבון", "מועד אחרון לתשלום", "מועדי תשלום בפועל", "מועדי חיוב בנק",
     ];
     const lines = [headers.join(",")];
     for (const r of sorted) {
@@ -827,6 +862,11 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
           quoteCSV(r.confidence),
           r.reviewed ? "TRUE" : "FALSE",
           quoteCSV(r.notes ?? ""),
+          r.issueDate ?? "",
+          quoteCSV(r.billingPeriod ?? ""),
+          r.dueDate ?? "",
+          quoteCSV((r.paymentDates ?? []).join(",")),
+          quoteCSV((r.bankDebitDates ?? []).join(",")),
         ].join(","),
       );
     }
@@ -841,7 +881,7 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
       "סך הקבלה": r.totalReceiptAmount ?? "",
       "אמצעי תשלום": r.paymentMethod ?? PAYMENT_METHOD.Unknown,
       "4 ספרות": r.cardLast4 ?? "",
-      "תאריך": r.date ?? "",
+      "תאריך התאמה": r.date ?? "",
       "קטגוריה": r.category,
       "שם קובץ": r.fileName,
       "לינק לתמונה": driveLink(r),
@@ -850,6 +890,11 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
       confidence: r.confidence,
       "נבדק ידנית": r.reviewed ? "כן" : "",
       "הערות": r.notes ?? "",
+      "תאריך הפקה": r.issueDate ?? "",
+      "תקופת חשבון": r.billingPeriod ?? "",
+      "מועד אחרון לתשלום": r.dueDate ?? "",
+      "מועדי תשלום בפועל": (r.paymentDates ?? []).join(","),
+      "מועדי חיוב בנק": (r.bankDebitDates ?? []).join(","),
     }));
     const ws = XLSX.utils.json_to_sheet(data);
     (ws as unknown as { "!RTL": boolean })["!RTL"] = true;
@@ -1378,34 +1423,33 @@ export function ReceiptTable({ readOnly = false }: { readOnly?: boolean }) {
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label>תאריך</Label>
-                    <Input
-                      type="date"
-                      defaultValue={editing.date ?? ""}
-                      onBlur={(e) => {
-                        const v = e.target.value || null;
-                        if (v !== editing.date) patch(editing.id, { date: v });
-                      }}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>קטגוריה</Label>
-                    <Select
-                      value={editing.category}
-                      onValueChange={(v) => patch(editing.id, { category: v as Category })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CATEGORIES.map((c) => (
-                          <SelectItem key={c} value={c}>{c}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                <div className="space-y-1.5">
+                  <Label>תאריך התאמה</Label>
+                  <Input
+                    type="date"
+                    defaultValue={editing.date ?? ""}
+                    onBlur={(e) => {
+                      const v = e.target.value || null;
+                      if (v !== editing.date) patch(editing.id, { date: v });
+                    }}
+                  />
+                </div>
+                <ReceiptSourceFacts receipt={editing} />
+                <div className="space-y-1.5">
+                  <Label>קטגוריה</Label>
+                  <Select
+                    value={editing.category}
+                    onValueChange={(v) => patch(editing.id, { category: v as Category })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CATEGORIES.map((c) => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
