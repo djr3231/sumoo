@@ -1,14 +1,8 @@
+import { requestStructuredText } from "./openai-responses";
 import {
-  GoogleGenerativeAI,
-  SchemaType,
-  type GenerativeModel,
-} from "@google/generative-ai";
-import {
-  CATEGORIES,
   EXTRACTED_DOC_TYPE,
   EXTRACTED_METHOD,
   GOV_EXPENSE_CATEGORY,
-  GOV_EXPENSE_CATEGORIES,
   type Category,
   type Confidence,
   type ExtractedDocType,
@@ -17,55 +11,13 @@ import {
 } from "./types";
 import { normalizeReceiptDateFacts } from "./receipt-dates";
 
-const OCR_MODEL = "gemini-2.5-pro";
-const UTIL_MODEL = "gemini-2.5-flash";
+const DOCUMENT_MODEL = "gpt-6.1-sol";
+const TEXT_MODEL = "gpt-6-luna";
 
-let _client: GoogleGenerativeAI | null = null;
-function client(): GoogleGenerativeAI {
-  if (!_client) {
-    const apiKey = process.env.GOOGLE_AI_KEY;
-    if (!apiKey) throw new Error("GOOGLE_AI_KEY is not set");
-    _client = new GoogleGenerativeAI(apiKey);
-  }
-  return _client;
-}
-
-function model(args: {
-  modelName: string;
-  systemInstruction: string;
-  responseSchema: object;
-  temperature?: number;
-}): GenerativeModel {
-  return client().getGenerativeModel({
-    model: args.modelName,
-    systemInstruction: args.systemInstruction,
-    generationConfig: {
-      temperature: args.temperature ?? 0,
-      responseMimeType: "application/json",
-      responseSchema: args.responseSchema as never,
-    },
-  });
-}
-
-async function withRetry<T>(fn: () => Promise<T>, attempts = 2): Promise<T> {
-  for (let i = 0; i < attempts; i++) {
-    try {
-      return await fn();
-    } catch (err) {
-      const msg = (err as Error).message ?? "";
-      const retryable =
-        /\b503\b|\b429\b|Service Unavailable|Too Many Requests|overloaded/i.test(
-          msg,
-        );
-      if (!retryable || i === attempts - 1) throw err;
-      console.warn(
-        `Gemini transient (attempt ${i + 1}/${attempts}), retry in 3s`,
-      );
-      await new Promise((r) => setTimeout(r, 3000));
-    }
-  }
-  throw new Error("unreachable");
-}
+// OpenAI strict enums reject literal quotes in category labels such as Lawyer's.
+const categoryLabels = new Map(Object.entries(GOV_EXPENSE_CATEGORY));
+const categoryIds = [...categoryLabels.keys()];
+const categoryGuide = [...categoryLabels].map(([id, label]) => `${id} = ${label}`).join("\n");
 
 // ============================================================================
 // extractReceipt
@@ -93,54 +45,53 @@ export interface ExtractedReceipt {
 }
 
 const RECEIPT_SCHEMA = {
-  type: SchemaType.OBJECT,
+  type: "object",
+  additionalProperties: false,
   properties: {
-    store_name: { type: SchemaType.STRING, nullable: true },
-    matched_known_store: { type: SchemaType.BOOLEAN },
+    store_name: { type: ["string", "null"] },
+    matched_known_store: { type: "boolean" },
     issue_date: {
-      type: SchemaType.STRING,
-      nullable: true,
+      type: ["string", "null"],
       description: "YYYY-MM-DD or null",
     },
     billing_period: {
-      type: SchemaType.STRING,
-      nullable: true,
+      type: ["string", "null"],
       description: "printed source text or null",
     },
     due_date: {
-      type: SchemaType.STRING,
-      nullable: true,
+      type: ["string", "null"],
       description: "YYYY-MM-DD or null",
     },
     payment_dates: {
-      type: SchemaType.ARRAY,
-      items: { type: SchemaType.STRING },
+      type: "array",
+      items: { type: "string" },
       description: "every explicit completed-payment date as YYYY-MM-DD",
     },
     bank_debit_dates: {
-      type: SchemaType.ARRAY,
-      items: { type: SchemaType.STRING },
+      type: "array",
+      items: { type: "string" },
       description:
         "every explicit scheduled bank-account debit or not-before anchor as YYYY-MM-DD",
     },
-    category: { type: SchemaType.STRING, enum: [...CATEGORIES] as string[] },
+    category: { type: "string", enum: categoryIds },
     document_type: {
-      type: SchemaType.STRING,
-      enum: Object.values(EXTRACTED_DOC_TYPE) as string[],
+      type: "string",
+      enum: Object.values(EXTRACTED_DOC_TYPE),
     },
-    confidence: { type: SchemaType.STRING, enum: ["low", "med", "high"] },
-    total_amount: { type: SchemaType.NUMBER, nullable: true },
+    confidence: { type: "string", enum: ["low", "med", "high"] },
+    total_amount: { type: ["number", "null"] },
     payments: {
-      type: SchemaType.ARRAY,
+      type: "array",
       items: {
-        type: SchemaType.OBJECT,
+        type: "object",
+        additionalProperties: false,
         properties: {
           method: {
-            type: SchemaType.STRING,
-            enum: Object.values(EXTRACTED_METHOD) as string[],
+            type: "string",
+            enum: Object.values(EXTRACTED_METHOD),
           },
-          amount: { type: SchemaType.NUMBER },
-          card_last4: { type: SchemaType.STRING, nullable: true },
+          amount: { type: "number" },
+          card_last4: { type: ["string", "null"] },
         },
         required: ["method", "amount", "card_last4"],
       },
@@ -209,6 +160,9 @@ Images may be rotated 90° (CW or CCW) or 180°. Always mentally rotate the imag
 - **Never** return footer text (website URL, phone number, "תודה רבה") as the store name.
 
 ## Categories
+Return the category ID for the selected Hebrew label:
+${categoryGuide}
+
 The category list is **fixed** — it is the same 23-category list used by the
 government insolvency report. Pick exactly one from this list — never invent
 a new one. Most of the categories below are rare on photographed receipts
@@ -286,25 +240,19 @@ export async function extractReceipt(args: {
           .join("\n")}`
       : "\n\n(No canonical store list yet.)";
 
-  const m = model({
-    modelName: OCR_MODEL,
-    systemInstruction: RECEIPT_SYSTEM,
-    responseSchema: RECEIPT_SCHEMA,
+  const raw = await requestStructuredText({
+    model: DOCUMENT_MODEL,
+    instructions: RECEIPT_SYSTEM,
+    name: "receipt",
+    schema: RECEIPT_SCHEMA,
+    text: `File name: ${fileName}\nExtract the fields. Return null for any field you cannot read with confidence.${knownBlock}`,
+    attachment: { data: imageBase64, mimeType: mediaType },
   });
-
-  const result = await withRetry(() =>
-    m.generateContent([
-      { inlineData: { data: imageBase64, mimeType: mediaType } },
-      { text: `File name: ${fileName}\nExtract the fields. Return null for any field you cannot read with confidence.${knownBlock}` },
-    ]),
-  );
-
-  const raw = result.response.text();
-  const out = JSON.parse(raw) as ExtractedReceipt;
-
-  if (!CATEGORIES.includes(out.category)) {
-    out.category = "שונות";
-  }
+  const parsed = JSON.parse(raw) as Omit<ExtractedReceipt, "category"> & { category: string };
+  const out: ExtractedReceipt = {
+    ...parsed,
+    category: categoryLabels.get(parsed.category) ?? GOV_EXPENSE_CATEGORY.Miscellaneous,
+  };
   if (typeof out.matched_known_store !== "boolean") {
     out.matched_known_store = false;
   }
@@ -336,17 +284,19 @@ export interface CanonicalGroup {
 }
 
 const CANON_SCHEMA = {
-  type: SchemaType.OBJECT,
+  type: "object",
+  additionalProperties: false,
   properties: {
     groups: {
-      type: SchemaType.ARRAY,
+      type: "array",
       items: {
-        type: SchemaType.OBJECT,
+        type: "object",
+        additionalProperties: false,
         properties: {
-          canonical: { type: SchemaType.STRING },
+          canonical: { type: "string" },
           variants: {
-            type: SchemaType.ARRAY,
-            items: { type: SchemaType.STRING },
+            type: "array",
+            items: { type: "string" },
           },
         },
         required: ["canonical", "variants"],
@@ -401,19 +351,13 @@ export async function canonicalizeStoreNames(
     return unique.map((n) => ({ canonical: n, variants: [n] }));
   }
 
-  const m = model({
-    modelName: UTIL_MODEL,
-    systemInstruction: CANON_SYSTEM,
-    responseSchema: CANON_SCHEMA,
+  const raw = await requestStructuredText({
+    model: TEXT_MODEL,
+    instructions: CANON_SYSTEM,
+    name: "canonical_stores",
+    schema: CANON_SCHEMA,
+    text: `Names to group:\n${JSON.stringify(unique)}`,
   });
-
-  const result = await withRetry(() =>
-    m.generateContent([
-      { text: `Names to group:\n${JSON.stringify(unique)}` },
-    ]),
-  );
-
-  const raw = result.response.text();
   try {
     const parsed = JSON.parse(raw) as { groups: CanonicalGroup[] };
     return parsed.groups || [];
@@ -433,22 +377,24 @@ export interface DedupGroup {
 }
 
 const DEDUP_SCHEMA = {
-  type: SchemaType.OBJECT,
+  type: "object",
+  additionalProperties: false,
   properties: {
     groups: {
-      type: SchemaType.ARRAY,
+      type: "array",
       items: {
-        type: SchemaType.OBJECT,
+        type: "object",
+        additionalProperties: false,
         properties: {
           kind: {
-            type: SchemaType.STRING,
+            type: "string",
             enum: ["duplicate", "receipt_slip_pair"],
           },
           receipt_ids: {
-            type: SchemaType.ARRAY,
-            items: { type: SchemaType.STRING },
+            type: "array",
+            items: { type: "string" },
           },
-          reason: { type: SchemaType.STRING },
+          reason: { type: "string" },
         },
         required: ["kind", "receipt_ids", "reason"],
       },
@@ -486,17 +432,13 @@ export async function detectDuplicatesAndPairs(
     t: r.documentType,
   }));
 
-  const m = model({
-    modelName: UTIL_MODEL,
-    systemInstruction: DEDUP_SYSTEM,
-    responseSchema: DEDUP_SCHEMA,
+  const raw = await requestStructuredText({
+    model: TEXT_MODEL,
+    instructions: DEDUP_SYSTEM,
+    name: "duplicate_groups",
+    schema: DEDUP_SCHEMA,
+    text: `Rows:\n${JSON.stringify(compact)}`,
   });
-
-  const result = await withRetry(() =>
-    m.generateContent([{ text: `Rows:\n${JSON.stringify(compact)}` }]),
-  );
-
-  const raw = result.response.text();
   try {
     const parsed = JSON.parse(raw) as { groups: DedupGroup[] };
     return parsed.groups || [];
@@ -510,17 +452,19 @@ export async function detectDuplicatesAndPairs(
 // ============================================================================
 
 const STATEMENT_SCHEMA = {
-  type: SchemaType.OBJECT,
+  type: "object",
+  additionalProperties: false,
   properties: {
-    source_label: { type: SchemaType.STRING },
+    source_label: { type: "string" },
     transactions: {
-      type: SchemaType.ARRAY,
+      type: "array",
       items: {
-        type: SchemaType.OBJECT,
+        type: "object",
+        additionalProperties: false,
         properties: {
-          date: { type: SchemaType.STRING, nullable: true },
-          amount: { type: SchemaType.NUMBER, nullable: true },
-          description: { type: SchemaType.STRING, nullable: true },
+          date: { type: ["string", "null"] },
+          amount: { type: ["number", "null"] },
+          description: { type: ["string", "null"] },
         },
         required: ["date", "amount", "description"],
       },
@@ -542,20 +486,14 @@ export async function parseStatementPDF(args: {
   source_label: string;
   transactions: Array<{ date: string | null; amount: number | null; description: string | null }>;
 }> {
-  const m = model({
-    modelName: UTIL_MODEL,
-    systemInstruction: STATEMENT_SYSTEM,
-    responseSchema: STATEMENT_SCHEMA,
+  const raw = await requestStructuredText({
+    model: DOCUMENT_MODEL,
+    instructions: STATEMENT_SYSTEM,
+    name: "statement",
+    schema: STATEMENT_SCHEMA,
+    text: args.hint ? `רמז: ${args.hint}. חלץ את כל התנועות.` : "חלץ את כל התנועות.",
+    attachment: { data: args.pdfBase64, mimeType: "application/pdf" },
   });
-
-  const result = await withRetry(() =>
-    m.generateContent([
-      { inlineData: { data: args.pdfBase64, mimeType: "application/pdf" } },
-      { text: args.hint ? `רמז: ${args.hint}. חלץ את כל התנועות.` : "חלץ את כל התנועות." },
-    ]),
-  );
-
-  const raw = result.response.text();
   try {
     return JSON.parse(raw);
   } catch {
@@ -577,14 +515,15 @@ export interface SalarySlip {
 }
 
 const SALARY_SCHEMA = {
-  type: SchemaType.OBJECT,
+  type: "object",
+  additionalProperties: false,
   properties: {
-    month: { type: SchemaType.NUMBER, nullable: true },
-    year: { type: SchemaType.NUMBER, nullable: true },
-    net: { type: SchemaType.NUMBER, nullable: true },
-    gross: { type: SchemaType.NUMBER, nullable: true },
-    deductions: { type: SchemaType.NUMBER, nullable: true },
-    employer: { type: SchemaType.STRING, nullable: true },
+    month: { type: ["number", "null"] },
+    year: { type: ["number", "null"] },
+    net: { type: ["number", "null"] },
+    gross: { type: ["number", "null"] },
+    deductions: { type: ["number", "null"] },
+    employer: { type: ["string", "null"] },
   },
   required: ["month", "year", "net", "gross", "deductions", "employer"],
 };
@@ -600,24 +539,16 @@ export async function parseSalarySlip(args: {
   pdfBase64: string;
   hint?: string;
 }): Promise<SalarySlip> {
-  const m = model({
-    modelName: OCR_MODEL,
-    systemInstruction: SALARY_SYSTEM,
-    responseSchema: SALARY_SCHEMA,
+  const raw = await requestStructuredText({
+    model: DOCUMENT_MODEL,
+    instructions: SALARY_SYSTEM,
+    name: "salary_slip",
+    schema: SALARY_SCHEMA,
+    text: args.hint
+      ? `רמז: ${args.hint}. חלץ את נתוני התלוש.`
+      : "חלץ את נתוני התלוש.",
+    attachment: { data: args.pdfBase64, mimeType: "application/pdf" },
   });
-
-  const result = await withRetry(() =>
-    m.generateContent([
-      { inlineData: { data: args.pdfBase64, mimeType: "application/pdf" } },
-      {
-        text: args.hint
-          ? `רמז: ${args.hint}. חלץ את נתוני התלוש.`
-          : "חלץ את נתוני התלוש.",
-      },
-    ]),
-  );
-
-  const raw = result.response.text();
   try {
     return JSON.parse(raw);
   } catch {
@@ -630,15 +561,17 @@ export async function parseSalarySlip(args: {
 // ============================================================================
 
 const CLASSIFY_SCHEMA = {
-  type: SchemaType.OBJECT,
+  type: "object",
+  additionalProperties: false,
   properties: {
     results: {
-      type: SchemaType.ARRAY,
+      type: "array",
       items: {
-        type: SchemaType.OBJECT,
+        type: "object",
+        additionalProperties: false,
         properties: {
-          i: { type: SchemaType.NUMBER },
-          category: { type: SchemaType.STRING },
+          i: { type: "integer" },
+          category: { type: "string", enum: categoryIds },
         },
         required: ["i", "category"],
       },
@@ -647,8 +580,8 @@ const CLASSIFY_SCHEMA = {
   required: ["results"],
 };
 
-const CLASSIFY_SYSTEM = `You classify Israeli household expenses into the FIXED government insolvency-report categories. For each item pick exactly one category from this closed list, returning the Hebrew string verbatim:
-${GOV_EXPENSE_CATEGORIES.map((c) => `- ${c}`).join("\n")}
+const CLASSIFY_SYSTEM = `You classify Israeli household expenses into the FIXED government insolvency-report categories. For each item return the category ID matching the Hebrew label:
+${categoryGuide}
 
 Mapping hints (merchant → category):
 - supermarket / grocery / food store / bakery (שופרסל, רמי לוי, ויקטורי, יינות ביתן) → "כלכלה (מזון)"
@@ -676,27 +609,21 @@ export async function classifyExpenses(
 ): Promise<GovExpenseCategory[]> {
   if (items.length === 0) return [];
 
-  const m = model({
-    modelName: UTIL_MODEL,
-    systemInstruction: CLASSIFY_SYSTEM,
-    responseSchema: CLASSIFY_SCHEMA,
-  });
-
   const payload = items.map((it, i) => ({ i, name: it.description, amount: it.amount }));
-  const result = await withRetry(() =>
-    m.generateContent([
-      { text: `סווג את הפריטים הבאים (JSON):\n${JSON.stringify(payload)}` },
-    ]),
-  );
-
-  const raw = result.response.text();
+  const raw = await requestStructuredText({
+    model: TEXT_MODEL,
+    instructions: CLASSIFY_SYSTEM,
+    name: "expense_categories",
+    schema: CLASSIFY_SCHEMA,
+    text: `סווג את הפריטים הבאים (JSON):\n${JSON.stringify(payload)}`,
+  });
   const out: GovExpenseCategory[] = items.map(() => GOV_EXPENSE_CATEGORY.Miscellaneous);
-  const allowed = GOV_EXPENSE_CATEGORIES as string[];
   try {
     const parsed = JSON.parse(raw) as { results: Array<{ i: number; category: string }> };
     for (const r of parsed.results ?? []) {
-      if (r.i >= 0 && r.i < items.length && allowed.includes(r.category)) {
-        out[r.i] = r.category as GovExpenseCategory;
+      const category = categoryLabels.get(r.category);
+      if (r.i >= 0 && r.i < items.length && category) {
+        out[r.i] = category;
       }
     }
   } catch {
@@ -717,17 +644,19 @@ export interface DirectCharge {
 }
 
 const DIRECT_SCHEMA = {
-  type: SchemaType.OBJECT,
+  type: "object",
+  additionalProperties: false,
   properties: {
     charges: {
-      type: SchemaType.ARRAY,
+      type: "array",
       items: {
-        type: SchemaType.OBJECT,
+        type: "object",
+        additionalProperties: false,
         properties: {
-          date: { type: SchemaType.STRING, nullable: true },
-          merchant: { type: SchemaType.STRING, nullable: true },
-          amount: { type: SchemaType.NUMBER, nullable: true },
-          isCredit: { type: SchemaType.BOOLEAN },
+          date: { type: ["string", "null"] },
+          merchant: { type: ["string", "null"] },
+          amount: { type: ["number", "null"] },
+          isCredit: { type: "boolean" },
         },
         required: ["date", "merchant", "amount", "isCredit"],
       },
@@ -750,24 +679,16 @@ export async function parseDirectStatement(args: {
   pdfBase64: string;
   hint?: string;
 }): Promise<{ charges: DirectCharge[] }> {
-  const m = model({
-    modelName: OCR_MODEL,
-    systemInstruction: DIRECT_SYSTEM,
-    responseSchema: DIRECT_SCHEMA,
+  const raw = await requestStructuredText({
+    model: DOCUMENT_MODEL,
+    instructions: DIRECT_SYSTEM,
+    name: "direct_charges",
+    schema: DIRECT_SCHEMA,
+    text: args.hint
+      ? `רמז: ${args.hint}. חלץ את כל החיובים הבודדים בלבד (ללא שורות סיכום).`
+      : "חלץ את כל החיובים הבודדים בלבד (ללא שורות סיכום).",
+    attachment: { data: args.pdfBase64, mimeType: "application/pdf" },
   });
-
-  const result = await withRetry(() =>
-    m.generateContent([
-      { inlineData: { data: args.pdfBase64, mimeType: "application/pdf" } },
-      {
-        text: args.hint
-          ? `רמז: ${args.hint}. חלץ את כל החיובים הבודדים בלבד (ללא שורות סיכום).`
-          : "חלץ את כל החיובים הבודדים בלבד (ללא שורות סיכום).",
-      },
-    ]),
-  );
-
-  const raw = result.response.text();
   try {
     const parsed = JSON.parse(raw) as { charges: DirectCharge[] };
     return { charges: parsed.charges ?? [] };

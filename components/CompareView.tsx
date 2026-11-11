@@ -84,7 +84,7 @@ export function CompareView() {
       <section className="space-y-3 border border-border rounded-lg p-4">
         <h2 className="font-semibold">העלה תדפיס בנק / אשראי</h2>
         <p className="text-xs text-muted-foreground">
-          תומך ב: PDF (ינותח בעזרת Claude), CSV, XLSX (ייצוא מבנקים ישראליים).
+          תומך ב: PDF (ינותח בעזרת OpenAI), CSV, XLSX (ייצוא מבנקים ישראליים).
         </p>
         <div className="flex flex-wrap gap-2 items-center">
           <div className="space-y-1">

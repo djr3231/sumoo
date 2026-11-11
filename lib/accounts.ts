@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { cookies } from "next/headers";
 import { getServerSession } from "next-auth";
 import { authOptions } from "./auth";
+import { OpenAIResponseError } from "./openai-responses";
 import {
   ensureSpreadsheet,
   getUserSettings,
@@ -343,6 +344,7 @@ export function isGoogleAuthError(err: unknown): boolean {
 }
 
 export function errorStatus(err: unknown): number {
+  if (err instanceof OpenAIResponseError) return err.status;
   if (err instanceof UnauthenticatedError) return 401;
   if (err instanceof ForbiddenError) return 403;
   if (isGoogleAuthError(err)) return 401;

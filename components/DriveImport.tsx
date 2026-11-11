@@ -341,7 +341,7 @@ export function DriveImport() {
 
       {paused && (
         <Alert>
-          <AlertTitle>⏸ הסריקה הושהתה — Gemini עמוס</AlertTitle>
+          <AlertTitle>⏸ הסריקה הושהתה — OpenAI עמוס</AlertTitle>
           <AlertDescription>
             {pendingFiles.length} קבצים ממתינים. נסה שוב כשהשרת ישתחרר (לעיתים
             נדרשות מספר דקות).

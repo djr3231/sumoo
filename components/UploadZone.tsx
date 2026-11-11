@@ -50,7 +50,7 @@ async function postOnce(url: string, body: unknown) {
 // ("Failed to fetch" — no HTTP status) is retried with escalating
 // delays, which also covers the page waking up from a brief suspension.
 // HTTP errors are NOT retried here: 503/429 have the halt/pause
-// mechanism, and retrying 500s would double the Gemini cost.
+// mechanism, and retrying 500s could duplicate a paid extraction.
 const NET_RETRY_DELAYS_MS = [2000, 5000, 10000];
 
 async function postWithNetRetry(url: string, body: unknown) {
@@ -347,7 +347,7 @@ export function UploadZone() {
 
       {paused && (
         <Alert>
-          <AlertTitle>⏸ הסריקה הושהתה — Gemini עמוס</AlertTitle>
+          <AlertTitle>⏸ הסריקה הושהתה — OpenAI עמוס</AlertTitle>
           <AlertDescription>
             {pendingFiles.length} קבצים ממתינים. נסה שוב כשהשרת ישתחרר (לעיתים נדרשות מספר דקות).
           </AlertDescription>

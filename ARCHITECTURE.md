@@ -27,7 +27,7 @@ Every Hebrew label, every internal enum value, every sheet tab name, every colum
 
 The **only** allowed places for inline Hebrew literals:
 1. `lib/types.ts` itself (the source declarations).
-2. `lib/ai.ts` — Gemini prompt text. The prompts are model instructions, not application code, and they necessarily contain natural language.
+2. `lib/ai.ts` — extraction and classification prompts.
 3. UI strings that are pure presentation (button labels, page titles, error messages) — these are not domain values and don't need to round-trip through the type system.
 
 If you find a literal like `"קבלה"`, `"אשראי"`, `"לא ידוע"`, etc. anywhere except (1) or (2), it's a bug.
@@ -38,13 +38,13 @@ Any function that maps from a const-enum input to an output must be a `switch` s
 
 ### 1.4 OCR is the only source of truth for receipt content
 
-Gemini's job is to **read** what's printed on the image or PDF — not to infer, recognize, or remember. The prompt enforces this aggressively: store names, totals, dates, and card last-4s must come from text the model can visually see. If the model can't read a field, it returns `null` rather than guessing.
+Receipt extraction uses only evidence printed on the image or PDF. Store names, totals, dates, and card last-4s must come from visible text. Unreadable fields return `null`.
 
 **Corollary:** Anti-hallucination rules are part of the architecture, not optimizations. Loosening them invites bad data.
 
 ### 1.5 Server-side only for credentials
 
-`GOOGLE_AI_KEY`, `GOOGLE_PLACES_API_KEY`, `GOOGLE_CLIENT_SECRET`, and the user's access token never leave the server. The access token is stored in an httpOnly JWT cookie (NextAuth). The browser only ever talks to `/api/*` routes on the same origin.
+`OPENAI_API_KEY`, `GOOGLE_PLACES_API_KEY`, `GOOGLE_CLIENT_SECRET`, and the user's access token never leave the server. The access token is stored in an httpOnly JWT cookie (NextAuth). The browser only ever talks to `/api/*` routes on the same origin.
 
 ---
 
@@ -74,9 +74,9 @@ Gemini's job is to **read** what's printed on the image or PDF — not to infer,
            │                         │                    │
            ▼                         ▼                    ▼
 ┌─────────────────────┐  ┌────────────────────┐  ┌────────────────────┐
-│ Gemini AI           │  │ Google Drive API   │  │ Google Sheets API  │
-│ - 2.5 Pro (OCR)     │  │ - search           │  │ - read/write rows  │
-│ - 2.5 Flash (dedup) │  │ - download files   │  │ - tab management   │
+│ OpenAI Responses    │  │ Google Drive API   │  │ Google Sheets API  │
+│ - gpt-6.1-sol       │  │ - search           │  │ - read/write rows  │
+│ - gpt-6-luna        │  │ - download files   │  │ - tab management   │
 └─────────────────────┘  │ - upload files     │  │ - formatting       │
                          └────────────────────┘  └────────────────────┘
                          ┌────────────────────┐
@@ -107,7 +107,8 @@ Each module owns one external integration or one piece of business logic. They d
 | ------------- | ----------------------------------------------------------------- | ---------------------------- |
 | `auth.ts`     | NextAuth config, Google OAuth scopes, token refresh               | `next-auth`, `next-auth/providers/google` |
 | `google.ts`   | All Drive + Sheets calls. The only file that imports `googleapis` | `googleapis`, `lib/types`, `lib/receipt-dates`    |
-| `ai.ts`       | All Gemini calls + prompts + JSON schemas                         | `@google/generative-ai`, `lib/types`, `lib/receipt-dates` |
+| `ai.ts`       | Document extraction and text tasks, prompts, and schemas          | `lib/openai-responses`, `lib/types`, `lib/receipt-dates` |
+| `openai-responses.ts` | Server-side Responses API requests, retries, and parsing  | `fetch` |
 | `places.ts`   | Google Places (New) Text Search wrapper                           | `fetch`, `lib/types`         |
 | `parsers.ts`  | CSV/XLSX bank statement parsing                                   | `xlsx`, `lib/types`          |
 | `match.ts`    | Bank-txn ↔ receipt matching algorithm                             | `lib/types`, `lib/receipt-dates`                  |
@@ -207,7 +208,7 @@ This pattern gives:
 - A discriminated string union type (`X = "foo" | "bar"`).
 - An iterable list for UI dropdowns (`X_VALUES`).
 
-Schemas sent to Gemini are built from `Object.values(X)` so they stay in sync — never hardcode the enum values in two places.
+Schema enums sent to OpenAI derive from `lib/types.ts`. For expense categories, send the keys of `GOV_EXPENSE_CATEGORY` and map them back to the official Hebrew labels before returning results. A quote in the Lawyer label makes the label itself invalid in an OpenAI strict enum.
 
 ---
 
@@ -245,8 +246,8 @@ Every endpoint returns JSON. Errors return `{ error: string }` with an HTTP erro
   - `{ kind: "upload", fileName, mediaType, base64 }`
   - `{ kind: "drive", driveFileId, fileName, mediaType }`
 - Side effects:
-  - Sends the image or PDF directly to Gemini 2.5 Pro to extract printed receipt fields and source date facts.
-  - Derives the editable matching date on the server with `lib/receipt-dates.ts`; Gemini does not choose a generic matching date.
+  - Sends the image or PDF directly to `gpt-6.1-sol` to extract printed receipt fields and source date facts.
+  - Derives the editable matching date on the server with `lib/receipt-dates.ts`.
   - For `kind: "upload"`, uploads original to user's Drive folder.
   - Increments store-count in `חנויות` tab.
   - Does NOT write the receipt — the client does that via `POST /api/sheets`.
@@ -354,17 +355,17 @@ return NextResponse.json({ error: msg }, { status: 500 });
 Never throw inside an exported route handler — always wrap in try/catch and return a JSON error envelope. Status codes:
 - 400 — bad input (validation failed).
 - 401 — no session.
-- 429 — Gemini rate limit (also handled by retry in `withRetry`).
-- 503 — Gemini overload.
+- 429 — temporary OpenAI rate limit.
+- 503 — temporary service unavailability.
 - 500 — anything else.
 
 ### 7.5 Retries
 
-External calls that can transiently fail (Gemini, Places) go through `withRetry` (`lib/ai.ts`) or equivalent. Two attempts, 3s backoff, only on retryable error patterns (503/429/"overloaded"). Don't retry forever — the user-facing flow surfaces overload with a "pause + resume" UI.
+The Responses API transport in `lib/openai-responses.ts` bounds request duration and retries temporary failures. Receipt uploads and Drive imports handle persistent overload as described in §9.1.
 
 ### 7.6 Concurrency
 
-The `DriveImport` component caps bulk OCR concurrency at 2 (`CONCURRENCY = 2`). This is calibrated against Gemini quota for the free tier. Don't raise without proven quota headroom — overloading produces 429s that cascade into halted batches.
+`DriveImport` and `UploadZone` each process at most two files concurrently to limit requests to OpenAI and Google APIs.
 
 ### 7.7 Type imports
 
@@ -444,18 +445,17 @@ const { token, spreadsheetId } = await requireCapability(CAPABILITY.ViewReceipts
 ```
 
 ### 8.7 Inventing categories or payment methods
-Gemini is instructed to return one of the fixed `CATEGORIES` and one of the `EXTRACTED_METHOD` values. If you find the model returning something else, fix the prompt — don't widen the schema. Hedging the type system to "accept whatever comes back" defeats the point.
+The receipt schema constrains category and payment method using `GOV_EXPENSE_CATEGORY` keys and `EXTRACTED_METHOD` values. Preserve those enum constraints when adjusting the prompt.
 
 ---
 
 ## 9. External dependencies and how to handle them
 
-### 9.1 Gemini (Google Generative AI)
+### 9.1 OpenAI Responses API
 
-- **Models in use:** `gemini-2.5-pro` (OCR), `gemini-2.5-flash` (canonicalization + dedup).
-- **Failure modes:** 503 (overload), 429 (rate limit), schema-mismatch JSON.
-- **Mitigations:** `withRetry` (2 attempts, 3s backoff). `DriveImport` halts the batch after 3 consecutive overloads and lets the user resume manually.
-- **Schema discipline:** Every Gemini call uses `responseMimeType: "application/json"` + `responseSchema`. The schema's `enum` arrays are built from `Object.values(SOME_ENUM)` so the type system enforces consistency.
+- `gpt-6.1-sol` reads receipt images and PDFs, statements, salary slips, and direct-charge documents. `gpt-6-luna` normalizes store names, detects duplicate and paired receipts, and classifies expenses.
+- The server sends inline image or PDF data for document tasks and text alone for the other tasks. Requests use `store: false` and strict JSON Schema output. The transport rejects incomplete responses and refusals before returning data to a caller.
+- Both bulk import screens pause after three consecutive HTTP 429 or 503 responses. The user can resume the batch manually.
 
 ### 9.2 Google Sheets API
 
@@ -476,7 +476,7 @@ Gemini is instructed to return one of the fixed `CATEGORIES` and one of the `EXT
 ### 9.5 `sharp`
 
 - **Used in:** `app/api/ocr/route.ts:shrinkImage`.
-- **Why:** EXIF-aware rotate + resize before sending to Gemini. Smaller images = fewer Gemini tokens.
+- **Why:** Apply EXIF orientation and resize receipt images before sending them to OpenAI.
 - **Failure modes:** Throws on unsupported formats. We catch and fall through to sending the original (logged as warning).
 
 ---
@@ -502,7 +502,7 @@ Gemini is instructed to return one of the fixed `CATEGORIES` and one of the `EXT
 | ----------------------------------------- | ----------------------------------------------------------- |
 | Add a new payment method                  | `lib/types.ts` (both `EXTRACTED_METHOD` and `PAYMENT_METHOD`) → `lib/ai.ts` (add prompt bullet) → `app/api/ocr/route.ts` (add `case` to `classifyMethod`) |
 | Add a new category                        | `lib/types.ts` (`CATEGORIES`) → `lib/ai.ts` (extend the category section of `RECEIPT_SYSTEM`) — that's all, schema picks it up |
-| Add a new column to the receipts tab      | `lib/types.ts` (`RECEIPT_HEADERS` + `Receipt`) → `lib/google.ts` (`receiptToRow` + `rowToReceipt`, A:T persistence, and additive P:T header validation where receipt rows are read or persisted) → `components/ReceiptTable.tsx` (column def) → backfill `lib/ai.ts` if Gemini needs to extract it |
+| Add a new column to the receipts tab      | `lib/types.ts` (`RECEIPT_HEADERS` + `Receipt`) → `lib/google.ts` (`receiptToRow` + `rowToReceipt`, A:T persistence, and additive P:T header validation where receipt rows are read or persisted) → `components/ReceiptTable.tsx` (column def) → update `lib/ai.ts` if OCR needs to extract it |
 | Add a new setting (key/value)             | `lib/types.ts` (`SETTINGS_KEY` + extend `UserSettings`) → `lib/google.ts` (`getUserSettings` / `writeUserSettings`) → `app/api/settings/route.ts` (validation) → `components/SettingsForm.tsx` (UI) |
 | Add a new sheet tab                       | `lib/types.ts` (`SHEET_TAB_*` constant) → `lib/google.ts` (`tabsFromMeta` + `ensureTabs` + new read/write helpers + add to spreadsheet creation) |
 | Add a new API route                       | `app/api/<route>/route.ts` — must use `requireCapability` for auth, return JSON with `errorStatus(err)`, set `runtime = "nodejs"` |
@@ -542,7 +542,8 @@ Gemini is instructed to return one of the fixed `CATEGORIES` and one of the `EXT
 | `lib/types.ts`                        | All enums + interfaces + sheet schema                            |
 | `lib/auth.ts`                         | NextAuth config + scopes                                         |
 | `lib/google.ts`                       | Drive + Sheets calls (single integration point)                  |
-| `lib/ai.ts`                           | Gemini calls + prompts + schemas                                 |
+| `lib/ai.ts`                           | AI task routing, prompts, and schemas                            |
+| `lib/openai-responses.ts`             | Server-side OpenAI Responses API transport                       |
 | `lib/places.ts`                       | Places (New) wrapper                                             |
 | `lib/match.ts`                        | Bank-txn ↔ receipt matching                                      |
 | `lib/receipt-dates.ts`                | Pure receipt date validation, canonical matching-date derivation, and candidate anchors |

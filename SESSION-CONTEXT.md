@@ -2,6 +2,8 @@
 
 > **Purpose of this file:** Provide a fresh Claude Code session with rich context about the codebase, recent decisions, open threads, and domain knowledge needed to continue work effectively. Read this file end-to-end before making changes.
 
+> The Gemini implementation described below is historical. See [External dependencies in ARCHITECTURE.md](ARCHITECTURE.md#91-openai-responses-api) for the current AI models and request flow.
+
 ---
 
 ## Product mission
