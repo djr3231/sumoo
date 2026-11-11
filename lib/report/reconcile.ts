@@ -266,6 +266,12 @@ export function reconcile(input: {
     // (זכות, positive — a refund the bank posts back) nets AGAINST it, so the
     // aggregate matches what the card detail nets to. Track the latest date.
     if (isDirectAggregate(desc) || isForexSettlement(desc)) {
+      // Keep the checksum, clearance cutoff and FX pool within the report period.
+      if (
+        !t.date ||
+        Number(t.date.slice(0, 4)) !== input.period.year ||
+        !inPeriod(monthOf(t.date))
+      ) continue;
       directAggregateSum += amt < 0 ? Math.abs(amt) : -Math.abs(amt);
       if (t.date && (lastSettlementDate === null || t.date > lastSettlementDate)) {
         lastSettlementDate = t.date;

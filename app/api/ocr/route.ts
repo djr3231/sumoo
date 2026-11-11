@@ -159,7 +159,7 @@ export async function POST(req: Request) {
     }
 
     // Auth is fatal and must NOT be swallowed. Without a token this route can
-    // persist nothing — it used to carry on, burn a Gemini call, skip the Drive
+    // persist nothing — it used to carry on, pay for extraction, skip the Drive
     // upload and still answer `{ ok: true }`, which is how an expired grant
     // produced a full results table with nothing in the sheet.
     const ctx = await requireCapability(CAPABILITY.AppendReceipts);
@@ -316,11 +316,11 @@ export async function POST(req: Request) {
       matchedKnownStore: extracted.matched_known_store,
     });
   } catch (err) {
-    const capStatus = errorStatus(err);
-    if (capStatus === 401 || capStatus === 403) {
+    const mappedStatus = errorStatus(err);
+    if (mappedStatus !== 500) {
       return NextResponse.json(
         { error: (err as Error).message },
-        { status: capStatus },
+        { status: mappedStatus },
       );
     }
     const e = err as { status?: number; message?: string };

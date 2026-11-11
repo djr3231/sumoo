@@ -17,7 +17,7 @@ import type { Receipt, Store } from "@/lib/types";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-// Per-LLM-step budget. A slow/hung Gemini call must not eat the whole
+// Per-LLM-step budget. A slow/hung model call must not eat the whole
 // function budget and end as an opaque 504 — race it and degrade to a
 // partial (but successful) run instead.
 const CANON_TIMEOUT_MS = 75_000;

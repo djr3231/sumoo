@@ -127,7 +127,7 @@ export async function processPeriodDocuments(args: {
   }
 
   // דיירקט (card) — XLS uses the dedicated card parser (settlement date + ₪
-  // "סכום חיוב"); PDF falls back to the Gemini extractor.
+  // "סכום חיוב"); PDF falls back to the document extractor.
   const directCharges: CardCharge[] = [];
   for (const f of args.direct) {
     await store(f, "direct");

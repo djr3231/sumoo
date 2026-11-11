@@ -1,14 +1,14 @@
 # סומו · סורק קבלות אישי
 
 PWA לשימוש אישי שסורקת קבלות (תמונות / PDF), מחלצת מהן את שם החנות, סכום, תאריך, קטגוריה
-ואמצעי תשלום באמצעות **Gemini 2.5 Flash** (vision), מאחסנת ב-Google Sheets, ומאפשרת
+ואמצעי תשלום באמצעות **OpenAI** (vision), מאחסנת ב-Google Sheets, ומאפשרת
 השוואה לתדפיסי בנק/אשראי כדי לזהות תנועות חסרות קבלה.
 
 ## תכונות
 
 - ייבוא ישיר מתיקיית **Google Drive**, או drag‑and‑drop של קבצים מקומיים (כל קובץ מקומי נשמר
   אוטומטית ל-Drive בתיקייה "סומו - העלאות" ומקבל לינק ישיר).
-- חילוץ מבני באמצעות **Gemini 2.5 Flash** (זול, מהיר, מתמודד טוב עם תמונות מסובבות).
+- חילוץ מבני באמצעות **OpenAI Responses API**.
 - **שמות חנויות קנוניים** — טאב "חנויות" אוסף וריאציות OCR ומאחד אותן לשם אחיד.
 - **אמצעי תשלום** — מזהה מ-OCR אם שולם בכרטיס/מזומן/מעורב, ומסווג ל-"אשראי"/"מזומן" לפי
   הספרות האחרונות של הכרטיס שלך (env var `MY_CREDIT_CARD_LAST4`).
@@ -23,7 +23,7 @@ PWA לשימוש אישי שסורקת קבלות (תמונות / PDF), מחלצ
 
 - Node 20+.
 - חשבון Google.
-- מפתח Anthropic API.
+- מפתח OpenAI API.
 
 ## התקנה
 
@@ -43,11 +43,11 @@ npm run dev
 4. הוסף את עצמך כ-test user (אם המסך עדיין ב-Testing).
 5. העתק את `Client ID` ו-`Client Secret` ל-`.env.local`.
 
-### Google AI (Gemini)
+### OpenAI
 
-1. צור מפתח ב-<https://aistudio.google.com/apikey>.
-2. שים אותו ב-`GOOGLE_AI_KEY`. המפתח מתחיל ב-`AIza...`.
-3. ה-tier החינמי של Gemini 2.5 Flash נדיב — מספיק ל~1000 קבלות בחודש בלי תשלום.
+1. Create an [OpenAI project API key](https://platform.openai.com/api-keys).
+2. Set `OPENAI_API_KEY` in the server environment (`.env.local` for local development).
+3. The project needs access to `gpt-6.1-sol` for documents and `gpt-6-luna` for text tasks.
 
 ### הכרטיס שלך
 
@@ -67,10 +67,6 @@ openssl rand -base64 32
 3. לאחר שכולן עברו OCR — לחץ "זיהוי כפילויות וזיכויים".
 4. ב-`/receipts` ערוך ידנית כל שדה שגוי. שינויים נשמרים אוטומטית.
 5. ב-`/compare` העלה תדפיס בנק/אשראי כדי לראות מה חסר.
-
-## עלות צפויה
-
-עבור 100 קבלות: ~$1–$3 חד פעמי, וכמה סנט לאחר prompt caching. תקציב חודשי <$5 לשימוש אישי.
 
 ## פריסה
 
@@ -96,7 +92,8 @@ app/
   upload/, receipts/, compare/
 components/              # UploadZone, ReceiptTable, CompareView, ...
 lib/
-  claude.ts              # שליפת קבלה, זיהוי כפילויות, פירוק PDF
+  ai.ts                  # שליפת קבלה, זיהוי כפילויות, פירוק PDF
+  openai-responses.ts    # Server-side Responses API transport
   google.ts              # OAuth, Sheets, Drive
   match.ts               # התאמת תנועות
   parsers.ts             # CSV / XLSX

@@ -2,7 +2,7 @@
 // Payment & document type enums (single source of truth — never inline literals)
 // ============================================================================
 
-// Internal values returned by Gemini in OCR extraction
+// Internal values returned by receipt extraction
 export const EXTRACTED_METHOD = {
   CreditCard: "credit_card",
   Cash: "cash",
@@ -26,7 +26,7 @@ export const PAYMENT_METHOD = {
 export type PaymentMethod = (typeof PAYMENT_METHOD)[keyof typeof PAYMENT_METHOD];
 export const PAYMENT_METHODS: PaymentMethod[] = Object.values(PAYMENT_METHOD);
 
-// Internal values returned by Gemini for document_type
+// Internal values returned by receipt extraction for document_type
 export const EXTRACTED_DOC_TYPE = {
   Receipt: "receipt",
   CreditSlip: "credit_slip",
