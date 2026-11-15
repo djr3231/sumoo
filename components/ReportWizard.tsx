@@ -182,6 +182,18 @@ function fmtDate(d?: string | null): string {
   return d ? d.split("-").reverse().join("/") : "—";
 }
 
+// Saved attachment IDs disambiguate different receipts with the same filename.
+// Filename-only matching is reserved for older progress without an ID record.
+function isReceiptAttached(
+  receipt: Receipt,
+  expenses: CategorizedExpense[],
+  attachments: ReceiptAttachment[],
+): boolean {
+  return attachments.some((a) => a.receiptId === receipt.id) ||
+    expenses.some((e) => e.receipt === receipt.fileName &&
+      !attachments.some((a) => a.lineId === e.lineId));
+}
+
 // A manual "+ הוסף שורה" row the user has not filled in yet. Draft rows sort
 // to the END of the expense tables (directly above the add button) so adding
 // one gives immediate visible feedback, and addExpense refuses to stack a
@@ -407,10 +419,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
   const [processError, setProcessError] = useState<string | null>(null);
   const [result, setResult] = useState<ProcessResult | null>(null);
   const [expenses, setExpenses] = useState<CategorizedExpense[]>([]);
-  // Always holds the latest committed `expenses`, kept in sync by the effect
-  // below. Used by mergeNewReceipts to check line-existence against genuinely
-  // live state instead of the stale pre-fetch closure value — see that
-  // function for why the closure value can't be trusted for this check.
+  // Latest committed expenses for the merge's line-existence guard.
   const expensesRef = useRef(expenses);
   useEffect(() => {
     expensesRef.current = expenses;
@@ -429,9 +438,11 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
     {},
   );
   const [cardGapAck, setCardGapAck] = useState(false);
-  // Receipt matching (step 3): pulled from the "Receipts – sumoo" sheet on demand.
+  // Receipt matching (step 3): load the pool on entry; match only on request.
   const [receiptsLoading, setReceiptsLoading] = useState(false);
   const [receiptsError, setReceiptsError] = useState<string | null>(null);
+  const [receiptPoolPeriod, setReceiptPoolPeriod] = useState<string | null>(null);
+  const receiptPoolRequestRef = useRef<AbortController | null>(null);
   const [matchRan, setMatchRan] = useState(false);
   // Bumped at the end of every runReceiptMatch (including re-runs where
   // matchRan was already true) so the save-on-transition effect below fires
@@ -453,10 +464,18 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
   // and whether its Drive preview iframe is shown.
   const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const receiptsReady = created !== null && receiptPoolPeriod === created.folderName;
+  const receiptsAvailable = matchRan || receiptsReady;
+  const receiptPoolLoading = step === 3 && result !== null &&
+    !receiptsReady && !receiptsLoading && receiptsError === null;
   // Receipts the user pulled out of the matching flow (next-period charge,
   // credit confirmation, or a split receipt whose lines are all attached).
   // Client-side only — the sheet is untouched; restore brings them all back.
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
+  const receiptDecisionsRef = useRef({ expenses, attachments, dismissedIds, unmatchedReceipts });
+  useEffect(() => {
+    receiptDecisionsRef.current = { expenses, attachments, dismissedIds, unmatchedReceipts };
+  }, [expenses, attachments, dismissedIds, unmatchedReceipts]);
   // Per-review-credit routing: where the user sends each זיכוי לבדיקה. Unset =
   // still under review (counted in neither total). Never affects the card gap.
   const [creditRoute, setCreditRoute] = useState<
@@ -503,6 +522,15 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
 
   async function createPeriod() {
     if (!pair) return;
+    // A different saved report must not inherit this report's available IDs.
+    receiptPoolRequestRef.current?.abort();
+    setReceiptsLoading(false);
+    setReceiptPoolPeriod(null);
+    setAllReceipts([]);
+    setUnmatchedReceipts([]);
+    setSelectedReceipt(null);
+    setPreviewOpen(false);
+    setReceiptsError(null);
     setCreating(true);
     setError(null);
     try {
@@ -606,6 +634,8 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
       setUnmatchedReceipts([]);
       setReceiptLinks({});
       setAllReceipts([]);
+      setReceiptPoolPeriod(null);
+      setReceiptsError(null);
       setDismissedIds(new Set());
       setAttachments([]);
     } catch (e) {
@@ -654,6 +684,8 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
     setUnmatchedReceipts([]);
     setReceiptLinks({});
     setAllReceipts([]);
+    setReceiptPoolPeriod(null);
+    setReceiptsError(null);
     setDismissedIds(new Set());
     setAttachments([]);
     setCheckingFiles([]);
@@ -676,6 +708,55 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
     [],
   );
 
+  // Rehydrate the transient pool independently of automatic matching. Resume
+  // restores attachments, not receipt objects, so detaching must wait for this
+  // read. Step/period changes cancel it; decisions made during the read win.
+  const receiptPeriod = created?.folderName;
+  useEffect(() => {
+    if (step !== 3 || !result || !receiptPeriod) return;
+    const controller = new AbortController();
+    receiptPoolRequestRef.current = controller;
+
+    async function loadReceiptPool() {
+      try {
+        const res = await apiFetch("/api/report/receipts", {
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        const data = await res.json();
+        if (controller.signal.aborted) return;
+        if (!res.ok || !data.ok)
+          throw new Error(data.error ?? "שגיאה בטעינת הקבלות");
+        const receipts = data.receipts as Receipt[];
+        const current = receiptDecisionsRef.current;
+        setAllReceipts(receipts);
+        setUnmatchedReceipts((prev) => {
+          // A split receipt deliberately kept available must survive re-entry.
+          const availableIds = new Set(prev.map((r) => r.id));
+          return receipts.filter((r) =>
+            r.paymentMethod !== PAYMENT_METHOD.ForeignCard &&
+            (availableIds.has(r.id) ||
+              !isReceiptAttached(r, current.expenses, current.attachments)),
+          );
+        });
+        setReceiptPoolPeriod(receiptPeriod ?? null);
+        setReceiptsError(null);
+      } catch (e) {
+        if (!controller.signal.aborted) setReceiptsError((e as Error).message);
+      }
+    }
+
+    void loadReceiptPool();
+    return () => {
+      controller.abort();
+      // The button can replace the entry request; cancel that request too
+      // when this matching-step/period lifetime ends.
+      receiptPoolRequestRef.current?.abort();
+      receiptPoolRequestRef.current = null;
+      setReceiptsLoading(false);
+    };
+  }, [step, receiptPeriod, result]);
+
   // Merge freshly-fetched receipts into the current match state WITHOUT
   // touching anything the user already decided on (manual attach/dismiss/
   // split/edit). Idempotent: receipts already dismissed, already attached
@@ -690,6 +771,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
     receipts: Receipt[],
     expensesSnapshot: CategorizedExpense[],
   ) {
+    const current = receiptDecisionsRef.current;
     // Foreign-card receipts can't serve as proof of purchase (documentation
     // only) — keep them out of the matching pool, surfaced as a count below.
     const evidence = receipts.filter(
@@ -702,10 +784,9 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
     // but must stay in the unmatched pool so the "restore dismissed" row keeps
     // working after a merge (see the `dismissed` re-add below).
     const isAttached = (r: Receipt) =>
-      attachments.some((a) => a.receiptId === r.id) ||
-      expensesSnapshot.some((e) => e.receipt === r.fileName);
+      isReceiptAttached(r, expensesSnapshot, current.attachments);
     const matchable = evidence.filter(
-      (r) => !isAttached(r) && !dismissedIds.has(r.id),
+      (r) => !isAttached(r) && !current.dismissedIds.has(r.id),
     );
 
     // Match only against lines that still have NO receipt. A line that already
@@ -725,8 +806,8 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
       matchable,
     );
 
-    // `emptyLines`/`byLine` are aligned to the render that kicked off the
-    // receipts fetch. Key the result by lineId (not array index) because the
+    // `emptyLines`/`byLine` share the snapshot read after the receipt fetch.
+    // Key the result by lineId (not array index) because the
     // `setExpenses` functional update below runs against whatever `expenses`
     // is CURRENT when the update is applied. If the user adds/removes/
     // reorders a line while the fetch is in flight, an index-based write
@@ -766,9 +847,8 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
 
     // Skip lines that no longer exist (e.g. deleted mid-fetch) so an
     // attachment is never created for a line that isn't there anymore.
-    // `expensesRef.current` reflects genuinely live state (kept in sync by an
-    // effect), unlike `expenses`/`expensesSnapshot` here, which are both the
-    // same stale pre-fetch closure value — so this check actually works.
+    // The ref also guards against accidentally using a captured render when
+    // future callers change the merge's snapshot source.
     const liveLineIds = new Set(expensesRef.current.map((e) => e.lineId));
     const newAttachments: ReceiptAttachment[] = Array.from(applied.entries())
       .filter(([lineId]) => liveLineIds.has(lineId))
@@ -786,9 +866,15 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
     // `unmatchedReceipts`. They can't overlap `leftover` (dismissed are excluded
     // from `matchable`); attached ones stay filtered out as genuinely handled.
     const dismissed = evidence.filter(
-      (r) => dismissedIds.has(r.id) && !isAttached(r),
+      (r) => current.dismissedIds.has(r.id) && !isAttached(r),
     );
-    setUnmatchedReceipts([...leftover, ...dismissed]);
+    // A user may start a split before the very first automatic match. Keep
+    // its already-attached receipt available without letting the matcher use it.
+    const availableIds = new Set(current.unmatchedReceipts.map((r) => r.id));
+    const splitAvailable = evidence.filter(
+      (r) => availableIds.has(r.id) && isAttached(r) && !current.dismissedIds.has(r.id),
+    );
+    setUnmatchedReceipts([...leftover, ...dismissed, ...splitAvailable]);
     setMatchRan(true);
     setMatchGeneration((g) => g + 1);
   }
@@ -799,19 +885,28 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
   // get auto-placed, and only onto lines with no receipt yet — manual
   // attach/dismiss/split/edit work from prior runs is left untouched.
   async function runReceiptMatch() {
+    // An older entry read must not replace the matcher's new available pool.
+    receiptPoolRequestRef.current?.abort();
+    const controller = new AbortController();
+    receiptPoolRequestRef.current = controller;
     setReceiptsLoading(true);
     setReceiptsError(null);
     try {
-      const res = await apiFetch("/api/report/receipts");
+      const res = await apiFetch("/api/report/receipts", { signal: controller.signal });
       const data = await res.json();
+      if (controller.signal.aborted) return;
       if (!res.ok || !data.ok)
         throw new Error(data.error ?? "שגיאה בטעינת הקבלות");
       const receipts = data.receipts as Receipt[];
-      mergeNewReceipts(receipts, expenses);
+      mergeNewReceipts(receipts, receiptDecisionsRef.current.expenses);
+      setReceiptPoolPeriod(created?.folderName ?? null);
     } catch (e) {
-      setReceiptsError((e as Error).message);
+      if (!controller.signal.aborted) setReceiptsError((e as Error).message);
     } finally {
-      setReceiptsLoading(false);
+      if (receiptPoolRequestRef.current === controller) {
+        receiptPoolRequestRef.current = null;
+        setReceiptsLoading(false);
+      }
     }
   }
 
@@ -914,9 +1009,13 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
 
   // Detach the receipt on a line, returning it to the unmatched list.
   function detachReceipt(lineId: string) {
+    if (!receiptsReady || receiptsLoading) return;
     const file = expenses.find((e) => e.lineId === lineId)?.receipt;
     if (!file) return;
-    const receipt = allReceipts.find((x) => x.fileName === file);
+    const attachment = attachments.find((a) => a.lineId === lineId);
+    const receipt = attachment
+      ? allReceipts.find((x) => x.id === attachment.receiptId)
+      : allReceipts.find((x) => x.fileName === file);
     const nextExpenses = expenses.map((e) =>
       e.lineId === lineId ? { ...e, receipt: undefined } : e,
     );
@@ -2045,14 +2144,19 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
             result ? (
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
-                  <Button onClick={runReceiptMatch} disabled={receiptsLoading}>
-                    {receiptsLoading
-                      ? "מתאים…"
-                      : matchRan
-                        ? "התאם קבלות חדשות"
-                        : "התאם קבלות"}
+                  <Button
+                    onClick={runReceiptMatch}
+                    disabled={receiptsLoading || receiptPoolLoading}
+                  >
+                    {receiptPoolLoading
+                      ? "טוען…"
+                      : receiptsLoading
+                        ? "מתאים…"
+                        : matchRan
+                          ? "התאם קבלות חדשות"
+                          : "התאם קבלות"}
                   </Button>
-                  {matchRan ? (
+                  {receiptsAvailable ? (
                     <span className="text-sm text-muted-foreground">
                       {expenses.filter((e) => e.receipt).length} מתוך{" "}
                       {expenses.length} חיובים עם קבלה
@@ -2069,7 +2173,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
                 {receiptsError ? (
                   <p className="text-sm text-destructive">{receiptsError}</p>
                 ) : null}
-                {matchRan ? (
+                {receiptsAvailable ? (
                   <div>
                     <Select
                       value={receiptMatchFilter}
@@ -2179,6 +2283,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
                                     size="sm"
                                     className="shrink-0 max-h-fit"
                                     onClick={() => detachReceipt(e.lineId)}
+                                    disabled={!receiptsReady || receiptsLoading}
                                   >
                                     בטל התאמה
                                   </Button>
@@ -2206,7 +2311,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
                   </div>
                 ) : null}
 
-                {matchRan && cashCandidates.length > 0 ? (
+                {receiptsAvailable && cashCandidates.length > 0 ? (
                   <Section title="קבלות מזומן">
                     <p className="mb-2 text-sm text-muted-foreground">
                       קבלות שלא תואמות אף חיוב — הוספה תיצור שורת הוצאה ותקטין
@@ -2347,7 +2452,7 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
                   </Section>
                 ) : null}
 
-                {matchRan &&
+                {receiptsAvailable &&
                 (unmatchedInPeriod.length > 0 || dismissedCount > 0) ? (
                   <Section title="קבלות ללא התאמה">
                     <p className="mb-2 text-sm text-muted-foreground">
@@ -2552,13 +2657,13 @@ export function ReportWizard({ canExport = true }: { canExport?: boolean }) {
                   </Section>
                 ) : null}
 
-                {matchRan && unmatchedOutOfPeriod.length > 0 ? (
+                {receiptsAvailable && unmatchedOutOfPeriod.length > 0 ? (
                   <p className="text-sm text-muted-foreground">
                     {unmatchedOutOfPeriod.length} קבלות מחוץ לתקופה
                   </p>
                 ) : null}
 
-                {matchRan && foreignInPeriod.length > 0 ? (
+                {receiptsAvailable && foreignInPeriod.length > 0 ? (
                   <p className="text-sm text-muted-foreground">
                     {foreignInPeriod.length} קבלות ב{PAYMENT_METHOD.ForeignCard}{" "}
                     — לתיעוד בלבד
